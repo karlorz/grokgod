@@ -11,7 +11,8 @@ Before any other work in this repo, read and run
 1. Disk watch (host volume is tight; cargo builds eat GBs)
 2. Upstream patch watch (is our manifest.rs normalize fixed upstream?)
 3. Live state sanity (shim ownership of `~/.local/bin/grok`)
-4. Overlay pin facts (GROK_CONFIG_PATH, never `-m`; schedulers stay OFF)
+4. Overlay pin facts (GROK_CONFIG_PATH, never `-m`; Orca automation is the
+   single Saturday trigger, launchd retired)
 5. Release CI facts (`macos-13` retired -> `macos-15-intel`; dotslash required
    for vendored `bin/protoc`; release job gates on required legs)
 
@@ -22,8 +23,10 @@ the runbook lists.
 
 - Never write production code on the parent agent - implementation goes to
   subagents; parent verifies results.
-- Never run cache-cleaner `--apply`, never enable the Saturday schedulers
-  (Orca automation or launchd) without explicit user instruction.
+- Never run cache-cleaner `--apply`. Saturday scheduler path was DECIDED
+  2026-08-19: Orca automation `0bbdc998` is the single trigger (enabled);
+  launchd is retired — never re-enable launchd while the Orca automation is
+  on, and never disable the Orca automation without user instruction.
 - Never modify `patches/` or rebuild unless the user approves or
   `grokgod update` flow requires it.
 - `~/.grokgod/overlays.toml` is test fixtures only; production code must not

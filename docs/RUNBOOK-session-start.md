@@ -59,8 +59,12 @@ ls -la ~/.local/bin/grok ~/.local/bin/grok.orig
 
 - Pin API: `GROK_CONFIG_PATH` via `grokgod run --automation-root
   ~/.orca/automations/weekly-dev-cache-scan`. NEVER `-m`.
-- Both Saturday schedulers stay OFF (Orca automation + launchd
-  `.plist.disabled`) unless the user explicitly picks a path.
+- Scheduler path DECIDED 2026-08-19 (user): Orca automation `0bbdc998` is the
+  single Saturday trigger — its prompt is a thin wrapper that calls
+  `grokgod run --automation-root … --prompt-file …/weekly-prompt.txt --
+  --always-approve`. launchd is retired (`.plist.disabled` lives in the
+  automation root); NEVER re-enable launchd while the Orca automation is
+  enabled (double-fire). Rollback: `orca automations edit 0bbdc998-… --disabled`.
 - `~/.grokgod/overlays.toml` is test-fixtures only; production never reads it.
 
 ## 5. Release CI facts (context, no action)
