@@ -44,6 +44,8 @@ handles reverse/re-apply on update.
 
 ```sh
 grok --version                          # expect: grok 1.0.5 (d71f6e0c)
+                                        # full SHA in ~/.grokgod/.source-version:
+                                        #   d71f6e0c1f5acc5469e503e192fe14824e6f8c90
 grokgod status | head -6                # shim ownership + source-version
 ls -la ~/.local/bin/grok ~/.local/bin/grok.orig
 ```

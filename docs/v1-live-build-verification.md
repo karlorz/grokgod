@@ -1,7 +1,7 @@
 # Live Build Verification Note
 
 - **Date**: 2026-08-18
-- **Patch Base SHA**: `d71f6e0c` (detached worktree from `/Users/karlchow/Desktop/code/grok-build`)
+- **Patch Base SHA**: `d71f6e0c1f5acc5469e503e192fe14824e6f8c90` (short `d71f6e0c`; detached worktree from `/Users/karlchow/Desktop/code/grok-build`)
 - **Patch**: `patches/0001-normalize-plugin-skill-join.patch`
 
 ## Test Results
