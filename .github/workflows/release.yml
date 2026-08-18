@@ -1,0 +1,181 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.optional || false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: linux-x64
+            ext: ""
+            optional: false
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            ext: ""
+            optional: false
+          - os: macos-14
+            target: darwin-arm64
+            ext: ""
+            optional: false
+          - os: macos-13
+            target: darwin-x64
+            ext: ""
+            optional: true
+          - os: windows-latest
+            target: windows-x64
+            ext: ".exe"
+            optional: true
+
+    steps:
+      - name: Checkout grokgod
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux Build Dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config cmake libssl-dev
+
+      - name: Clone and checkout pinned grok-build
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/xai-org/grok-build.git grok-build
+          git -C grok-build fetch --depth 1 origin d71f6e0c1f5acc5469e503e192fe14824e6f8c90
+          git -C grok-build checkout FETCH_HEAD
+
+      - name: Apply grokgod patches
+        shell: bash
+        run: |
+          REPO_DIR="$PWD"
+          git -C grok-build apply "$REPO_DIR/patches/0001-normalize-plugin-skill-join.patch"
+
+      - name: Build xai-grok-pager-bin
+        shell: bash
+        run: |
+          cd grok-build
+          CARGO_TARGET_DIR="./target" cargo build --release -p xai-grok-pager-bin
+
+      - name: Package artifact and compute checksum
+        shell: bash
+        run: |
+          mkdir -p dist
+          BIN_SRC="grok-build/target/release/xai-grok-pager${{ matrix.ext }}"
+          BIN_DST="dist/grokgod-${{ matrix.target }}${{ matrix.ext }}"
+          cp "$BIN_SRC" "$BIN_DST"
+          chmod +x "$BIN_DST" || true
+
+          if [ "${{ runner.os }}" != "Windows" ]; then
+            "$BIN_DST" --version || true
+          fi
+
+          cd dist
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "grokgod-${{ matrix.target }}${{ matrix.ext }}" > "SHA256SUMS-${{ matrix.target }}"
+          elif command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 "grokgod-${{ matrix.target }}${{ matrix.ext }}" > "SHA256SUMS-${{ matrix.target }}"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: downloaded-artifacts
+
+      - name: Merge checksums and assemble release assets
+        id: assemble
+        run: |
+          mkdir -p release-assets
+          find downloaded-artifacts -name "SHA256SUMS-*" -exec cat {} + | sort -u > release-assets/SHA256SUMS
+          find downloaded-artifacts -type f \( -name "grokgod-*" ! -name "SHA256SUMS-*" \) -exec cp {} release-assets/ \;
+          cp install.sh install.ps1 release-assets/
+          echo "=== Release Assets ==="
+          ls -la release-assets/
+          echo "=== SHA256SUMS ==="
+          cat release-assets/SHA256SUMS
+
+      - name: Resolve versions and build release notes
+        id: notes
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          prev=$(git tag --sort=-version:refname | grep -v "^${tag}$" | head -n1 || true)
+          echo "prev=${prev}" >> "$GITHUB_OUTPUT"
+          if [ -n "$prev" ]; then
+            range="${prev}..${tag}"
+          else
+            range="${tag}"
+          fi
+
+          {
+            echo "## Changes"
+            echo
+            if [ -n "$prev" ]; then
+              git log --pretty='- %s (%h)' "$range"
+            else
+              git log --pretty='- %s (%h)' "$tag" 2>/dev/null || git log -n 10 --pretty='- %s (%h)'
+            fi
+            echo
+            echo "## Install"
+            echo
+            echo '**macOS / Linux:**'
+            echo '```bash'
+            echo "curl -fsSL https://github.com/${{ github.repository }}/releases/latest/download/install.sh | bash"
+            echo '```'
+            echo
+            echo '**Windows (PowerShell):**'
+            echo '```powershell'
+            echo "irm https://github.com/${{ github.repository }}/releases/latest/download/install.ps1 | iex"
+            echo '```'
+            if [ -n "$prev" ]; then
+              echo
+              echo "**Full changelog:** https://github.com/${{ github.repository }}/compare/${prev}...${tag}"
+            fi
+          } > release-notes.md
+          cat release-notes.md
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ steps.notes.outputs.tag }}"
+          # Find all assets in release-assets
+          ASSETS=(release-assets/*)
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${ASSETS[@]}" --clobber
+          else
+            gh release create "$tag" "${ASSETS[@]}" \
+              --title "grokgod $tag" \
+              --notes-file release-notes.md
+          fi
