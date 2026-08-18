@@ -41,11 +41,16 @@ Mach-O hex.
 sh install.sh                  # release mode: download prebuilt binary + shims
 sh install.sh --from-source    # source mode: fetch + apply patches + rebuild
 sh install.sh --no-upgrade     # re-apply / restore launchers, skip download/build
+sh install.sh --force          # rebuild / re-download even when already current
 sh install.sh --uninstall      # restore grok.orig
-grok update                    # update to latest release (or rebuild if installed from source)
+grok update                    # check latest; no-op "Already up to date" when current
+                               # (release: compares release tag; source: SHA+patchset)
 grok status                    # shim ownership + .source-version
 grokgod cache report           # disk / target size
 ```
+
+Source mode pins base `d71f6e0c1f5acc5469e503e192fe14824e6f8c90` (never silently tracks
+`origin/main`); `grok update --version <sha>` is the deliberate base-bump path.
 
 Pinned grok-build SHA: `d71f6e0c1f5acc5469e503e192fe14824e6f8c90`. Session-start
 checks: [docs/RUNBOOK-session-start.md](docs/RUNBOOK-session-start.md) (auto-load
