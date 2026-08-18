@@ -75,6 +75,12 @@ ls -la ~/.local/bin/grok ~/.local/bin/grok.orig
 - grok-build vendors `bin/protoc` as a dotslash file; every CI build leg must
   install dotslash first (`taiki-e/install-action@v2`, `tool: dotslash`) or
   `xai-grok-tools-api` build.rs panics "protoc not found".
+- grok-build `.cargo/config.toml` pins `aarch64-unknown-linux-gnu` to
+  `target-cpu=neoverse-v2` (ARMv9/SVE2, xAI fleet) - such binaries SIGILL on
+  non-SVE ARM hosts (RPi5 Cortex-A76, Neoverse-N1). release.yml overrides
+  `RUSTFLAGS` to `target-cpu=generic` for the linux-arm64 leg only (env beats
+  config; empty for other legs so their config flags survive). The same
+  landmine exists for `--from-source` builds on aarch64 hosts (follow-up).
 - release.yml gates on required legs (linux-x64, linux-arm64, darwin-arm64);
   darwin-x64 + windows-x64 stay best-effort (`continue-on-error`). Do not
   re-add `if: always()` to the release job - it would publish releases that

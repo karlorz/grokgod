@@ -25,6 +25,11 @@ jobs:
             target: linux-arm64
             ext: ""
             optional: false
+            # grok-build .cargo/config.toml pins aarch64-linux-gnu to
+            # target-cpu=neoverse-v2 (ARMv9/SVE2, xAI fleet). That binary
+            # SIGILLs on non-SVE hosts (RPi5 Cortex-A76, Neoverse-N1, ...).
+            # RUSTFLAGS env replaces config target rustflags (cargo precedence).
+            rustflags: "-C target-cpu=generic -C force-unwind-tables=yes"
           - os: macos-14
             target: darwin-arm64
             ext: ""
@@ -75,6 +80,10 @@ jobs:
         shell: bash
         run: |
           cd grok-build
+          if [ -n "${{ matrix.rustflags }}" ]; then
+            export RUSTFLAGS="${{ matrix.rustflags }}"
+            echo "RUSTFLAGS override: $RUSTFLAGS"
+          fi
           CARGO_TARGET_DIR="./target" cargo build --release -p xai-grok-pager-bin
 
       - name: Package artifact and compute checksum
