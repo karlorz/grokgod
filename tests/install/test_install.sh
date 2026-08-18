@@ -743,4 +743,698 @@ fi
 
 echo "PASS: Test (k) - Release-mode install"
 
+# ─────────────────────────────────────────────────────────
+# Test (l): Release-mode no-op when stamp matches tag and binary present
+# ─────────────────────────────────────────────────────────
+echo "Test (l): Release-mode no-op when stamp matches"
+setup_sandbox "test_l"
+
+TEST_ASSET="grokgod-${TEST_OS}-${TEST_ARCH}"
+FAKE_DL_DIR="$TEST_DIR/fake_downloads"
+mkdir -p "$FAKE_DL_DIR"
+
+cat << 'BIN_EOF' > "$FAKE_DL_DIR/$TEST_ASSET"
+#!/bin/sh
+echo "PREBUILT_GROKGOD_BINARY_RELEASE_1_0_0"
+BIN_EOF
+chmod +x "$FAKE_DL_DIR/$TEST_ASSET"
+
+if command -v sha256sum >/dev/null 2>&1; then
+  TEST_SHA="$(sha256sum "$FAKE_DL_DIR/$TEST_ASSET" | awk '{print $1}')"
+elif command -v shasum >/dev/null 2>&1; then
+  TEST_SHA="$(shasum -a 256 "$FAKE_DL_DIR/$TEST_ASSET" | awk '{print $1}')"
+else
+  TEST_SHA="dummy_sha"
+fi
+printf "%s  %s\n" "$TEST_SHA" "$TEST_ASSET" > "$FAKE_DL_DIR/SHA256SUMS"
+
+CURL_LOG="$TEST_DIR/curl_invocations.txt"
+rm -f "$CURL_LOG"
+
+cat << EOF > "$FAKE_BIN_SHADOW/curl"
+#!/bin/sh
+set -eu
+url=""
+out_file=""
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -o|--output)
+      out_file="\$2"
+      shift 2
+      ;;
+    -fsSL|-sSL|-s|-f|-L|-fsSLk)
+      shift
+      ;;
+    http*|ftp*)
+      url="\$1"
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+echo "\$url" >> "$CURL_LOG"
+
+if echo "\$url" | grep -q "/releases/latest"; then
+  cat << 'JSON_EOF'
+{
+  "tag_name": "v1.0.0",
+  "assets": [
+    {
+      "name": "$TEST_ASSET",
+      "browser_download_url": "https://github.com/karlorz/grokgod/releases/download/v1.0.0/$TEST_ASSET"
+    },
+    {
+      "name": "SHA256SUMS",
+      "browser_download_url": "https://github.com/karlorz/grokgod/releases/download/v1.0.0/SHA256SUMS"
+    }
+  ]
+}
+JSON_EOF
+  exit 0
+fi
+
+if echo "\$url" | grep -q "SHA256SUMS"; then
+  if [ -n "\$out_file" ]; then
+    cp "$FAKE_DL_DIR/SHA256SUMS" "\$out_file"
+  else
+    cat "$FAKE_DL_DIR/SHA256SUMS"
+  fi
+  exit 0
+fi
+
+if echo "\$url" | grep -q "$TEST_ASSET"; then
+  if [ -n "\$out_file" ]; then
+    cp "$FAKE_DL_DIR/$TEST_ASSET" "\$out_file"
+  else
+    cat "$FAKE_DL_DIR/$TEST_ASSET"
+  fi
+  exit 0
+fi
+
+if echo "\$url" | grep -q "raw.githubusercontent.com"; then
+  filename=\$(basename "\$url")
+  case "\$filename" in
+    grok-shim.sh) src_path="$REPO_ROOT/src/shim/grok-shim.sh" ;;
+    grokgod-cache.sh) src_path="$REPO_ROOT/src/grokgod-cache.sh" ;;
+    grokgod-run.sh) src_path="$REPO_ROOT/src/grokgod-run.sh" ;;
+    *) src_path="" ;;
+  esac
+  if [ -n "\$src_path" ] && [ -f "\$src_path" ]; then
+    if [ -n "\$out_file" ]; then
+      cp "\$src_path" "\$out_file"
+    else
+      cat "\$src_path"
+    fi
+    exit 0
+  fi
+fi
+
+echo "mock curl unhandled URL: \$url" >&2
+exit 1
+EOF
+chmod +x "$FAKE_BIN_SHADOW/curl"
+
+# Pre-populate GROKGOD_HOME with matching binary and stamp
+mkdir -p "$FAKE_GROKGOD_HOME/bin"
+cat << 'BIN_EOF' > "$FAKE_GROKGOD_HOME/bin/grok"
+#!/bin/sh
+echo "EXISTING_GROKGOD_BINARY"
+BIN_EOF
+chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
+
+printf "SHA=%s\nPATCHSET=%s\nVERSION=v1.0.0\nMODE=release\n" "$TEST_SHA" "v1.0.0" > "$FAKE_GROKGOD_HOME/.source-version"
+INITIAL_STAMP_MD5="$(cat "$FAKE_GROKGOD_HOME/.source-version")"
+
+REL_NOOP_OUT="$(
+  PATH="$FAKE_BIN_SHADOW:$PATH" \
+  HOME="$FAKE_HOME" \
+  GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+  GROK_HOME="$FAKE_GROK_HOME" \
+  BIN_DIR="$FAKE_BIN_DIR" \
+  sh "$INSTALL_SCRIPT"
+)"
+
+# Assert curl log does NOT contain asset download
+if grep -q "$TEST_ASSET" "$CURL_LOG"; then
+  echo "FAIL: Test (l) - Asset was downloaded despite matching stamp!"; exit 1
+fi
+
+# Assert stdout contains "Already up to date"
+echo "$REL_NOOP_OUT" | grep -q "Already up to date" || {
+  echo "FAIL: Test (l) - Missing 'Already up to date' in output: $REL_NOOP_OUT"; exit 1
+}
+
+# Assert stamp file byte-identical
+AFTER_STAMP_MD5="$(cat "$FAKE_GROKGOD_HOME/.source-version")"
+if [ "$INITIAL_STAMP_MD5" != "$AFTER_STAMP_MD5" ]; then
+  echo "FAIL: Test (l) - Stamp file was modified during no-op!"; exit 1
+fi
+echo "PASS: Test (l) - Release-mode no-op"
+
+# ─────────────────────────────────────────────────────────
+# Test (m): Release-mode update when stamp is older
+# ─────────────────────────────────────────────────────────
+echo "Test (m): Release-mode update when stamp is older"
+setup_sandbox "test_m"
+
+FAKE_DL_DIR="$TEST_DIR/fake_downloads"
+mkdir -p "$FAKE_DL_DIR"
+cat << 'BIN_EOF' > "$FAKE_DL_DIR/$TEST_ASSET"
+#!/bin/sh
+echo "NEW_RELEASE_1_0_0"
+BIN_EOF
+chmod +x "$FAKE_DL_DIR/$TEST_ASSET"
+
+if command -v sha256sum >/dev/null 2>&1; then
+  TEST_SHA="$(sha256sum "$FAKE_DL_DIR/$TEST_ASSET" | awk '{print $1}')"
+elif command -v shasum >/dev/null 2>&1; then
+  TEST_SHA="$(shasum -a 256 "$FAKE_DL_DIR/$TEST_ASSET" | awk '{print $1}')"
+else
+  TEST_SHA="dummy_sha"
+fi
+printf "%s  %s\n" "$TEST_SHA" "$TEST_ASSET" > "$FAKE_DL_DIR/SHA256SUMS"
+
+CURL_LOG="$TEST_DIR/curl_invocations.txt"
+rm -f "$CURL_LOG"
+
+cat << EOF > "$FAKE_BIN_SHADOW/curl"
+#!/bin/sh
+set -eu
+url=""
+out_file=""
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -o|--output)
+      out_file="\$2"
+      shift 2
+      ;;
+    -fsSL|-sSL|-s|-f|-L|-fsSLk)
+      shift
+      ;;
+    http*|ftp*)
+      url="\$1"
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+echo "\$url" >> "$CURL_LOG"
+
+if echo "\$url" | grep -q "/releases/latest"; then
+  cat << 'JSON_EOF'
+{
+  "tag_name": "v1.0.0",
+  "assets": [
+    {
+      "name": "$TEST_ASSET",
+      "browser_download_url": "https://github.com/karlorz/grokgod/releases/download/v1.0.0/$TEST_ASSET"
+    },
+    {
+      "name": "SHA256SUMS",
+      "browser_download_url": "https://github.com/karlorz/grokgod/releases/download/v1.0.0/SHA256SUMS"
+    }
+  ]
+}
+JSON_EOF
+  exit 0
+fi
+
+if echo "\$url" | grep -q "SHA256SUMS"; then
+  if [ -n "\$out_file" ]; then cp "$FAKE_DL_DIR/SHA256SUMS" "\$out_file"; else cat "$FAKE_DL_DIR/SHA256SUMS"; fi
+  exit 0
+fi
+
+if echo "\$url" | grep -q "$TEST_ASSET"; then
+  if [ -n "\$out_file" ]; then cp "$FAKE_DL_DIR/$TEST_ASSET" "\$out_file"; else cat "$FAKE_DL_DIR/$TEST_ASSET"; fi
+  exit 0
+fi
+
+if echo "\$url" | grep -q "raw.githubusercontent.com"; then
+  filename=\$(basename "\$url")
+  case "\$filename" in
+    grok-shim.sh) src_path="$REPO_ROOT/src/shim/grok-shim.sh" ;;
+    grokgod-cache.sh) src_path="$REPO_ROOT/src/grokgod-cache.sh" ;;
+    grokgod-run.sh) src_path="$REPO_ROOT/src/grokgod-run.sh" ;;
+    *) src_path="" ;;
+  esac
+  if [ -n "\$src_path" ] && [ -f "\$src_path" ]; then
+    if [ -n "\$out_file" ]; then cp "\$src_path" "\$out_file"; else cat "\$src_path"; fi
+    exit 0
+  fi
+fi
+
+echo "mock curl unhandled URL: \$url" >&2
+exit 1
+EOF
+chmod +x "$FAKE_BIN_SHADOW/curl"
+
+# Pre-populate with older stamp (v0.9.0)
+mkdir -p "$FAKE_GROKGOD_HOME/bin"
+cat << 'BIN_EOF' > "$FAKE_GROKGOD_HOME/bin/grok"
+#!/bin/sh
+echo "OLD_GROKGOD_BINARY"
+BIN_EOF
+chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
+
+printf "SHA=old_sha\nPATCHSET=v0.9.0\nVERSION=v0.9.0\nMODE=release\n" > "$FAKE_GROKGOD_HOME/.source-version"
+
+PATH="$FAKE_BIN_SHADOW:$PATH" \
+HOME="$FAKE_HOME" \
+GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+GROK_HOME="$FAKE_GROK_HOME" \
+BIN_DIR="$FAKE_BIN_DIR" \
+sh "$INSTALL_SCRIPT" >/dev/null
+
+# Asset MUST be downloaded
+if ! grep -q "$TEST_ASSET" "$CURL_LOG"; then
+  echo "FAIL: Test (m) - Asset download was not invoked for older stamp!"; exit 1
+fi
+NEW_STAMP_VER="$(grep '^VERSION=' "$FAKE_GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
+if [ "$NEW_STAMP_VER" != "v1.0.0" ]; then
+  echo "FAIL: Test (m) - Stamp was not updated to v1.0.0: $NEW_STAMP_VER"; exit 1
+fi
+echo "PASS: Test (m) - Release-mode update when older"
+
+# ─────────────────────────────────────────────────────────
+# Test (n): Release-mode API unreachable (fallback to 'latest') downloads
+# ─────────────────────────────────────────────────────────
+echo "Test (n): Release-mode API unreachable fallback"
+setup_sandbox "test_n"
+
+FAKE_DL_DIR="$TEST_DIR/fake_downloads"
+mkdir -p "$FAKE_DL_DIR"
+cat << 'BIN_EOF' > "$FAKE_DL_DIR/$TEST_ASSET"
+#!/bin/sh
+echo "LATEST_FALLBACK_BINARY"
+BIN_EOF
+chmod +x "$FAKE_DL_DIR/$TEST_ASSET"
+
+if command -v sha256sum >/dev/null 2>&1; then
+  TEST_SHA="$(sha256sum "$FAKE_DL_DIR/$TEST_ASSET" | awk '{print $1}')"
+elif command -v shasum >/dev/null 2>&1; then
+  TEST_SHA="$(shasum -a 256 "$FAKE_DL_DIR/$TEST_ASSET" | awk '{print $1}')"
+else
+  TEST_SHA="dummy_sha"
+fi
+printf "%s  %s\n" "$TEST_SHA" "$TEST_ASSET" > "$FAKE_DL_DIR/SHA256SUMS"
+
+CURL_LOG="$TEST_DIR/curl_invocations.txt"
+rm -f "$CURL_LOG"
+
+cat << EOF > "$FAKE_BIN_SHADOW/curl"
+#!/bin/sh
+set -eu
+url=""
+out_file=""
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -o|--output)
+      out_file="\$2"
+      shift 2
+      ;;
+    -fsSL|-sSL|-s|-f|-L|-fsSLk)
+      shift
+      ;;
+    http*|ftp*)
+      url="\$1"
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+echo "\$url" >> "$CURL_LOG"
+
+# Fail the API call
+if echo "\$url" | grep -q "/releases/latest"; then
+  if echo "\$url" | grep -q "api.github.com"; then
+    exit 1
+  fi
+fi
+
+if echo "\$url" | grep -q "SHA256SUMS"; then
+  if [ -n "\$out_file" ]; then cp "$FAKE_DL_DIR/SHA256SUMS" "\$out_file"; else cat "$FAKE_DL_DIR/SHA256SUMS"; fi
+  exit 0
+fi
+
+if echo "\$url" | grep -q "$TEST_ASSET"; then
+  if [ -n "\$out_file" ]; then cp "$FAKE_DL_DIR/$TEST_ASSET" "\$out_file"; else cat "$FAKE_DL_DIR/$TEST_ASSET"; fi
+  exit 0
+fi
+
+if echo "\$url" | grep -q "raw.githubusercontent.com"; then
+  filename=\$(basename "\$url")
+  case "\$filename" in
+    grok-shim.sh) src_path="$REPO_ROOT/src/shim/grok-shim.sh" ;;
+    grokgod-cache.sh) src_path="$REPO_ROOT/src/grokgod-cache.sh" ;;
+    grokgod-run.sh) src_path="$REPO_ROOT/src/grokgod-run.sh" ;;
+    *) src_path="" ;;
+  esac
+  if [ -n "\$src_path" ] && [ -f "\$src_path" ]; then
+    if [ -n "\$out_file" ]; then cp "\$src_path" "\$out_file"; else cat "\$src_path"; fi
+    exit 0
+  fi
+fi
+
+echo "mock curl unhandled URL: \$url" >&2
+exit 1
+EOF
+chmod +x "$FAKE_BIN_SHADOW/curl"
+
+# Stamp with VERSION=latest and binary present
+mkdir -p "$FAKE_GROKGOD_HOME/bin"
+cat << 'BIN_EOF' > "$FAKE_GROKGOD_HOME/bin/grok"
+#!/bin/sh
+echo "EXISTING_BINARY"
+BIN_EOF
+chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
+printf "SHA=%s\nPATCHSET=latest\nVERSION=latest\nMODE=release\n" "$TEST_SHA" > "$FAKE_GROKGOD_HOME/.source-version"
+
+PATH="$FAKE_BIN_SHADOW:$PATH" \
+HOME="$FAKE_HOME" \
+GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+GROK_HOME="$FAKE_GROK_HOME" \
+BIN_DIR="$FAKE_BIN_DIR" \
+sh "$INSTALL_SCRIPT" >/dev/null
+
+# Fail-safe: download must still happen when tag resolved to literal latest
+if ! grep -q "$TEST_ASSET" "$CURL_LOG"; then
+  echo "FAIL: Test (n) - Asset download was not invoked during latest fallback!"; exit 1
+fi
+echo "PASS: Test (n) - Release-mode API unreachable fallback"
+
+# ─────────────────────────────────────────────────────────
+# Test (o): Release-mode --force with matching stamp downloads
+# ─────────────────────────────────────────────────────────
+echo "Test (o): Release-mode --force"
+setup_sandbox "test_o"
+
+FAKE_DL_DIR="$TEST_DIR/fake_downloads"
+mkdir -p "$FAKE_DL_DIR"
+cat << 'BIN_EOF' > "$FAKE_DL_DIR/$TEST_ASSET"
+#!/bin/sh
+echo "FORCE_DOWNLOADED_BINARY"
+BIN_EOF
+chmod +x "$FAKE_DL_DIR/$TEST_ASSET"
+
+if command -v sha256sum >/dev/null 2>&1; then
+  TEST_SHA="$(sha256sum "$FAKE_DL_DIR/$TEST_ASSET" | awk '{print $1}')"
+elif command -v shasum >/dev/null 2>&1; then
+  TEST_SHA="$(shasum -a 256 "$FAKE_DL_DIR/$TEST_ASSET" | awk '{print $1}')"
+else
+  TEST_SHA="dummy_sha"
+fi
+printf "%s  %s\n" "$TEST_SHA" "$TEST_ASSET" > "$FAKE_DL_DIR/SHA256SUMS"
+
+CURL_LOG="$TEST_DIR/curl_invocations.txt"
+rm -f "$CURL_LOG"
+
+cat << EOF > "$FAKE_BIN_SHADOW/curl"
+#!/bin/sh
+set -eu
+url=""
+out_file=""
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -o|--output)
+      out_file="\$2"
+      shift 2
+      ;;
+    -fsSL|-sSL|-s|-f|-L|-fsSLk)
+      shift
+      ;;
+    http*|ftp*)
+      url="\$1"
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+echo "\$url" >> "$CURL_LOG"
+
+if echo "\$url" | grep -q "/releases/latest"; then
+  cat << 'JSON_EOF'
+{
+  "tag_name": "v1.0.0",
+  "assets": [
+    {
+      "name": "$TEST_ASSET",
+      "browser_download_url": "https://github.com/karlorz/grokgod/releases/download/v1.0.0/$TEST_ASSET"
+    },
+    {
+      "name": "SHA256SUMS",
+      "browser_download_url": "https://github.com/karlorz/grokgod/releases/download/v1.0.0/SHA256SUMS"
+    }
+  ]
+}
+JSON_EOF
+  exit 0
+fi
+
+if echo "\$url" | grep -q "SHA256SUMS"; then
+  if [ -n "\$out_file" ]; then cp "$FAKE_DL_DIR/SHA256SUMS" "\$out_file"; else cat "$FAKE_DL_DIR/SHA256SUMS"; fi
+  exit 0
+fi
+
+if echo "\$url" | grep -q "$TEST_ASSET"; then
+  if [ -n "\$out_file" ]; then cp "$FAKE_DL_DIR/$TEST_ASSET" "\$out_file"; else cat "$FAKE_DL_DIR/$TEST_ASSET"; fi
+  exit 0
+fi
+
+if echo "\$url" | grep -q "raw.githubusercontent.com"; then
+  filename=\$(basename "\$url")
+  case "\$filename" in
+    grok-shim.sh) src_path="$REPO_ROOT/src/shim/grok-shim.sh" ;;
+    grokgod-cache.sh) src_path="$REPO_ROOT/src/grokgod-cache.sh" ;;
+    grokgod-run.sh) src_path="$REPO_ROOT/src/grokgod-run.sh" ;;
+    *) src_path="" ;;
+  esac
+  if [ -n "\$src_path" ] && [ -f "\$src_path" ]; then
+    if [ -n "\$out_file" ]; then cp "\$src_path" "\$out_file"; else cat "\$src_path"; fi
+    exit 0
+  fi
+fi
+
+echo "mock curl unhandled URL: \$url" >&2
+exit 1
+EOF
+chmod +x "$FAKE_BIN_SHADOW/curl"
+
+mkdir -p "$FAKE_GROKGOD_HOME/bin"
+cat << 'BIN_EOF' > "$FAKE_GROKGOD_HOME/bin/grok"
+#!/bin/sh
+echo "EXISTING_BINARY"
+BIN_EOF
+chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
+printf "SHA=%s\nPATCHSET=v1.0.0\nVERSION=v1.0.0\nMODE=release\n" "$TEST_SHA" > "$FAKE_GROKGOD_HOME/.source-version"
+
+PATH="$FAKE_BIN_SHADOW:$PATH" \
+HOME="$FAKE_HOME" \
+GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+GROK_HOME="$FAKE_GROK_HOME" \
+BIN_DIR="$FAKE_BIN_DIR" \
+sh "$INSTALL_SCRIPT" --force >/dev/null
+
+if ! grep -q "$TEST_ASSET" "$CURL_LOG"; then
+  echo "FAIL: Test (o) - Asset was not downloaded when --force passed!"; exit 1
+fi
+echo "PASS: Test (o) - Release-mode --force"
+
+# ─────────────────────────────────────────────────────────
+# Test (p): Source-mode no-op when stamp matches pin and binary present
+# ─────────────────────────────────────────────────────────
+echo "Test (p): Source-mode no-op when stamp matches"
+setup_sandbox "test_p"
+reset_worktree
+
+# Mock git wrapper to track invocations
+GIT_INVOKED_FILE="$TEST_DIR/git_invoked.txt"
+rm -f "$GIT_INVOKED_FILE"
+cat << EOF > "$FAKE_BIN_SHADOW/git"
+#!/bin/sh
+set -eu
+echo "git \$*" >> "$GIT_INVOKED_FILE"
+# Filter out fetch to avoid network/origin differences in test
+orig_args="\$*"
+if [ "\$1" = "-C" ]; then
+  dir="\$2"
+  shift 2
+  if [ "\$1" = "fetch" ]; then
+    exit 0
+  fi
+  exec /usr/bin/git -C "\$dir" "\$@"
+fi
+if [ "\$1" = "fetch" ]; then
+  exit 0
+fi
+exec /usr/bin/git "\$@"
+EOF
+chmod +x "$FAKE_BIN_SHADOW/git"
+
+# First install to populate
+PATH="$FAKE_BIN_SHADOW:$PATH" \
+HOME="$FAKE_HOME" \
+GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+GROK_BUILD_SRC="$GB_WORKTREE" \
+BIN_DIR="$FAKE_BIN_DIR" \
+CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+sh "$INSTALL_SCRIPT" --from-source --no-upgrade >/dev/null
+
+rm -f "$CARGO_INVOKED_FILE"
+INITIAL_STAMP="$(cat "$FAKE_GROKGOD_HOME/.source-version")"
+
+# Plain run without --no-upgrade (simulates grok update)
+UPDATE_OUT="$(
+  PATH="$FAKE_BIN_SHADOW:$PATH" \
+  HOME="$FAKE_HOME" \
+  GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+  GROK_BUILD_SRC="$GB_WORKTREE" \
+  BIN_DIR="$FAKE_BIN_DIR" \
+  CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+  sh "$INSTALL_SCRIPT" --from-source
+)"
+
+echo "$UPDATE_OUT" | grep -q "Already up to date" || {
+  echo "FAIL: Test (p) - Missing 'Already up to date' in source update output: $UPDATE_OUT"; exit 1
+}
+
+if [ -f "$CARGO_INVOKED_FILE" ]; then
+  echo "FAIL: Test (p) - Cargo was invoked during source no-op!"; exit 1
+fi
+
+AFTER_STAMP="$(cat "$FAKE_GROKGOD_HOME/.source-version")"
+if [ "$INITIAL_STAMP" != "$AFTER_STAMP" ]; then
+  echo "FAIL: Test (p) - Stamp modified during source no-op!"; exit 1
+fi
+echo "PASS: Test (p) - Source-mode no-op"
+
+# ─────────────────────────────────────────────────────────
+# Test (q): Source-mode default checkout targets PINNED_BASE_SHA, never origin/main
+# ─────────────────────────────────────────────────────────
+echo "Test (q): Source-mode default checkout targets PINNED_BASE_SHA"
+setup_sandbox "test_q"
+reset_worktree
+
+# Mock git wrapper to track invocations
+GIT_INVOKED_FILE="$TEST_DIR/git_invoked.txt"
+rm -f "$GIT_INVOKED_FILE"
+cat << EOF > "$FAKE_BIN_SHADOW/git"
+#!/bin/sh
+set -eu
+echo "git \$*" >> "$GIT_INVOKED_FILE"
+if [ "\$1" = "-C" ]; then
+  dir="\$2"
+  shift 2
+  if [ "\$1" = "fetch" ]; then
+    exit 0
+  fi
+  exec /usr/bin/git -C "\$dir" "\$@"
+fi
+if [ "\$1" = "fetch" ]; then
+  exit 0
+fi
+exec /usr/bin/git "\$@"
+EOF
+chmod +x "$FAKE_BIN_SHADOW/git"
+
+PATH="$FAKE_BIN_SHADOW:$PATH" \
+HOME="$FAKE_HOME" \
+GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+GROK_BUILD_SRC="$GB_WORKTREE" \
+BIN_DIR="$FAKE_BIN_DIR" \
+CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+sh "$INSTALL_SCRIPT" --from-source >/dev/null
+
+if grep -q "checkout origin/main" "$GIT_INVOKED_FILE"; then
+  echo "FAIL: Test (q) - Git checked out origin/main instead of pinned base SHA!"; exit 1
+fi
+grep -q "checkout d71f6e0c1f5acc5469e503e192fe14824e6f8c90" "$GIT_INVOKED_FILE" || {
+  echo "FAIL: Test (q) - Git did not checkout d71f6e0c1f5acc5469e503e192fe14824e6f8c90"; exit 1
+}
+echo "PASS: Test (q) - Default checkout targets pin"
+
+# ─────────────────────────────────────────────────────────
+# Test (r): Source-mode rebuilds when stamp SHA is different
+# ─────────────────────────────────────────────────────────
+echo "Test (r): Source-mode update when stamp SHA differs"
+setup_sandbox "test_r"
+reset_worktree
+
+mkdir -p "$FAKE_GROKGOD_HOME/bin"
+cat << 'BIN_EOF' > "$FAKE_GROKGOD_HOME/bin/grok"
+#!/bin/sh
+echo "OLD_SOURCE_BINARY"
+BIN_EOF
+chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
+printf "SHA=oldsha1234567890\nPATCHSET=none\nVERSION=oldsha1234567890\nMODE=source\n" > "$FAKE_GROKGOD_HOME/.source-version"
+
+PATH="$FAKE_BIN_SHADOW:$PATH" \
+HOME="$FAKE_HOME" \
+GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+GROK_BUILD_SRC="$GB_WORKTREE" \
+BIN_DIR="$FAKE_BIN_DIR" \
+CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+sh "$INSTALL_SCRIPT" --from-source >/dev/null
+
+if [ ! -f "$CARGO_INVOKED_FILE" ]; then
+  echo "FAIL: Test (r) - Cargo was not invoked when stamp SHA differed!"; exit 1
+fi
+echo "PASS: Test (r) - Source-mode rebuilds on different stamp"
+
+# ─────────────────────────────────────────────────────────
+# Test (s): Source-mode --force rebuilds with matching stamp
+# ─────────────────────────────────────────────────────────
+echo "Test (s): Source-mode --force"
+setup_sandbox "test_s"
+reset_worktree
+
+# First install
+PATH="$FAKE_BIN_SHADOW:$PATH" \
+HOME="$FAKE_HOME" \
+GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+GROK_BUILD_SRC="$GB_WORKTREE" \
+BIN_DIR="$FAKE_BIN_DIR" \
+CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+sh "$INSTALL_SCRIPT" --from-source --no-upgrade >/dev/null
+
+rm -f "$CARGO_INVOKED_FILE"
+
+# Second run with --force
+PATH="$FAKE_BIN_SHADOW:$PATH" \
+HOME="$FAKE_HOME" \
+GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+GROK_BUILD_SRC="$GB_WORKTREE" \
+BIN_DIR="$FAKE_BIN_DIR" \
+CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+sh "$INSTALL_SCRIPT" --from-source --force >/dev/null
+
+if [ ! -f "$CARGO_INVOKED_FILE" ]; then
+  echo "FAIL: Test (s) - Cargo was not invoked when --force was passed!"; exit 1
+fi
+echo "PASS: Test (s) - Source-mode --force"
+
+# ─────────────────────────────────────────────────────────
+# Test (t): Drift guard between install.sh and patches/README.md
+# ─────────────────────────────────────────────────────────
+echo "Test (t): Drift guard"
+PIN_IN_INSTALL="$(grep '^PINNED_BASE_SHA=' "$INSTALL_SCRIPT" | cut -d= -f2- | tr -d '"' | tr -d "'" || true)"
+if [ -z "$PIN_IN_INSTALL" ]; then
+  echo "FAIL: Test (t) - PINNED_BASE_SHA not found in $INSTALL_SCRIPT"; exit 1
+fi
+grep -q "$PIN_IN_INSTALL" "$REPO_ROOT/patches/README.md" || {
+  echo "FAIL: Test (t) - PINNED_BASE_SHA ($PIN_IN_INSTALL) not found in patches/README.md"; exit 1
+}
+echo "PASS: Test (t) - Drift guard"
+
 echo "=== All install.sh tests passed successfully! ==="

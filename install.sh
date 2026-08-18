@@ -2,10 +2,13 @@
 set -eu
 
 # grokgod install.sh - POSIX sh installer / patch wrapper for grok-build
-# Usage: install.sh [--version TAG_OR_SHA] [--from-source] [--no-upgrade] [--uninstall] [--dry-run] [--prefix DIR]
+# Usage: install.sh [--version TAG_OR_SHA] [--from-source] [--no-upgrade] [--force] [--uninstall] [--dry-run] [--prefix DIR]
 
 GROKGOD_REPO="${GROKGOD_REPO:-https://github.com/karlorz/grokgod}"
 GROKGOD_VERSION="${GROKGOD_VERSION:-}"
+
+# Pinned base commit for source builds (mirrors patches/README.md)
+PINNED_BASE_SHA=d71f6e0c1f5acc5469e503e192fe14824e6f8c90
 
 GROKGOD_HOME="${GROKGOD_HOME:-$HOME/.grokgod}"
 GROK_HOME="${GROK_HOME:-$HOME/.grok}"
@@ -21,6 +24,7 @@ WARN_FREE_KB=$((WARN_FREE_GB * 1024 * 1024))
 CLI_VERSION=""
 FROM_SOURCE=""
 NO_UPGRADE=0
+FORCE=0
 UNINSTALL=0
 DRY_RUN=0
 PREFIX=""
@@ -68,6 +72,10 @@ while [ $# -gt 0 ]; do
       NO_UPGRADE=1
       shift
       ;;
+    --force)
+      FORCE=1
+      shift
+      ;;
     --uninstall)
       UNINSTALL=1
       shift
@@ -89,12 +97,12 @@ while [ $# -gt 0 ]; do
       shift 2
       ;;
     -h|--help)
-      echo "Usage: install.sh [--version TAG_OR_SHA] [--from-source] [--no-upgrade] [--uninstall] [--dry-run] [--prefix DIR]"
+      echo "Usage: install.sh [--version TAG_OR_SHA] [--from-source] [--no-upgrade] [--force] [--uninstall] [--dry-run] [--prefix DIR]"
       exit 0
       ;;
     *)
       log_err "Unknown option: $1"
-      echo "Usage: install.sh [--version TAG_OR_SHA] [--from-source] [--no-upgrade] [--uninstall] [--dry-run] [--prefix DIR]" >&2
+      echo "Usage: install.sh [--version TAG_OR_SHA] [--from-source] [--no-upgrade] [--force] [--uninstall] [--dry-run] [--prefix DIR]" >&2
       exit 1
       ;;
   esac
@@ -298,7 +306,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
         log_dry "Would checkout commit: git -C $GROK_BUILD_SRC checkout $VERSION_SHA"
       else
         log_dry "Would fetch: git -C $GROK_BUILD_SRC fetch origin"
-        log_dry "Would checkout: git -C $GROK_BUILD_SRC checkout origin/main"
+        log_dry "Would checkout pinned base: git -C $GROK_BUILD_SRC checkout $PINNED_BASE_SHA"
       fi
     else
       log_dry "Skipping git fetch/checkout (--no-upgrade)"
@@ -441,17 +449,22 @@ except Exception:
   fi
 
   NEED_DOWNLOAD=1
-  if [ "$NO_UPGRADE" -eq 1 ] && [ -x "$GROKGOD_HOME/bin/grok" ] && [ -f "$GROKGOD_HOME/.source-version" ]; then
+  if [ "$FORCE" -eq 0 ] && [ -x "$GROKGOD_HOME/bin/grok" ] && [ -f "$GROKGOD_HOME/.source-version" ]; then
     STAMP_VER="$(grep '^VERSION=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
-    if [ -n "$GROKGOD_VERSION" ] && [ "$GROKGOD_VERSION" != "latest" ]; then
-      if [ "$STAMP_VER" = "$TAG_NAME" ] || [ "$STAMP_VER" = "$GROKGOD_VERSION" ] || [ "$STAMP_VER" = "v$GROKGOD_VERSION" ]; then
-        log_info "Matching installed version ($STAMP_VER) found and binary exists."
+    if [ "$NO_UPGRADE" -eq 1 ]; then
+      if [ -n "$GROKGOD_VERSION" ] && [ "$GROKGOD_VERSION" != "latest" ]; then
+        if [ "$STAMP_VER" = "$TAG_NAME" ] || [ "$STAMP_VER" = "$GROKGOD_VERSION" ] || [ "$STAMP_VER" = "v$GROKGOD_VERSION" ]; then
+          log_info "Matching installed version ($STAMP_VER) found and binary exists."
+          log_info "Fast-path: skipping download (--no-upgrade), updating launchers only."
+          NEED_DOWNLOAD=0
+        fi
+      else
+        log_info "Installed binary exists ($STAMP_VER)."
         log_info "Fast-path: skipping download (--no-upgrade), updating launchers only."
         NEED_DOWNLOAD=0
       fi
-    else
-      log_info "Installed binary exists ($STAMP_VER)."
-      log_info "Fast-path: skipping download (--no-upgrade), updating launchers only."
+    elif [ -n "$TAG_NAME" ] && [ "$TAG_NAME" != "latest" ] && [ "$STAMP_VER" = "$TAG_NAME" ]; then
+      log_info "Already up to date (VERSION=$TAG_NAME)"
       NEED_DOWNLOAD=0
     fi
   fi
@@ -596,11 +609,22 @@ if [ "$MODE" = "source" ]; then
         exit 1
       }
     else
-      log_info "Checking out origin/main..."
-      git -C "$GROK_BUILD_SRC" checkout origin/main || {
-        log_err "Failed to checkout origin/main"
+      log_info "Verifying pinned base commit $PINNED_BASE_SHA exists..."
+      if ! git -C "$GROK_BUILD_SRC" cat-file -e "${PINNED_BASE_SHA}^{commit}" 2>/dev/null; then
+        log_err "Pinned commit '$PINNED_BASE_SHA' does not exist in $GROK_BUILD_SRC"
+        exit 1
+      fi
+      log_info "Checking out pinned base commit $PINNED_BASE_SHA..."
+      git -C "$GROK_BUILD_SRC" checkout "$PINNED_BASE_SHA" || {
+        log_err "Failed to checkout $PINNED_BASE_SHA"
         exit 1
       }
+
+      # Upstream-moved hint: check if origin/main is ahead of the pinned base
+      ahead_count="$(git -C "$GROK_BUILD_SRC" rev-list --count "${PINNED_BASE_SHA}..origin/main" 2>/dev/null || true)"
+      if [ -n "$ahead_count" ] && [ "$ahead_count" -gt 0 ] 2>/dev/null; then
+        echo "note: upstream origin/main moved ${ahead_count} commit(s) past the pin; see docs/RUNBOOK-session-start.md §2; bump base with --version <sha> if intended"
+      fi
     fi
   fi
 
@@ -608,12 +632,17 @@ if [ "$MODE" = "source" ]; then
   CURRENT_PATCHSET="$(compute_patchset_id)"
 
   NEED_BUILD=1
-  if [ "$NO_UPGRADE" -eq 1 ] && [ -x "$GROKGOD_HOME/bin/grok" ] && [ -f "$GROKGOD_HOME/.source-version" ]; then
+  if [ "$FORCE" -eq 0 ] && [ -x "$GROKGOD_HOME/bin/grok" ] && [ -f "$GROKGOD_HOME/.source-version" ]; then
     STAMP_SHA="$(grep '^SHA=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
     STAMP_PATCHSET="$(grep '^PATCHSET=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
-    if [ "$STAMP_SHA" = "$CURRENT_SHA" ] && [ "$STAMP_PATCHSET" = "$CURRENT_PATCHSET" ]; then
-      log_info "Matching stamp found (SHA=$CURRENT_SHA, PATCHSET=$CURRENT_PATCHSET) and binary exists."
-      log_info "Fast-path: skipping cargo build, updating launchers only."
+    if [ "$NO_UPGRADE" -eq 1 ]; then
+      if [ "$STAMP_SHA" = "$CURRENT_SHA" ] && [ "$STAMP_PATCHSET" = "$CURRENT_PATCHSET" ]; then
+        log_info "Matching stamp found (SHA=$CURRENT_SHA, PATCHSET=$CURRENT_PATCHSET) and binary exists."
+        log_info "Fast-path: skipping cargo build, updating launchers only."
+        NEED_BUILD=0
+      fi
+    elif [ "$STAMP_SHA" = "$CURRENT_SHA" ] && [ "$STAMP_PATCHSET" = "$CURRENT_PATCHSET" ]; then
+      log_info "Already up to date (SHA=$CURRENT_SHA, PATCHSET=$CURRENT_PATCHSET)"
       NEED_BUILD=0
     fi
   fi
