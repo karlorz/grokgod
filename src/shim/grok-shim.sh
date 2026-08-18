@@ -52,6 +52,10 @@ case "$cmd" in
       exit 1
     fi
     ;;
+  run)
+    shift || true
+    exec sh "$GROKGOD_SRC/src/grokgod-run.sh" "$@"
+    ;;
   *)
     export GROK_DISABLE_AUTOUPDATER=1
     if [ ! -x "$GROKGOD_BIN" ]; then
