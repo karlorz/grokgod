@@ -63,6 +63,19 @@ ls -la ~/.local/bin/grok ~/.local/bin/grok.orig
   `.plist.disabled`) unless the user explicitly picks a path.
 - `~/.grokgod/overlays.toml` is test-fixtures only; production never reads it.
 
+## 5. Release CI facts (context, no action)
+
+- `macos-13` runners are retired by GitHub (~Dec 2025); jobs requesting them
+  queue forever and block the whole release. Intel macOS builds use
+  `macos-15-intel`. (Wiki: queries/2026-07-24-clawgod-v175-upstream-sync-p1-p2.md)
+- grok-build vendors `bin/protoc` as a dotslash file; every CI build leg must
+  install dotslash first (`taiki-e/install-action@v2`, `tool: dotslash`) or
+  `xai-grok-tools-api` build.rs panics "protoc not found".
+- release.yml gates on required legs (linux-x64, linux-arm64, darwin-arm64);
+  darwin-x64 + windows-x64 stay best-effort (`continue-on-error`). Do not
+  re-add `if: always()` to the release job - it would publish releases that
+  are missing required binaries.
+
 ## Escalation
 
 Anything unexpected (patch reject on update, PATH reclaimed, disk < 10 GiB,

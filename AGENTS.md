@@ -12,6 +12,8 @@ Before any other work in this repo, read and run
 2. Upstream patch watch (is our manifest.rs normalize fixed upstream?)
 3. Live state sanity (shim ownership of `~/.local/bin/grok`)
 4. Overlay pin facts (GROK_CONFIG_PATH, never `-m`; schedulers stay OFF)
+5. Release CI facts (`macos-13` retired -> `macos-15-intel`; dotslash required
+   for vendored `bin/protoc`; release job gates on required legs)
 
 Report anomalies in your first substantive reply. Do not auto-fix beyond what
 the runbook lists.
