@@ -179,8 +179,11 @@ if [ "$dry_run" -eq 1 ]; then
   else
     echo "EXEC: $GROKGOD_BIN -p $final_prompt"
   fi
+  echo "RESUME: grok sessions list   # then grok --resume <id> from this cwd (inner -p session)"
   exit 0
 fi
+
+echo "note: after the inner grok -p exits, operator can 'grok sessions list' then 'grok --resume <id>' from this cwd" >&2
 
 export GROK_CONFIG_PATH="$target_overlay"
 exec "$GROKGOD_BIN" "$@" -p "$final_prompt"

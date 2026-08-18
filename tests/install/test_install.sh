@@ -8,7 +8,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 INSTALL_SCRIPT="$REPO_ROOT/install.sh"
 PATCH_FILE="$REPO_ROOT/patches/0001-normalize-plugin-skill-join.patch"
-REAL_GROK_BUILD="/Users/karlchow/Desktop/code/grok-build"
+REAL_GROK_BUILD="${REAL_GROK_BUILD:-/Users/karlchow/Desktop/code/grok-build}"
+if [ "${CI:-0}" = "1" ]; then
+  REAL_GROK_BUILD="/nonexistent"
+fi
 
 if [ ! -f "$INSTALL_SCRIPT" ]; then
   echo "FAIL: install.sh not found at $INSTALL_SCRIPT" >&2
@@ -1258,43 +1261,21 @@ echo "Test (p): Source-mode no-op when stamp matches"
 setup_sandbox "test_p"
 reset_worktree
 
-# Mock git wrapper to track invocations
-GIT_INVOKED_FILE="$TEST_DIR/git_invoked.txt"
-rm -f "$GIT_INVOKED_FILE"
-cat << EOF > "$FAKE_BIN_SHADOW/git"
+# Pre-populate fake grokgod binary and matching stamp
+mkdir -p "$FAKE_GROKGOD_HOME/bin"
+cat << 'BIN_EOF' > "$FAKE_GROKGOD_HOME/bin/grok"
 #!/bin/sh
-set -eu
-echo "git \$*" >> "$GIT_INVOKED_FILE"
-# Filter out fetch to avoid network/origin differences in test
-orig_args="\$*"
-if [ "\$1" = "-C" ]; then
-  dir="\$2"
-  shift 2
-  if [ "\$1" = "fetch" ]; then
-    exit 0
-  fi
-  exec /usr/bin/git -C "\$dir" "\$@"
-fi
-if [ "\$1" = "fetch" ]; then
-  exit 0
-fi
-exec /usr/bin/git "\$@"
-EOF
-chmod +x "$FAKE_BIN_SHADOW/git"
+echo "EXISTING_SOURCE_BINARY"
+BIN_EOF
+chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
 
-# First install to populate
-PATH="$FAKE_BIN_SHADOW:$PATH" \
-HOME="$FAKE_HOME" \
-GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
-GROK_BUILD_SRC="$GB_WORKTREE" \
-BIN_DIR="$FAKE_BIN_DIR" \
-CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
-sh "$INSTALL_SCRIPT" --from-source --no-upgrade >/dev/null
-
-rm -f "$CARGO_INVOKED_FILE"
+PATCHSET_HASH="$(cat "$REPO_ROOT/patches"/*.patch | (shasum -a 256 2>/dev/null || sha256sum 2>/dev/null || cksum 2>/dev/null) | awk '{print $1}')"
+printf "SHA=d71f6e0c1f5acc5469e503e192fe14824e6f8c90\nPATCHSET=%s\nVERSION=d71f6e0c1f5acc5469e503e192fe14824e6f8c90\nMODE=source\n" "$PATCHSET_HASH" > "$FAKE_GROKGOD_HOME/.source-version"
 INITIAL_STAMP="$(cat "$FAKE_GROKGOD_HOME/.source-version")"
 
-# Plain run without --no-upgrade (simulates grok update)
+rm -f "$CARGO_INVOKED_FILE"
+
+# Plain run without --force or --no-upgrade (simulates grok update with matching pin)
 UPDATE_OUT="$(
   PATH="$FAKE_BIN_SHADOW:$PATH" \
   HOME="$FAKE_HOME" \
@@ -1326,23 +1307,50 @@ echo "Test (q): Source-mode default checkout targets PINNED_BASE_SHA"
 setup_sandbox "test_q"
 reset_worktree
 
-# Mock git wrapper to track invocations
+# Mock git wrapper to track invocations and shim fetch/cat-file/checkout on CI fixture
 GIT_INVOKED_FILE="$TEST_DIR/git_invoked.txt"
 rm -f "$GIT_INVOKED_FILE"
 cat << EOF > "$FAKE_BIN_SHADOW/git"
 #!/bin/sh
 set -eu
 echo "git \$*" >> "$GIT_INVOKED_FILE"
+dir=""
 if [ "\$1" = "-C" ]; then
   dir="\$2"
   shift 2
-  if [ "\$1" = "fetch" ]; then
-    exit 0
-  fi
-  exec /usr/bin/git -C "\$dir" "\$@"
 fi
+
 if [ "\$1" = "fetch" ]; then
   exit 0
+fi
+
+if [ "\$1" = "cat-file" ]; then
+  # If checking commit existence for pinned base commit, succeed even if commit object is missing in fixture
+  case "\$*" in
+    *"d71f6e0c1f5acc5469e503e192fe14824e6f8c90"*)
+      if [ -n "\$dir" ]; then
+        /usr/bin/git -C "\$dir" "\$@" 2>/dev/null && exit 0 || exit 0
+      else
+        /usr/bin/git "\$@" 2>/dev/null && exit 0 || exit 0
+      fi
+      ;;
+  esac
+fi
+
+if [ "\$1" = "checkout" ]; then
+  case "\$*" in
+    *"d71f6e0c1f5acc5469e503e192fe14824e6f8c90"*)
+      if [ -n "\$dir" ]; then
+        /usr/bin/git -C "\$dir" "\$@" 2>/dev/null && exit 0 || exit 0
+      else
+        /usr/bin/git "\$@" 2>/dev/null && exit 0 || exit 0
+      fi
+      ;;
+  esac
+fi
+
+if [ -n "\$dir" ]; then
+  exec /usr/bin/git -C "\$dir" "\$@"
 fi
 exec /usr/bin/git "\$@"
 EOF
@@ -1370,6 +1378,54 @@ echo "PASS: Test (q) - Default checkout targets pin"
 echo "Test (r): Source-mode update when stamp SHA differs"
 setup_sandbox "test_r"
 reset_worktree
+
+# Mock git wrapper to track invocations and shim fetch/cat-file/checkout on CI fixture
+GIT_INVOKED_FILE="$TEST_DIR/git_invoked.txt"
+rm -f "$GIT_INVOKED_FILE"
+cat << EOF > "$FAKE_BIN_SHADOW/git"
+#!/bin/sh
+set -eu
+echo "git \$*" >> "$GIT_INVOKED_FILE"
+dir=""
+if [ "\$1" = "-C" ]; then
+  dir="\$2"
+  shift 2
+fi
+
+if [ "\$1" = "fetch" ]; then
+  exit 0
+fi
+
+if [ "\$1" = "cat-file" ]; then
+  case "\$*" in
+    *"d71f6e0c1f5acc5469e503e192fe14824e6f8c90"*)
+      if [ -n "\$dir" ]; then
+        /usr/bin/git -C "\$dir" "\$@" 2>/dev/null && exit 0 || exit 0
+      else
+        /usr/bin/git "\$@" 2>/dev/null && exit 0 || exit 0
+      fi
+      ;;
+  esac
+fi
+
+if [ "\$1" = "checkout" ]; then
+  case "\$*" in
+    *"d71f6e0c1f5acc5469e503e192fe14824e6f8c90"*)
+      if [ -n "\$dir" ]; then
+        /usr/bin/git -C "\$dir" "\$@" 2>/dev/null && exit 0 || exit 0
+      else
+        /usr/bin/git "\$@" 2>/dev/null && exit 0 || exit 0
+      fi
+      ;;
+  esac
+fi
+
+if [ -n "\$dir" ]; then
+  exec /usr/bin/git -C "\$dir" "\$@"
+fi
+exec /usr/bin/git "\$@"
+EOF
+chmod +x "$FAKE_BIN_SHADOW/git"
 
 mkdir -p "$FAKE_GROKGOD_HOME/bin"
 cat << 'BIN_EOF' > "$FAKE_GROKGOD_HOME/bin/grok"
@@ -1399,18 +1455,68 @@ echo "Test (s): Source-mode --force"
 setup_sandbox "test_s"
 reset_worktree
 
-# First install
-PATH="$FAKE_BIN_SHADOW:$PATH" \
-HOME="$FAKE_HOME" \
-GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
-GROK_BUILD_SRC="$GB_WORKTREE" \
-BIN_DIR="$FAKE_BIN_DIR" \
-CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
-sh "$INSTALL_SCRIPT" --from-source --no-upgrade >/dev/null
+# Mock git wrapper to track invocations and shim fetch/cat-file/checkout on CI fixture
+GIT_INVOKED_FILE="$TEST_DIR/git_invoked.txt"
+rm -f "$GIT_INVOKED_FILE"
+cat << EOF > "$FAKE_BIN_SHADOW/git"
+#!/bin/sh
+set -eu
+echo "git \$*" >> "$GIT_INVOKED_FILE"
+dir=""
+if [ "\$1" = "-C" ]; then
+  dir="\$2"
+  shift 2
+fi
+
+if [ "\$1" = "fetch" ]; then
+  exit 0
+fi
+
+if [ "\$1" = "cat-file" ]; then
+  case "\$*" in
+    *"d71f6e0c1f5acc5469e503e192fe14824e6f8c90"*)
+      if [ -n "\$dir" ]; then
+        /usr/bin/git -C "\$dir" "\$@" 2>/dev/null && exit 0 || exit 0
+      else
+        /usr/bin/git "\$@" 2>/dev/null && exit 0 || exit 0
+      fi
+      ;;
+  esac
+fi
+
+if [ "\$1" = "checkout" ]; then
+  case "\$*" in
+    *"d71f6e0c1f5acc5469e503e192fe14824e6f8c90"*)
+      if [ -n "\$dir" ]; then
+        /usr/bin/git -C "\$dir" "\$@" 2>/dev/null && exit 0 || exit 0
+      else
+        /usr/bin/git "\$@" 2>/dev/null && exit 0 || exit 0
+      fi
+      ;;
+  esac
+fi
+
+if [ -n "\$dir" ]; then
+  exec /usr/bin/git -C "\$dir" "\$@"
+fi
+exec /usr/bin/git "\$@"
+EOF
+chmod +x "$FAKE_BIN_SHADOW/git"
+
+# Pre-populate matching stamp and binary
+mkdir -p "$FAKE_GROKGOD_HOME/bin"
+cat << 'BIN_EOF' > "$FAKE_GROKGOD_HOME/bin/grok"
+#!/bin/sh
+echo "EXISTING_SOURCE_BINARY"
+BIN_EOF
+chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
+
+PATCHSET_HASH="$(cat "$REPO_ROOT/patches"/*.patch | (shasum -a 256 2>/dev/null || sha256sum 2>/dev/null || cksum 2>/dev/null) | awk '{print $1}')"
+printf "SHA=d71f6e0c1f5acc5469e503e192fe14824e6f8c90\nPATCHSET=%s\nVERSION=d71f6e0c1f5acc5469e503e192fe14824e6f8c90\nMODE=source\n" "$PATCHSET_HASH" > "$FAKE_GROKGOD_HOME/.source-version"
 
 rm -f "$CARGO_INVOKED_FILE"
 
-# Second run with --force
+# Run with --force
 PATH="$FAKE_BIN_SHADOW:$PATH" \
 HOME="$FAKE_HOME" \
 GROKGOD_HOME="$FAKE_GROKGOD_HOME" \

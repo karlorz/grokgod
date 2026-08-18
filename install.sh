@@ -590,60 +590,85 @@ if [ "$MODE" = "source" ]; then
     exit 1
   fi
 
-  if [ "$NO_UPGRADE" -eq 0 ]; then
-    log_step "Fetching upstream changes in $GROK_BUILD_SRC..."
-    git -C "$GROK_BUILD_SRC" fetch origin || {
-      log_err "Failed to fetch from origin in $GROK_BUILD_SRC"
-      exit 1
-    }
-
-    if [ -n "$VERSION_SHA" ]; then
-      log_info "Verifying commit $VERSION_SHA exists..."
-      if ! git -C "$GROK_BUILD_SRC" cat-file -e "${VERSION_SHA}^{commit}" 2>/dev/null; then
-        log_err "Commit '$VERSION_SHA' does not exist in $GROK_BUILD_SRC"
-        exit 1
-      fi
-      log_info "Checking out $VERSION_SHA..."
-      git -C "$GROK_BUILD_SRC" checkout "$VERSION_SHA" || {
-        log_err "Failed to checkout $VERSION_SHA"
-        exit 1
-      }
-    else
-      log_info "Verifying pinned base commit $PINNED_BASE_SHA exists..."
-      if ! git -C "$GROK_BUILD_SRC" cat-file -e "${PINNED_BASE_SHA}^{commit}" 2>/dev/null; then
-        log_err "Pinned commit '$PINNED_BASE_SHA' does not exist in $GROK_BUILD_SRC"
-        exit 1
-      fi
-      log_info "Checking out pinned base commit $PINNED_BASE_SHA..."
-      git -C "$GROK_BUILD_SRC" checkout "$PINNED_BASE_SHA" || {
-        log_err "Failed to checkout $PINNED_BASE_SHA"
-        exit 1
-      }
-
-      # Upstream-moved hint: check if origin/main is ahead of the pinned base
-      ahead_count="$(git -C "$GROK_BUILD_SRC" rev-list --count "${PINNED_BASE_SHA}..origin/main" 2>/dev/null || true)"
-      if [ -n "$ahead_count" ] && [ "$ahead_count" -gt 0 ] 2>/dev/null; then
-        echo "note: upstream origin/main moved ${ahead_count} commit(s) past the pin; see docs/RUNBOOK-session-start.md §2; bump base with --version <sha> if intended"
-      fi
-    fi
-  fi
-
-  CURRENT_SHA="$(git -C "$GROK_BUILD_SRC" rev-parse HEAD 2>/dev/null || echo "unknown")"
-  CURRENT_PATCHSET="$(compute_patchset_id)"
-
-  NEED_BUILD=1
+  # Early no-op check: if stamp matches intended target and binary exists,
+  # skip fetch, checkout, patch, and build without requiring git object resolution.
+  TARGET_SHA="${VERSION_SHA:-$PINNED_BASE_SHA}"
+  EARLY_NOOP=0
   if [ "$FORCE" -eq 0 ] && [ -x "$GROKGOD_HOME/bin/grok" ] && [ -f "$GROKGOD_HOME/.source-version" ]; then
     STAMP_SHA="$(grep '^SHA=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
     STAMP_PATCHSET="$(grep '^PATCHSET=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
+    NOW_PATCHSET="$(compute_patchset_id)"
     if [ "$NO_UPGRADE" -eq 1 ]; then
-      if [ "$STAMP_SHA" = "$CURRENT_SHA" ] && [ "$STAMP_PATCHSET" = "$CURRENT_PATCHSET" ]; then
-        log_info "Matching stamp found (SHA=$CURRENT_SHA, PATCHSET=$CURRENT_PATCHSET) and binary exists."
+      CURRENT_SHA="$(git -C "$GROK_BUILD_SRC" rev-parse HEAD 2>/dev/null || echo "unknown")"
+      if [ "$STAMP_SHA" = "$CURRENT_SHA" ] && [ "$STAMP_PATCHSET" = "$NOW_PATCHSET" ]; then
+        log_info "Matching stamp found (SHA=$CURRENT_SHA, PATCHSET=$NOW_PATCHSET) and binary exists."
         log_info "Fast-path: skipping cargo build, updating launchers only."
+        EARLY_NOOP=1
+      fi
+    elif [ "$STAMP_SHA" = "$TARGET_SHA" ] && [ "$STAMP_PATCHSET" = "$NOW_PATCHSET" ]; then
+      log_info "Already up to date (SHA=$STAMP_SHA, PATCHSET=$STAMP_PATCHSET)"
+      EARLY_NOOP=1
+    fi
+  fi
+
+  if [ "$EARLY_NOOP" -eq 1 ]; then
+    NEED_BUILD=0
+  else
+    if [ "$NO_UPGRADE" -eq 0 ]; then
+      log_step "Fetching upstream changes in $GROK_BUILD_SRC..."
+      git -C "$GROK_BUILD_SRC" fetch origin || {
+        log_err "Failed to fetch from origin in $GROK_BUILD_SRC"
+        exit 1
+      }
+
+      if [ -n "$VERSION_SHA" ]; then
+        log_info "Verifying commit $VERSION_SHA exists..."
+        if ! git -C "$GROK_BUILD_SRC" cat-file -e "${VERSION_SHA}^{commit}" 2>/dev/null; then
+          log_err "Commit '$VERSION_SHA' does not exist in $GROK_BUILD_SRC"
+          exit 1
+        fi
+        log_info "Checking out $VERSION_SHA..."
+        git -C "$GROK_BUILD_SRC" checkout "$VERSION_SHA" || {
+          log_err "Failed to checkout $VERSION_SHA"
+          exit 1
+        }
+      else
+        log_info "Verifying pinned base commit $PINNED_BASE_SHA exists..."
+        if ! git -C "$GROK_BUILD_SRC" cat-file -e "${PINNED_BASE_SHA}^{commit}" 2>/dev/null; then
+          log_err "Pinned commit '$PINNED_BASE_SHA' does not exist in $GROK_BUILD_SRC"
+          exit 1
+        fi
+        log_info "Checking out pinned base commit $PINNED_BASE_SHA..."
+        git -C "$GROK_BUILD_SRC" checkout "$PINNED_BASE_SHA" || {
+          log_err "Failed to checkout $PINNED_BASE_SHA"
+          exit 1
+        }
+
+        # Upstream-moved hint: check if origin/main is ahead of the pinned base
+        ahead_count="$(git -C "$GROK_BUILD_SRC" rev-list --count "${PINNED_BASE_SHA}..origin/main" 2>/dev/null || true)"
+        if [ -n "$ahead_count" ] && [ "$ahead_count" -gt 0 ] 2>/dev/null; then
+          echo "note: upstream origin/main moved ${ahead_count} commit(s) past the pin; see docs/RUNBOOK-session-start.md §2; bump base with --version <sha> if intended"
+        fi
+      fi
+    fi
+
+    CURRENT_SHA="$(git -C "$GROK_BUILD_SRC" rev-parse HEAD 2>/dev/null || echo "unknown")"
+    CURRENT_PATCHSET="$(compute_patchset_id)"
+
+    NEED_BUILD=1
+    if [ "$FORCE" -eq 0 ] && [ -x "$GROKGOD_HOME/bin/grok" ] && [ -f "$GROKGOD_HOME/.source-version" ]; then
+      STAMP_SHA="$(grep '^SHA=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
+      STAMP_PATCHSET="$(grep '^PATCHSET=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
+      if [ "$NO_UPGRADE" -eq 1 ]; then
+        if [ "$STAMP_SHA" = "$CURRENT_SHA" ] && [ "$STAMP_PATCHSET" = "$CURRENT_PATCHSET" ]; then
+          log_info "Matching stamp found (SHA=$CURRENT_SHA, PATCHSET=$CURRENT_PATCHSET) and binary exists."
+          log_info "Fast-path: skipping cargo build, updating launchers only."
+          NEED_BUILD=0
+        fi
+      elif [ "$STAMP_SHA" = "$CURRENT_SHA" ] && [ "$STAMP_PATCHSET" = "$CURRENT_PATCHSET" ]; then
+        log_info "Already up to date (SHA=$CURRENT_SHA, PATCHSET=$CURRENT_PATCHSET)"
         NEED_BUILD=0
       fi
-    elif [ "$STAMP_SHA" = "$CURRENT_SHA" ] && [ "$STAMP_PATCHSET" = "$CURRENT_PATCHSET" ]; then
-      log_info "Already up to date (SHA=$CURRENT_SHA, PATCHSET=$CURRENT_PATCHSET)"
-      NEED_BUILD=0
     fi
   fi
 

@@ -81,6 +81,8 @@ echo "Test 1b: --dry-run prints env and argv without invoking binary"
 OUT1B="$(run_grokgod run --automation-root "$AUTO_DIR_1" --dry-run)"
 echo "$OUT1B" | grep -q "GROK_CONFIG_PATH=$AUTO_DIR_1/grok-overlay.toml" || { echo "FAIL: dry-run missing GROK_CONFIG_PATH ($OUT1B)"; exit 1; }
 echo "$OUT1B" | grep -q "EXEC: .* -p Perform weekly cache scan prompt" || { echo "FAIL: dry-run missing EXEC line ($OUT1B)"; exit 1; }
+echo "$OUT1B" | grep -q "RESUME:" || { echo "FAIL: dry-run missing RESUME line ($OUT1B)"; exit 1; }
+echo "$OUT1B" | grep -q "grok sessions list" || { echo "FAIL: dry-run missing 'grok sessions list' ($OUT1B)"; exit 1; }
 
 if [ -s "$INVOCATIONS_FILE" ]; then
   echo "FAIL: Fake bin was invoked during --dry-run!"; cat "$INVOCATIONS_FILE"; exit 1
