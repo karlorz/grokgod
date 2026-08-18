@@ -8,14 +8,25 @@ Official `grok update` replaces the Mach-O binary. One-off local patches die. `g
 
 ClawGod extracts `cli.js` from a Bun standalone and regex-patches JavaScript. Grok is a native Rust binary (`~/.grok/bin/grok`). There is nothing to extract. This repo copies only the **lifecycle**: wrapper name, version stamp, re-apply, keep official `grok` unpatched.
 
-## v1 (not implemented yet)
+## v1 (live)
 
-`grokgod apply` — rewrite installed plugin manifests:
+PATH `grok` / `grokgod` is the shim. Engine fix is a source patch on
+`manifest.rs` (filter `Component::CurDir` after `plugin_root.join`) plus
+`cargo build --release -p xai-grok-pager-bin`. Not plugin.json rewrite, not
+Mach-O hex.
 
-- `"skills": "./skills/"` → `"skills"`
-- `"skills": "./"` → omit or `"skills"` when a `skills/` dir exists
+```sh
+sh install.sh                  # fetch + apply patches + rebuild + install shim
+sh install.sh --no-upgrade     # re-apply / restore launchers, no fetch
+sh install.sh --uninstall      # restore grok.orig
+grok update                    # same as install.sh
+grok status                    # shim ownership + .source-version
+grokgod cache report           # disk / target size
+```
 
-Then `grokgod` execs official `grok` with the same argv.
+Pinned grok-build SHA: `d71f6e0c1f5acc5469e503e192fe14824e6f8c90`. Session-start
+checks: [docs/RUNBOOK-session-start.md](docs/RUNBOOK-session-start.md) (auto-load
+via [AGENTS.md](AGENTS.md)).
 
 ## grokgod run (overlay pin)
 
@@ -59,4 +70,7 @@ Issue catalog: `~/wiki/projects/grokgod/requirements/2026-08-18-grok-build-wiki-
 
 ## Status
 
-Bootstrap only (2026-08-18). No launcher on PATH yet.
+v1 live on this host (2026-08-18): `~/.local/bin/grok` is the shim;
+`~/.grokgod/bin/grok` is the patched binary (`grok 1.0.5 (d71f6e0c)`).
+Post-v1 overlay pin (`grokgod run`) is implemented; Saturday schedulers stay
+OFF unless you pick a path.

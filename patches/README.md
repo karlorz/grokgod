@@ -8,7 +8,7 @@ This directory contains upstream source patches applied to `grok-build` for `gro
 
 ## Target Commit
 
-- Base commit: `grok-build` commit `d71f6e0c` (`d71f6e0c330cfa9dc05273b06385cfcf6fb8dcf1`)
+- Base commit: `grok-build` commit `d71f6e0c` (`d71f6e0c1f5acc5469e503e192fe14824e6f8c90`)
 
 ## Verification
 
