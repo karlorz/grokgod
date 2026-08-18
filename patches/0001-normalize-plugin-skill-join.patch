@@ -1,0 +1,114 @@
+diff --git a/crates/codegen/xai-grok-agent/src/plugins/manifest.rs b/crates/codegen/xai-grok-agent/src/plugins/manifest.rs
+index b19f2c21..43662068 100644
+--- a/crates/codegen/xai-grok-agent/src/plugins/manifest.rs
++++ b/crates/codegen/xai-grok-agent/src/plugins/manifest.rs
+@@ -12,10 +12,20 @@
+ //! The parser is forward-compatible: unknown fields are silently ignored
+ //! so that manifests authored for newer upstream versions still load.
+ 
+-use std::path::{Path, PathBuf};
++use std::path::{Component, Path, PathBuf};
+ 
+ use serde::Deserialize;
+ 
++/// Normalize a joined path by dropping `.` (CurDir) components so
++/// `"./skills/"` and `"skills"` resolve to the same directory.
++/// `..` is intentionally NOT touched here; containment is enforced by
++/// `is_path_contained`.
++fn normalize_path(path: &Path) -> PathBuf {
++    path.components()
++        .filter(|c| !matches!(c, Component::CurDir))
++        .collect()
++}
++
+ /// Maximum length of a plugin name (kebab-case identifier).
+ const MAX_PLUGIN_NAME_LEN: usize = 64;
+ 
+@@ -56,8 +66,11 @@ impl PathOrPaths {
+     /// with a warning and excluded from the result.
+     pub fn resolve(&self, plugin_root: &Path) -> Vec<PathBuf> {
+         let paths = match self {
+-            PathOrPaths::Single(p) => vec![plugin_root.join(p)],
+-            PathOrPaths::Multiple(ps) => ps.iter().map(|p| plugin_root.join(p)).collect(),
++            PathOrPaths::Single(p) => vec![normalize_path(&plugin_root.join(p))],
++            PathOrPaths::Multiple(ps) => ps
++                .iter()
++                .map(|p| normalize_path(&plugin_root.join(p)))
++                .collect(),
+         };
+         paths
+             .into_iter()
+@@ -102,7 +115,7 @@ fn resolve_component_path(
+ ) -> Option<PathBuf> {
+     match field {
+         Some(PathOrInline::Path(p)) => {
+-            let resolved = plugin_root.join(p);
++            let resolved = normalize_path(&plugin_root.join(p));
+             if !is_path_contained(&resolved, plugin_root) {
+                 tracing::warn!(
+                     path = %resolved.display(),
+@@ -866,4 +879,64 @@ mod tests {
+         }));
+         assert!(manifest.mcp_config_path(&root).is_none());
+     }
++
++    #[test]
++    fn resolve_skills_dot_slash_normalized() {
++        let tmp = tempfile::tempdir().unwrap();
++        let plugin_root = tmp.path().join("my-plugin");
++        std::fs::create_dir_all(plugin_root.join("skills/test-skill")).unwrap();
++        std::fs::write(
++            plugin_root.join("skills/test-skill/SKILL.md"),
++            "# Test Skill",
++        )
++        .unwrap();
++
++        let paths = PathOrPaths::Single("./skills/".to_string());
++        let resolved = paths.resolve(&plugin_root);
++        assert_eq!(resolved, vec![plugin_root.join("skills")]);
++    }
++
++    #[test]
++    fn resolve_equivalent_forms() {
++        let tmp = tempfile::tempdir().unwrap();
++        let plugin_root = tmp.path().join("my-plugin");
++        std::fs::create_dir_all(plugin_root.join("skills")).unwrap();
++
++        let expected = plugin_root.join("skills");
++        for input in ["./skills/", "./skills", "skills/", "skills"] {
++            let paths = PathOrPaths::Single(input.to_string());
++            let resolved = paths.resolve(&plugin_root);
++            assert_eq!(resolved, vec![expected.clone()], "mismatch for {input}");
++        }
++    }
++
++    #[test]
++    fn resolve_component_path_normalizes_dot() {
++        let tmp = tempfile::tempdir().unwrap();
++        let plugin_root = tmp.path().join("my-plugin");
++        std::fs::create_dir_all(plugin_root.join("hooks")).unwrap();
++        let hooks_file = plugin_root.join("hooks/hooks.json");
++        std::fs::write(&hooks_file, r#"{"hooks":{}}"#).unwrap();
++
++        let field = Some(PathOrInline::Path("./hooks/hooks.json".to_string()));
++        let resolved = resolve_component_path(&field, &plugin_root, "hooks/hooks.json", "hooks");
++        assert_eq!(resolved, Some(plugin_root.join("hooks/hooks.json")));
++    }
++
++    #[test]
++    fn resolve_dot_dot_containment_rejected() {
++        let tmp = tempfile::tempdir().unwrap();
++        let plugin_root = tmp.path().join("my-plugin");
++        std::fs::create_dir_all(&plugin_root).unwrap();
++
++        let outside = tmp.path().join("outside-skills");
++        std::fs::create_dir_all(&outside).unwrap();
++
++        let paths = PathOrPaths::Single("../outside-skills".to_string());
++        let resolved = paths.resolve(&plugin_root);
++        assert!(
++            resolved.is_empty(),
++            "../ path escaping root should be rejected by resolve"
++        );
++    }
+ }
