@@ -303,4 +303,63 @@ OUT8C="$(run_grokgod run --automation-root "$AUTO_DIR_NO_PROMPT" --prompt "overr
 echo "$OUT8C" | grep -q "FAKE_BIN_SUCCESS" || { echo "FAIL: Inline prompt failed when launchd-prompt.txt was absent"; exit 1; }
 echo "PASS: Test 8"
 
+# ─────────────────────────────────────────────────────────
+# Test 9: Pass-through args after '--' appear before -p in child argv
+# ─────────────────────────────────────────────────────────
+echo "Test 9: Pass-through args after '--' appear before -p"
+> "$INVOCATIONS_FILE"
+OUT9="$(run_grokgod run --automation-root "$AUTO_DIR_1" -- --always-approve --cwd "$TMP_DIR/custom_cwd")"
+echo "$OUT9" | grep -q "FAKE_BIN_SUCCESS" || { echo "FAIL: Fake bin was not called in Test 9 ($OUT9)"; exit 1; }
+
+grep -q "GROK_CONFIG_PATH=$AUTO_DIR_1/grok-overlay.toml" "$INVOCATIONS_FILE" || { echo "FAIL: GROK_CONFIG_PATH not set correctly in Test 9"; cat "$INVOCATIONS_FILE"; exit 1; }
+grep -q "ARGS:--always-approve --cwd $TMP_DIR/custom_cwd -p Perform weekly cache scan prompt" "$INVOCATIONS_FILE" || { echo "FAIL: Target binary args incorrect in Test 9"; cat "$INVOCATIONS_FILE"; exit 1; }
+echo "PASS: Test 9"
+
+# ─────────────────────────────────────────────────────────
+# Test 10: GROK_CONFIG_PATH exported when pass-through present with --overlay
+# ─────────────────────────────────────────────────────────
+echo "Test 10: GROK_CONFIG_PATH exported with --overlay and pass-through args"
+> "$INVOCATIONS_FILE"
+OUT10="$(run_grokgod run --overlay "$EXPLICIT_DIR/my-custom-overlay.toml" --prompt "test 10" -- --backend remote --model grok-3)"
+echo "$OUT10" | grep -q "FAKE_BIN_SUCCESS" || { echo "FAIL: Fake bin was not called in Test 10 ($OUT10)"; exit 1; }
+
+grep -q "GROK_CONFIG_PATH=$EXPLICIT_DIR/my-custom-overlay.toml" "$INVOCATIONS_FILE" || { echo "FAIL: GROK_CONFIG_PATH not set correctly in Test 10"; cat "$INVOCATIONS_FILE"; exit 1; }
+grep -q "ARGS:--backend remote --model grok-3 -p test 10" "$INVOCATIONS_FILE" || { echo "FAIL: Target binary args incorrect in Test 10"; cat "$INVOCATIONS_FILE"; exit 1; }
+echo "PASS: Test 10"
+
+# ─────────────────────────────────────────────────────────
+# Test 11: No pass-through regression guard (argv exactly as before)
+# ─────────────────────────────────────────────────────────
+echo "Test 11: No pass-through regression guard"
+> "$INVOCATIONS_FILE"
+OUT11="$(run_grokgod run --automation-root "$AUTO_DIR_1")"
+echo "$OUT11" | grep -q "FAKE_BIN_SUCCESS" || { echo "FAIL: Fake bin was not called in Test 11 ($OUT11)"; exit 1; }
+grep -q "ARGS:-p Perform weekly cache scan prompt" "$INVOCATIONS_FILE" || { echo "FAIL: Target binary args incorrect in Test 11"; cat "$INVOCATIONS_FILE"; exit 1; }
+echo "PASS: Test 11"
+
+# ─────────────────────────────────────────────────────────
+# Test 12: Bare trailing '--' (no args) is identical to no '--'
+# ─────────────────────────────────────────────────────────
+echo "Test 12: Bare trailing '--' without args"
+> "$INVOCATIONS_FILE"
+OUT12="$(run_grokgod run --automation-root "$AUTO_DIR_1" --)"
+echo "$OUT12" | grep -q "FAKE_BIN_SUCCESS" || { echo "FAIL: Fake bin was not called in Test 12 ($OUT12)"; exit 1; }
+grep -q "GROK_CONFIG_PATH=$AUTO_DIR_1/grok-overlay.toml" "$INVOCATIONS_FILE" || { echo "FAIL: GROK_CONFIG_PATH not set correctly in Test 12"; cat "$INVOCATIONS_FILE"; exit 1; }
+grep -q "ARGS:-p Perform weekly cache scan prompt" "$INVOCATIONS_FILE" || { echo "FAIL: Target binary args incorrect in Test 12"; cat "$INVOCATIONS_FILE"; exit 1; }
+echo "PASS: Test 12"
+
+# ─────────────────────────────────────────────────────────
+# Test 13: --dry-run prints final argv including pass-through args
+# ─────────────────────────────────────────────────────────
+echo "Test 13: --dry-run prints argv including pass-through args"
+> "$INVOCATIONS_FILE"
+OUT13="$(run_grokgod run --automation-root "$AUTO_DIR_1" --dry-run -- --always-approve --cwd "$TMP_DIR/custom_cwd")"
+echo "$OUT13" | grep -q "GROK_CONFIG_PATH=$AUTO_DIR_1/grok-overlay.toml" || { echo "FAIL: dry-run missing GROK_CONFIG_PATH ($OUT13)"; exit 1; }
+echo "$OUT13" | grep -q "EXEC: .* --always-approve --cwd $TMP_DIR/custom_cwd -p Perform weekly cache scan prompt" || { echo "FAIL: dry-run missing pass-through args in EXEC line ($OUT13)"; exit 1; }
+
+if [ -s "$INVOCATIONS_FILE" ]; then
+  echo "FAIL: Fake bin was invoked during --dry-run in Test 13!"; cat "$INVOCATIONS_FILE"; exit 1
+fi
+echo "PASS: Test 13"
+
 echo "=== All grokgod run tests passed successfully! ==="

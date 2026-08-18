@@ -13,8 +13,8 @@ dry_run=0
 usage() {
   cat << 'EOF' >&2
 Usage:
-  grokgod run --automation-root DIR [--prompt-file FILE | --prompt "text"] [--dry-run]
-  grokgod run --overlay FILE [--prompt-file FILE | --prompt "text"] [--dry-run]
+  grokgod run --automation-root DIR [--prompt-file FILE | --prompt "text"] [--dry-run] [-- [GROK_ARGS...]]
+  grokgod run --overlay FILE [--prompt-file FILE | --prompt "text"] [--dry-run] [-- [GROK_ARGS...]]
 
 Options:
   --automation-root DIR   Directory containing grok-overlay.toml and launchd-prompt.txt
@@ -22,6 +22,7 @@ Options:
   --prompt-file FILE      Explicit path to prompt file
   --prompt "text"         Inline prompt string
   --dry-run               Print env and argv that would be executed and exit 0
+  --                      Pass all subsequent arguments directly to grok (before -p)
   -h, --help              Show this help message
 EOF
   exit 1
@@ -29,6 +30,10 @@ EOF
 
 while [ $# -gt 0 ]; do
   case "$1" in
+    --)
+      shift
+      break
+      ;;
     --automation-root)
       [ $# -ge 2 ] || { echo "error: --automation-root requires a directory argument" >&2; exit 1; }
       automation_root="$2"
@@ -169,9 +174,13 @@ fi
 
 if [ "$dry_run" -eq 1 ]; then
   echo "GROK_CONFIG_PATH=$target_overlay"
-  echo "EXEC: $GROKGOD_BIN -p $final_prompt"
+  if [ $# -gt 0 ]; then
+    echo "EXEC: $GROKGOD_BIN $* -p $final_prompt"
+  else
+    echo "EXEC: $GROKGOD_BIN -p $final_prompt"
+  fi
   exit 0
 fi
 
 export GROK_CONFIG_PATH="$target_overlay"
-exec "$GROKGOD_BIN" -p "$final_prompt"
+exec "$GROKGOD_BIN" "$@" -p "$final_prompt"
