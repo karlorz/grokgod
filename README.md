@@ -70,7 +70,7 @@ Issue catalog: `~/wiki/projects/grokgod/requirements/2026-08-18-grok-build-wiki-
 
 ## Status
 
-v1 live on this host (2026-08-18): `~/.local/bin/grok` is the shim;
+v1 live on this host (2026-08-18): `~/.local/bin/grok` and `$GROK_HOME/bin/grok` are the shim (Orca/agentCommand `grok` is covered because we own `$GROK_HOME/bin/grok` as well as `~/.local/bin/grok`);
 `~/.grokgod/bin/grok` is the patched binary (`grok 1.0.5 (d71f6e0c)`).
 Post-v1 overlay pin (`grokgod run`) is implemented; Saturday schedulers stay
 OFF unless you pick a path.

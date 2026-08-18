@@ -6,6 +6,7 @@ set -eu
 
 # Environment variable defaults
 GROKGOD_HOME="${GROKGOD_HOME:-$HOME/.grokgod}"
+GROK_HOME="${GROK_HOME:-$HOME/.grok}"
 GROK_BUILD_SRC="${GROK_BUILD_SRC:-$HOME/Desktop/code/grok-build}"
 BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$GROKGOD_HOME/target}"
@@ -77,6 +78,7 @@ while [ $# -gt 0 ]; do
       fi
       PREFIX="$2"
       GROKGOD_HOME="$PREFIX/grokgod"
+      GROK_HOME="$PREFIX/grok"
       BIN_DIR="$PREFIX/bin"
       CARGO_TARGET_DIR="$GROKGOD_HOME/target"
       shift 2
@@ -168,7 +170,44 @@ if [ "$UNINSTALL" -eq 1 ]; then
     fi
   fi
 
-  # c. Remove GROKGOD_HOME
+  # c. Restore grok in GROK_HOME/bin
+  if [ -f "$GROK_HOME/bin/grok.orig" ] || [ -L "$GROK_HOME/bin/grok.orig" ]; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      log_dry "Restore GROK_HOME backup: mv $GROK_HOME/bin/grok.orig $GROK_HOME/bin/grok"
+    else
+      mv "$GROK_HOME/bin/grok.orig" "$GROK_HOME/bin/grok"
+      log_info "Restored original grok binary: $GROK_HOME/bin/grok.orig -> $GROK_HOME/bin/grok"
+    fi
+  elif [ -f "$GROK_HOME/bin/grok" ] && grep -q "GROKGOD" "$GROK_HOME/bin/grok" 2>/dev/null; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      log_dry "Remove grokgod shim from GROK_HOME: rm $GROK_HOME/bin/grok"
+    else
+      rm -f "$GROK_HOME/bin/grok"
+      log_info "Removed grokgod shim: $GROK_HOME/bin/grok"
+    fi
+
+    # If official grok-* Mach-O exists, recreate symlink to latest grok-*
+    latest_grok=""
+    if [ -d "$GROK_HOME/bin" ]; then
+      # Find latest matching grok-* file (excluding grok.orig or grokgod)
+      for candidate in "$GROK_HOME/bin"/grok-*; do
+        if [ -f "$candidate" ] && [ ! -L "$candidate" ]; then
+          latest_grok="$candidate"
+        fi
+      done
+    fi
+    if [ -n "$latest_grok" ]; then
+      target_rel="$(basename "$latest_grok")"
+      if [ "$DRY_RUN" -eq 1 ]; then
+        log_dry "Recreate symlink to official grok: ln -sf $target_rel $GROK_HOME/bin/grok"
+      else
+        ln -sf "$target_rel" "$GROK_HOME/bin/grok"
+        log_info "Recreated symlink to official binary: $GROK_HOME/bin/grok -> $target_rel"
+      fi
+    fi
+  fi
+
+  # d. Remove GROKGOD_HOME
   if [ -d "$GROKGOD_HOME" ]; then
     if [ "$DRY_RUN" -eq 1 ]; then
       log_dry "Remove GROKGOD_HOME: rm -rf $GROKGOD_HOME"
@@ -178,7 +217,7 @@ if [ "$UNINSTALL" -eq 1 ]; then
     fi
   fi
 
-  # d. Flush shell cache best-effort
+  # e. Flush shell cache best-effort
   if [ "$DRY_RUN" -eq 1 ]; then
     log_dry "Flush shell command hash table: hash -r"
   else
@@ -266,7 +305,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
   log_dry "Would build: CARGO_TARGET_DIR=$CARGO_TARGET_DIR cargo build --release -p xai-grok-pager-bin (in $GROK_BUILD_SRC)"
   log_dry "Would copy binary: cp $CARGO_TARGET_DIR/release/xai-grok-pager $GROKGOD_HOME/bin/grok"
   log_dry "Would stamp: $GROKGOD_HOME/.source-version"
-  log_dry "Would install launchers: $BIN_DIR/grok and $BIN_DIR/grokgod"
+  log_dry "Would install launchers: $BIN_DIR/grok, $BIN_DIR/grokgod, and $GROK_HOME/bin/grok"
   log_info "Dry-run completed successfully (no changes made)."
   exit 0
 fi
@@ -451,8 +490,9 @@ fi
 # ─────────────────────────────────────────────────────────
 # 9. LAUNCHERS (ClawGod write_launcher pattern)
 # ─────────────────────────────────────────────────────────
-log_step "Installing shim launchers to $BIN_DIR..."
+log_step "Installing shim launchers to $BIN_DIR and $GROK_HOME/bin..."
 mkdir -p "$BIN_DIR"
+mkdir -p "$GROK_HOME/bin"
 
 if [ ! -f "$SHIM_SRC" ]; then
   log_err "Shim template not found at $SHIM_SRC"
@@ -489,6 +529,7 @@ write_launcher() {
 
 write_launcher "$BIN_DIR/grok" 1
 write_launcher "$BIN_DIR/grokgod" 0
+write_launcher "$GROK_HOME/bin/grok" 1
 
 # Flush shell hash cache
 hash -r 2>/dev/null || true

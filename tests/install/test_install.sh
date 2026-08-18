@@ -40,11 +40,12 @@ setup_sandbox() {
   PREFIX_DIR="$TEST_DIR/prefix"
   FAKE_HOME="$TEST_DIR/home"
   FAKE_GROKGOD_HOME="$FAKE_HOME/.grokgod"
+  FAKE_GROK_HOME="$FAKE_HOME/.grok"
   FAKE_BIN_DIR="$FAKE_HOME/.local/bin"
   FAKE_CARGO_TARGET_DIR="$FAKE_GROKGOD_HOME/target"
   FAKE_BIN_SHADOW="$TEST_DIR/fake_bin"
 
-  mkdir -p "$FAKE_GROKGOD_HOME" "$FAKE_BIN_DIR" "$FAKE_BIN_SHADOW"
+  mkdir -p "$FAKE_GROKGOD_HOME" "$FAKE_GROK_HOME" "$FAKE_BIN_DIR" "$FAKE_BIN_SHADOW"
 
   # Create mock cargo in FAKE_BIN_SHADOW
   CARGO_INVOKED_FILE="$TEST_DIR/cargo_invoked.txt"
@@ -396,6 +397,149 @@ fi
 if [ ! -x "$PREFIX_TARGET/bin/grok" ]; then
   echo "FAIL: Launcher not installed under prefix at $PREFIX_TARGET/bin/grok"; exit 1
 fi
+if [ ! -x "$PREFIX_TARGET/grok/bin/grok" ]; then
+  echo "FAIL: Launcher not installed under prefix at $PREFIX_TARGET/grok/bin/grok"; exit 1
+fi
 echo "PASS: Test (h) - Prefix flag"
+
+# ─────────────────────────────────────────────────────────
+# Test (i): Own $GROK_HOME/bin/grok shim and preserve versioned Mach-O
+# ─────────────────────────────────────────────────────────
+echo "Test (i): Own \$GROK_HOME/bin/grok shim replacing symlink to grok-1.0.5"
+setup_sandbox "test_i"
+reset_worktree
+
+# Setup fake GROK_HOME/bin with grok-1.0.5 Mach-O and grok symlink
+mkdir -p "$FAKE_GROK_HOME/bin"
+cat << 'MACHO_EOF' > "$FAKE_GROK_HOME/bin/grok-1.0.5"
+OFFICIAL_VERSIONED_MACHO_1_0_5
+MACHO_EOF
+chmod +x "$FAKE_GROK_HOME/bin/grok-1.0.5"
+(cd "$FAKE_GROK_HOME/bin" && ln -s grok-1.0.5 grok)
+
+# Verify initial setup
+if [ ! -L "$FAKE_GROK_HOME/bin/grok" ]; then
+  echo "FAIL: Initial setup failed to create symlink at $FAKE_GROK_HOME/bin/grok"; exit 1
+fi
+
+PATH="$FAKE_BIN_SHADOW:$PATH" \
+HOME="$FAKE_HOME" \
+GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+GROK_HOME="$FAKE_GROK_HOME" \
+GROK_BUILD_SRC="$GB_WORKTREE" \
+BIN_DIR="$FAKE_BIN_DIR" \
+CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+sh "$INSTALL_SCRIPT" --no-upgrade >/dev/null
+
+# 1. $FAKE_GROK_HOME/bin/grok is a regular file (NOT a symlink) containing GROKGOD
+if [ -L "$FAKE_GROK_HOME/bin/grok" ]; then
+  echo "FAIL: $FAKE_GROK_HOME/bin/grok is still a symlink after install"; exit 1
+fi
+if [ ! -f "$FAKE_GROK_HOME/bin/grok" ]; then
+  echo "FAIL: $FAKE_GROK_HOME/bin/grok is not a regular file"; exit 1
+fi
+grep -q "GROKGOD" "$FAKE_GROK_HOME/bin/grok" || {
+  echo "FAIL: $FAKE_GROK_HOME/bin/grok does not contain GROKGOD"; exit 1
+}
+
+# 2. Versioned Mach-O grok-1.0.5 still exists and has original content
+if [ ! -f "$FAKE_GROK_HOME/bin/grok-1.0.5" ]; then
+  echo "FAIL: $FAKE_GROK_HOME/bin/grok-1.0.5 was deleted or moved"; exit 1
+fi
+MACHO_CONTENT="$(cat "$FAKE_GROK_HOME/bin/grok-1.0.5")"
+if [ "$MACHO_CONTENT" != "OFFICIAL_VERSIONED_MACHO_1_0_5" ]; then
+  echo "FAIL: $FAKE_GROK_HOME/bin/grok-1.0.5 was modified: $MACHO_CONTENT"; exit 1
+fi
+
+# 3. grok.orig exists in GROK_HOME/bin (the backup of the original symlink or file)
+if [ ! -e "$FAKE_GROK_HOME/bin/grok.orig" ] && [ ! -L "$FAKE_GROK_HOME/bin/grok.orig" ]; then
+  echo "FAIL: $FAKE_GROK_HOME/bin/grok.orig backup was not created"; exit 1
+fi
+
+# 4. ~/.local/bin/grok and ~/.local/bin/grokgod are also installed as shims
+if [ ! -x "$FAKE_BIN_DIR/grok" ] || [ ! -x "$FAKE_BIN_DIR/grokgod" ]; then
+  echo "FAIL: Launchers in $FAKE_BIN_DIR were not installed"; exit 1
+fi
+grep -q "GROKGOD" "$FAKE_BIN_DIR/grok" || { echo "FAIL: $FAKE_BIN_DIR/grok is not GROKGOD shim"; exit 1; }
+grep -q "GROKGOD" "$FAKE_BIN_DIR/grokgod" || { echo "FAIL: $FAKE_BIN_DIR/grokgod is not GROKGOD shim"; exit 1; }
+
+echo "PASS: Test (i) - Own GROK_HOME/bin/grok shim"
+
+# ─────────────────────────────────────────────────────────
+# Test (j): Uninstall restores official grok in GROK_HOME/bin
+# ─────────────────────────────────────────────────────────
+echo "Test (j): Uninstall restores official grok in GROK_HOME/bin"
+setup_sandbox "test_j"
+reset_worktree
+
+# Setup fake GROK_HOME/bin with grok-1.0.5 and symlink
+mkdir -p "$FAKE_GROK_HOME/bin"
+cat << 'MACHO_EOF' > "$FAKE_GROK_HOME/bin/grok-1.0.5"
+OFFICIAL_VERSIONED_MACHO_1_0_5
+MACHO_EOF
+chmod +x "$FAKE_GROK_HOME/bin/grok-1.0.5"
+(cd "$FAKE_GROK_HOME/bin" && ln -s grok-1.0.5 grok)
+
+# Install grokgod
+PATH="$FAKE_BIN_SHADOW:$PATH" \
+HOME="$FAKE_HOME" \
+GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+GROK_HOME="$FAKE_GROK_HOME" \
+GROK_BUILD_SRC="$GB_WORKTREE" \
+BIN_DIR="$FAKE_BIN_DIR" \
+CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+sh "$INSTALL_SCRIPT" --no-upgrade >/dev/null
+
+# Now uninstall
+PATH="$FAKE_BIN_SHADOW:$PATH" \
+HOME="$FAKE_HOME" \
+GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+GROK_HOME="$FAKE_GROK_HOME" \
+GROK_BUILD_SRC="$GB_WORKTREE" \
+BIN_DIR="$FAKE_BIN_DIR" \
+CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+sh "$INSTALL_SCRIPT" --uninstall >/dev/null
+
+# 1. GROK_HOME/bin/grok.orig should be gone
+if [ -e "$FAKE_GROK_HOME/bin/grok.orig" ] || [ -L "$FAKE_GROK_HOME/bin/grok.orig" ]; then
+  echo "FAIL: $FAKE_GROK_HOME/bin/grok.orig still exists after uninstall"; exit 1
+fi
+
+# 2. GROK_HOME/bin/grok must exist and NOT be a GROKGOD shim
+if [ ! -e "$FAKE_GROK_HOME/bin/grok" ]; then
+  echo "FAIL: $FAKE_GROK_HOME/bin/grok does not exist after uninstall"; exit 1
+fi
+if grep -q "GROKGOD" "$FAKE_GROK_HOME/bin/grok" 2>/dev/null; then
+  echo "FAIL: $FAKE_GROK_HOME/bin/grok is still a GROKGOD shim after uninstall"; exit 1
+fi
+
+# 3. Executing GROK_HOME/bin/grok resolves to official binary (points to grok-1.0.5)
+RESOLVED_OUT="$(cat "$FAKE_GROK_HOME/bin/grok")"
+if [ "$RESOLVED_OUT" != "OFFICIAL_VERSIONED_MACHO_1_0_5" ]; then
+  echo "FAIL: Reading $FAKE_GROK_HOME/bin/grok gave: $RESOLVED_OUT, expected: OFFICIAL_VERSIONED_MACHO_1_0_5"; exit 1
+fi
+
+# 4. Test case where grok.orig was absent but grok was our shim and grok-* exists
+rm -f "$FAKE_GROK_HOME/bin/grok"
+cp "$REPO_ROOT/src/shim/grok-shim.sh" "$FAKE_GROK_HOME/bin/grok"
+
+PATH="$FAKE_BIN_SHADOW:$PATH" \
+HOME="$FAKE_HOME" \
+GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+GROK_HOME="$FAKE_GROK_HOME" \
+GROK_BUILD_SRC="$GB_WORKTREE" \
+BIN_DIR="$FAKE_BIN_DIR" \
+CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+sh "$INSTALL_SCRIPT" --uninstall >/dev/null
+
+if [ ! -L "$FAKE_GROK_HOME/bin/grok" ]; then
+  echo "FAIL: Fallback symlink to grok-1.0.5 was not created when grok.orig was absent"; exit 1
+fi
+RESOLVED_FALLBACK_OUT="$(cat "$FAKE_GROK_HOME/bin/grok")"
+if [ "$RESOLVED_FALLBACK_OUT" != "OFFICIAL_VERSIONED_MACHO_1_0_5" ]; then
+  echo "FAIL: Fallback symlink gave: $RESOLVED_FALLBACK_OUT, expected: OFFICIAL_VERSIONED_MACHO_1_0_5"; exit 1
+fi
+
+echo "PASS: Test (j) - Uninstall restores official grok in GROK_HOME/bin"
 
 echo "=== All install.sh tests passed successfully! ==="
