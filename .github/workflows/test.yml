@@ -21,6 +21,7 @@ jobs:
 
       - name: Run Normalize Contract Test
         run: |
+          mkdir -p target
           rustc --test tests/normalize/normalize_contract.rs -o target/normalize_contract
           ./target/normalize_contract
 
