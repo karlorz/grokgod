@@ -4,6 +4,28 @@ ClawGod-style **wrapper** for official [Grok Build](https://github.com/xai-org/g
 
 Official `grok update` replaces the Mach-O binary. One-off local patches die. `grokgod` re-applies persist steps on launch.
 
+## Install
+
+### macOS / Linux (Prebuilt Binary)
+
+```sh
+curl -fsSL https://github.com/karlorz/grokgod/releases/latest/download/install.sh | bash
+```
+
+### Windows (PowerShell - EXPERIMENTAL)
+
+```powershell
+irm https://github.com/karlorz/grokgod/releases/latest/download/install.ps1 | iex
+```
+
+### Build from Source
+
+To build from local source using `cargo` (legacy mode):
+
+```sh
+sh install.sh --from-source
+```
+
 ## Not ClawGod’s engine
 
 ClawGod extracts `cli.js` from a Bun standalone and regex-patches JavaScript. Grok is a native Rust binary (`~/.grok/bin/grok`). There is nothing to extract. This repo copies only the **lifecycle**: wrapper name, version stamp, re-apply, keep official `grok` unpatched.
@@ -16,10 +38,11 @@ PATH `grok` / `grokgod` is the shim. Engine fix is a source patch on
 Mach-O hex.
 
 ```sh
-sh install.sh                  # fetch + apply patches + rebuild + install shim
-sh install.sh --no-upgrade     # re-apply / restore launchers, no fetch
+sh install.sh                  # release mode: download prebuilt binary + shims
+sh install.sh --from-source    # source mode: fetch + apply patches + rebuild
+sh install.sh --no-upgrade     # re-apply / restore launchers, skip download/build
 sh install.sh --uninstall      # restore grok.orig
-grok update                    # same as install.sh
+grok update                    # update to latest release (or rebuild if installed from source)
 grok status                    # shim ownership + .source-version
 grokgod cache report           # disk / target size
 ```

@@ -1,0 +1,37 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Normalize Contract Test
+        run: |
+          rustc --test tests/normalize/normalize_contract.rs -o target/normalize_contract
+          ./target/normalize_contract
+
+      - name: Run Shim, Cache, and Run Test Suites
+        run: |
+          sh tests/shim/test_shim.sh
+          sh tests/cache/test_cache.sh
+          sh tests/run/test_run.sh
+
+      - name: Run Install Test Suite
+        env:
+          CI: "1"
+        run: |
+          sh tests/install/test_install.sh

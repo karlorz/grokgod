@@ -2,12 +2,13 @@
 set -eu
 
 # grokgod install.sh - POSIX sh installer / patch wrapper for grok-build
-# Usage: install.sh [--version SHA] [--no-upgrade] [--uninstall] [--dry-run] [--prefix DIR]
+# Usage: install.sh [--version TAG_OR_SHA] [--from-source] [--no-upgrade] [--uninstall] [--dry-run] [--prefix DIR]
 
-# Environment variable defaults
+GROKGOD_REPO="${GROKGOD_REPO:-https://github.com/karlorz/grokgod}"
+GROKGOD_VERSION="${GROKGOD_VERSION:-}"
+
 GROKGOD_HOME="${GROKGOD_HOME:-$HOME/.grokgod}"
 GROK_HOME="${GROK_HOME:-$HOME/.grok}"
-GROK_BUILD_SRC="${GROK_BUILD_SRC:-$HOME/Desktop/code/grok-build}"
 BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$GROKGOD_HOME/target}"
 DF_CMD="${DF_CMD:-df}"
@@ -17,16 +18,16 @@ WARN_FREE_GB=10
 MIN_FREE_KB=$((MIN_FREE_GB * 1024 * 1024))
 WARN_FREE_KB=$((WARN_FREE_GB * 1024 * 1024))
 
-VERSION_SHA=""
+CLI_VERSION=""
+FROM_SOURCE=""
 NO_UPGRADE=0
 UNINSTALL=0
 DRY_RUN=0
 PREFIX=""
 
-# Resolve repo root directory (where install.sh resides)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PATCHES_DIR="$SCRIPT_DIR/patches"
-SHIM_SRC="$SCRIPT_DIR/src/shim/grok-shim.sh"
+SHIM_SRC=""
 
 log_info() {
   printf "  \033[0;32m✓\033[0m %s\n" "$1"
@@ -53,11 +54,15 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --version)
       if [ $# -lt 2 ]; then
-        log_err "--version requires a SHA argument"
+        log_err "--version requires an argument"
         exit 1
       fi
-      VERSION_SHA="$2"
+      CLI_VERSION="$2"
       shift 2
+      ;;
+    --from-source)
+      FROM_SOURCE=1
+      shift
       ;;
     --no-upgrade)
       NO_UPGRADE=1
@@ -84,16 +89,41 @@ while [ $# -gt 0 ]; do
       shift 2
       ;;
     -h|--help)
-      echo "Usage: install.sh [--version SHA] [--no-upgrade] [--uninstall] [--dry-run] [--prefix DIR]"
+      echo "Usage: install.sh [--version TAG_OR_SHA] [--from-source] [--no-upgrade] [--uninstall] [--dry-run] [--prefix DIR]"
       exit 0
       ;;
     *)
       log_err "Unknown option: $1"
-      echo "Usage: install.sh [--version SHA] [--no-upgrade] [--uninstall] [--dry-run] [--prefix DIR]" >&2
+      echo "Usage: install.sh [--version TAG_OR_SHA] [--from-source] [--no-upgrade] [--uninstall] [--dry-run] [--prefix DIR]" >&2
       exit 1
       ;;
   esac
 done
+
+# Determine install mode: "release" (default) or "source"
+INSTALLED_MODE=""
+if [ -f "$GROKGOD_HOME/.source-version" ]; then
+  INSTALLED_MODE="$(grep '^MODE=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
+fi
+
+if [ "$FROM_SOURCE" = "1" ]; then
+  MODE="source"
+elif [ -n "$FROM_SOURCE" ] && [ "$FROM_SOURCE" = "0" ]; then
+  MODE="release"
+elif [ "$INSTALLED_MODE" = "source" ]; then
+  MODE="source"
+else
+  MODE="release"
+fi
+
+if [ "$MODE" = "source" ]; then
+  GROK_BUILD_SRC="${GROK_BUILD_SRC:-$HOME/Desktop/code/grok-build}"
+  VERSION_SHA="$CLI_VERSION"
+else
+  if [ -n "$CLI_VERSION" ]; then
+    GROKGOD_VERSION="$CLI_VERSION"
+  fi
+fi
 
 # Helper: check available disk space in KB on directory or parent
 get_free_kb() {
@@ -189,7 +219,6 @@ if [ "$UNINSTALL" -eq 1 ]; then
     # If official grok-* Mach-O exists, recreate symlink to latest grok-*
     latest_grok=""
     if [ -d "$GROK_HOME/bin" ]; then
-      # Find latest matching grok-* file (excluding grok.orig or grokgod)
       for candidate in "$GROK_HOME/bin"/grok-*; do
         if [ -f "$candidate" ] && [ ! -L "$candidate" ]; then
           latest_grok="$candidate"
@@ -230,7 +259,7 @@ if [ "$UNINSTALL" -eq 1 ]; then
 fi
 
 # ─────────────────────────────────────────────────────────
-# 2. DISK GUARD (Pre-build)
+# 2. DISK GUARD (Pre-build / Pre-install)
 # ─────────────────────────────────────────────────────────
 parent_dir="$(dirname "$GROKGOD_HOME")"
 if [ "$DRY_RUN" -eq 0 ]; then
@@ -248,128 +277,390 @@ if [ -n "$free_kb" ] && [ "$free_kb" -ge 0 ] 2>/dev/null; then
 fi
 
 # ─────────────────────────────────────────────────────────
-# 11. DRY-RUN MODE FLOW
+# DRY-RUN MODE FLOW
 # ─────────────────────────────────────────────────────────
 if [ "$DRY_RUN" -eq 1 ]; then
   log_step "Running dry-run checks..."
 
-  # Check source directory exists
-  if [ ! -d "$GROK_BUILD_SRC" ]; then
-    log_err "GROK_BUILD_SRC directory not found: $GROK_BUILD_SRC"
-    exit 1
-  fi
-
-  # Read-only git SHA existence check if version specified
-  if [ "$NO_UPGRADE" -eq 0 ]; then
-    if [ -n "$VERSION_SHA" ]; then
-      log_dry "Check git commit exists: git -C $GROK_BUILD_SRC cat-file -e ${VERSION_SHA}^{commit}"
-      if ! git -C "$GROK_BUILD_SRC" cat-file -e "${VERSION_SHA}^{commit}" 2>/dev/null; then
-        log_err "Commit '${VERSION_SHA}' does not exist in $GROK_BUILD_SRC"
-        exit 1
-      fi
-      log_dry "Would checkout commit: git -C $GROK_BUILD_SRC checkout $VERSION_SHA"
-    else
-      log_dry "Would fetch: git -C $GROK_BUILD_SRC fetch origin"
-      log_dry "Would checkout: git -C $GROK_BUILD_SRC checkout origin/main"
+  if [ "$MODE" = "source" ]; then
+    if [ ! -d "$GROK_BUILD_SRC" ]; then
+      log_err "GROK_BUILD_SRC directory not found: $GROK_BUILD_SRC"
+      exit 1
     fi
-  else
-    log_dry "Skipping git fetch/checkout (--no-upgrade)"
-  fi
 
-  # Check patch files
-  patch_list=""
-  if [ -d "$PATCHES_DIR" ]; then
-    for p in "$PATCHES_DIR"/*.patch; do
-      if [ -f "$p" ]; then
-        patch_list="$patch_list $p"
-      fi
-    done
-  fi
-
-  if [ -n "$patch_list" ]; then
-    for p in $patch_list; do
-      log_dry "Would test and apply patch: $p"
-      # Test apply --check against GROK_BUILD_SRC if clean or check feasibility
-      if git -C "$GROK_BUILD_SRC" apply --check "$p" 2>/dev/null; then
-        log_dry "  -> patch $(basename "$p") applies cleanly"
-      elif git -C "$GROK_BUILD_SRC" apply -R --check "$p" 2>/dev/null; then
-        log_dry "  -> patch $(basename "$p") is already applied (reversibly clean)"
+    if [ "$NO_UPGRADE" -eq 0 ]; then
+      if [ -n "$VERSION_SHA" ]; then
+        log_dry "Check git commit exists: git -C $GROK_BUILD_SRC cat-file -e ${VERSION_SHA}^{commit}"
+        if ! git -C "$GROK_BUILD_SRC" cat-file -e "${VERSION_SHA}^{commit}" 2>/dev/null; then
+          log_err "Commit '${VERSION_SHA}' does not exist in $GROK_BUILD_SRC"
+          exit 1
+        fi
+        log_dry "Would checkout commit: git -C $GROK_BUILD_SRC checkout $VERSION_SHA"
       else
-        log_warn "  -> patch $(basename "$p") dry-run check failed against current working tree"
+        log_dry "Would fetch: git -C $GROK_BUILD_SRC fetch origin"
+        log_dry "Would checkout: git -C $GROK_BUILD_SRC checkout origin/main"
       fi
-    done
+    else
+      log_dry "Skipping git fetch/checkout (--no-upgrade)"
+    fi
+
+    patch_list=""
+    if [ -d "$PATCHES_DIR" ]; then
+      for p in "$PATCHES_DIR"/*.patch; do
+        if [ -f "$p" ]; then
+          patch_list="$patch_list $p"
+        fi
+      done
+    fi
+
+    if [ -n "$patch_list" ]; then
+      for p in $patch_list; do
+        log_dry "Would test and apply patch: $p"
+        if git -C "$GROK_BUILD_SRC" apply --check "$p" 2>/dev/null; then
+          log_dry "  -> patch $(basename "$p") applies cleanly"
+        elif git -C "$GROK_BUILD_SRC" apply -R --check "$p" 2>/dev/null; then
+          log_dry "  -> patch $(basename "$p") is already applied (reversibly clean)"
+        else
+          log_warn "  -> patch $(basename "$p") dry-run check failed against current working tree"
+        fi
+      done
+    else
+      log_dry "No patches found; would build stock"
+    fi
+
+    log_dry "Would build: CARGO_TARGET_DIR=$CARGO_TARGET_DIR cargo build --release -p xai-grok-pager-bin (in $GROK_BUILD_SRC)"
+    log_dry "Would copy binary: cp $CARGO_TARGET_DIR/release/xai-grok-pager $GROKGOD_HOME/bin/grok"
+    log_dry "Would stamp: $GROKGOD_HOME/.source-version (MODE=source)"
   else
-    log_dry "No patches found; would build stock"
+    # Release mode dry-run
+    raw_os="$(uname -s)"
+    case "$raw_os" in
+      Darwin) OS="darwin" ;;
+      Linux)  OS="linux" ;;
+      *) OS="unknown" ;;
+    esac
+
+    raw_arch="$(uname -m)"
+    case "$raw_arch" in
+      x86_64|amd64) ARCH="x64" ;;
+      arm64|aarch64) ARCH="arm64" ;;
+      *) ARCH="unknown" ;;
+    esac
+
+    ASSET="grokgod-${OS}-${ARCH}"
+    log_dry "Would detect platform: ${OS}-${ARCH} (asset: ${ASSET})"
+    log_dry "Would resolve download URL from $GROKGOD_REPO (version: ${GROKGOD_VERSION:-latest})"
+    log_dry "Would download and verify SHA256 checksums"
+    log_dry "Would install prebuilt binary to $GROKGOD_HOME/bin/grok"
+    log_dry "Would stamp: $GROKGOD_HOME/.source-version (MODE=release)"
   fi
 
-  log_dry "Would build: CARGO_TARGET_DIR=$CARGO_TARGET_DIR cargo build --release -p xai-grok-pager-bin (in $GROK_BUILD_SRC)"
-  log_dry "Would copy binary: cp $CARGO_TARGET_DIR/release/xai-grok-pager $GROKGOD_HOME/bin/grok"
-  log_dry "Would stamp: $GROKGOD_HOME/.source-version"
   log_dry "Would install launchers: $BIN_DIR/grok, $BIN_DIR/grokgod, and $GROK_HOME/bin/grok"
   log_info "Dry-run completed successfully (no changes made)."
   exit 0
 fi
 
 # ─────────────────────────────────────────────────────────
-# 3. GIT UPGRADE / CHECKOUT
+# RELEASE MODE (Prebuilt binary)
 # ─────────────────────────────────────────────────────────
-if [ ! -d "$GROK_BUILD_SRC" ]; then
-  log_err "Source directory not found: $GROK_BUILD_SRC"
-  exit 1
-fi
+if [ "$MODE" = "release" ]; then
+  raw_os="$(uname -s)"
+  case "$raw_os" in
+    Darwin) OS="darwin" ;;
+    Linux)  OS="linux" ;;
+    *)
+      log_err "Unsupported operating system: $raw_os"
+      exit 1
+      ;;
+  esac
 
-if [ "$NO_UPGRADE" -eq 0 ]; then
-  log_step "Fetching upstream changes in $GROK_BUILD_SRC..."
-  git -C "$GROK_BUILD_SRC" fetch origin || {
-    log_err "Failed to fetch from origin in $GROK_BUILD_SRC"
-    exit 1
-  }
+  raw_arch="$(uname -m)"
+  case "$raw_arch" in
+    x86_64|amd64) ARCH="x64" ;;
+    arm64|aarch64) ARCH="arm64" ;;
+    *)
+      log_err "Unsupported architecture: $raw_arch"
+      exit 1
+      ;;
+  esac
 
-  if [ -n "$VERSION_SHA" ]; then
-    log_info "Verifying commit $VERSION_SHA exists..."
-    if ! git -C "$GROK_BUILD_SRC" cat-file -e "${VERSION_SHA}^{commit}" 2>/dev/null; then
-      log_err "Commit '$VERSION_SHA' does not exist in $GROK_BUILD_SRC"
+  ASSET="grokgod-${OS}-${ARCH}"
+  REPO_PATH="$(printf "%s" "$GROKGOD_REPO" | sed 's|https://github.com/||; s|\.git$||')"
+
+  TAG_NAME=""
+  DOWNLOAD_URL=""
+  SUMS_URL=""
+
+  if [ -z "$GROKGOD_VERSION" ] || [ "$GROKGOD_VERSION" = "latest" ]; then
+    API_URL="https://api.github.com/repos/${REPO_PATH}/releases/latest"
+    RELEASE_JSON="$(curl -fsSL "$API_URL" 2>/dev/null || true)"
+
+    if [ -n "$RELEASE_JSON" ] && command -v python3 >/dev/null 2>&1; then
+      DOWNLOAD_URL="$(printf "%s" "$RELEASE_JSON" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    for a in data.get('assets', []):
+        if a.get('name') == '$ASSET':
+            print(a.get('browser_download_url', ''))
+            break
+except Exception:
+    pass
+" 2>/dev/null || true)"
+      TAG_NAME="$(printf "%s" "$RELEASE_JSON" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    print(data.get('tag_name', ''))
+except Exception:
+    pass
+" 2>/dev/null || true)"
+    fi
+
+    if [ -z "$DOWNLOAD_URL" ] && [ -n "$RELEASE_JSON" ]; then
+      DOWNLOAD_URL="$(printf "%s" "$RELEASE_JSON" | grep -o "https://[^\"]*/releases/download/[^\"]*/${ASSET}" | head -n 1 || true)"
+      TAG_NAME="$(printf "%s" "$RELEASE_JSON" | grep -o '"tag_name": *"[^"]*"' | head -n 1 | sed 's/"tag_name": *"//; s/"//' || true)"
+    fi
+
+    if [ -z "$DOWNLOAD_URL" ]; then
+      DOWNLOAD_URL="https://github.com/${REPO_PATH}/releases/latest/download/${ASSET}"
+      SUMS_URL="https://github.com/${REPO_PATH}/releases/latest/download/SHA256SUMS"
+      TAG_NAME="${TAG_NAME:-latest}"
+    else
+      SUMS_URL="$(printf "%s" "$DOWNLOAD_URL" | sed "s|/${ASSET}$|/SHA256SUMS|")"
+      TAG_NAME="${TAG_NAME:-latest}"
+    fi
+  else
+    if [ "${GROKGOD_VERSION#v}" != "$GROKGOD_VERSION" ]; then
+      TAG_NAME="$GROKGOD_VERSION"
+    else
+      TAG_NAME="v$GROKGOD_VERSION"
+    fi
+    DOWNLOAD_URL="https://github.com/${REPO_PATH}/releases/download/${TAG_NAME}/${ASSET}"
+    SUMS_URL="https://github.com/${REPO_PATH}/releases/download/${TAG_NAME}/SHA256SUMS"
+  fi
+
+  NEED_DOWNLOAD=1
+  if [ "$NO_UPGRADE" -eq 1 ] && [ -x "$GROKGOD_HOME/bin/grok" ] && [ -f "$GROKGOD_HOME/.source-version" ]; then
+    STAMP_VER="$(grep '^VERSION=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
+    if [ -n "$GROKGOD_VERSION" ] && [ "$GROKGOD_VERSION" != "latest" ]; then
+      if [ "$STAMP_VER" = "$TAG_NAME" ] || [ "$STAMP_VER" = "$GROKGOD_VERSION" ] || [ "$STAMP_VER" = "v$GROKGOD_VERSION" ]; then
+        log_info "Matching installed version ($STAMP_VER) found and binary exists."
+        log_info "Fast-path: skipping download (--no-upgrade), updating launchers only."
+        NEED_DOWNLOAD=0
+      fi
+    else
+      log_info "Installed binary exists ($STAMP_VER)."
+      log_info "Fast-path: skipping download (--no-upgrade), updating launchers only."
+      NEED_DOWNLOAD=0
+    fi
+  fi
+
+  if [ "$NEED_DOWNLOAD" -eq 1 ]; then
+    log_step "Downloading prebuilt binary $ASSET ($TAG_NAME)..."
+    TMP_DL="$(mktemp -d)"
+
+    if ! curl -fsSL "$DOWNLOAD_URL" -o "$TMP_DL/$ASSET"; then
+      log_err "Failed to download $ASSET from $DOWNLOAD_URL"
+      rm -rf "$TMP_DL"
       exit 1
     fi
-    log_info "Checking out $VERSION_SHA..."
-    git -C "$GROK_BUILD_SRC" checkout "$VERSION_SHA" || {
-      log_err "Failed to checkout $VERSION_SHA"
+
+    if ! curl -fsSL "$SUMS_URL" -o "$TMP_DL/SHA256SUMS" 2>/dev/null; then
+      ALT_SUMS="https://github.com/${REPO_PATH}/releases/download/${TAG_NAME}/SHA256SUMS"
+      if ! curl -fsSL "$ALT_SUMS" -o "$TMP_DL/SHA256SUMS" 2>/dev/null; then
+        log_err "Failed to download SHA256SUMS from $SUMS_URL"
+        rm -rf "$TMP_DL"
+        exit 1
+      fi
+    fi
+
+    if command -v sha256sum >/dev/null 2>&1; then
+      ACTUAL_SHA="$(sha256sum "$TMP_DL/$ASSET" | awk '{print $1}')"
+    elif command -v shasum >/dev/null 2>&1; then
+      ACTUAL_SHA="$(shasum -a 256 "$TMP_DL/$ASSET" | awk '{print $1}')"
+    else
+      log_err "Neither sha256sum nor shasum is available for checksum verification."
+      rm -rf "$TMP_DL"
       exit 1
-    }
+    fi
+
+    EXPECTED_SHA="$(grep -E "[[:space:]]${ASSET}(\.exe)?$" "$TMP_DL/SHA256SUMS" 2>/dev/null | head -n 1 | awk '{print $1}' || true)"
+    if [ -z "$EXPECTED_SHA" ]; then
+      EXPECTED_SHA="$(head -n 1 "$TMP_DL/SHA256SUMS" | awk '{print $1}' || true)"
+    fi
+
+    if [ -z "$EXPECTED_SHA" ] || [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+      log_err "Checksum verification failed for $ASSET (fail-closed)."
+      log_err "Expected: $EXPECTED_SHA"
+      log_err "Actual:   $ACTUAL_SHA"
+      rm -rf "$TMP_DL"
+      exit 1
+    fi
+    log_info "Checksum verified: $ACTUAL_SHA"
+
+    mkdir -p "$GROKGOD_HOME/bin"
+    mv "$TMP_DL/$ASSET" "$GROKGOD_HOME/bin/grok"
+    chmod +x "$GROKGOD_HOME/bin/grok"
+    rm -rf "$TMP_DL"
+
+    if [ "$(uname -s)" = "Darwin" ]; then
+      codesign -s - --force "$GROKGOD_HOME/bin/grok" 2>/dev/null || true
+    fi
+    log_info "Binary installed to $GROKGOD_HOME/bin/grok"
+
+    printf "SHA=%s\nPATCHSET=%s\nVERSION=%s\nMODE=release\n" "$ACTUAL_SHA" "$TAG_NAME" "$TAG_NAME" > "$GROKGOD_HOME/.source-version"
+    log_info "Stamped version to $GROKGOD_HOME/.source-version (VERSION=$TAG_NAME, SHA=$ACTUAL_SHA)"
+  fi
+
+  # Resolve runtime scripts
+  if [ -z "${GROKGOD_SRC:-}" ]; then
+    if [ -d "$GROKGOD_HOME/src" ]; then
+      GROKGOD_SRC="$GROKGOD_HOME/src"
+      if command -v git >/dev/null 2>&1 && [ -d "$GROKGOD_SRC/.git" ]; then
+        git -C "$GROKGOD_SRC" pull --quiet 2>/dev/null || true
+      fi
+    elif [ -f "$SCRIPT_DIR/src/shim/grok-shim.sh" ]; then
+      GROKGOD_SRC="$SCRIPT_DIR"
+    else
+      log_step "Fetching grokgod runtime scripts..."
+      if command -v git >/dev/null 2>&1 && git clone --depth 1 "$GROKGOD_REPO" "$GROKGOD_HOME/src" 2>/dev/null; then
+        GROKGOD_SRC="$GROKGOD_HOME/src"
+        log_info "Cloned grokgod scripts to $GROKGOD_HOME/src"
+      else
+        log_info "Fetching runtime scripts from repository..."
+        mkdir -p "$GROKGOD_HOME/src/src/shim"
+        RAW_TAG="${TAG_NAME:-main}"
+        if [ "$RAW_TAG" = "latest" ]; then RAW_TAG="main"; fi
+        RAW_BASE="https://raw.githubusercontent.com/${REPO_PATH}/${RAW_TAG}"
+
+        curl -fsSL "$RAW_BASE/src/shim/grok-shim.sh" -o "$GROKGOD_HOME/src/src/shim/grok-shim.sh" 2>/dev/null || \
+        curl -fsSL "https://raw.githubusercontent.com/${REPO_PATH}/main/src/shim/grok-shim.sh" -o "$GROKGOD_HOME/src/src/shim/grok-shim.sh" || {
+          log_err "Failed to download grok-shim.sh (fail-closed)."
+          exit 1
+        }
+        curl -fsSL "$RAW_BASE/src/grokgod-cache.sh" -o "$GROKGOD_HOME/src/src/grokgod-cache.sh" 2>/dev/null || \
+        curl -fsSL "https://raw.githubusercontent.com/${REPO_PATH}/main/src/grokgod-cache.sh" -o "$GROKGOD_HOME/src/src/grokgod-cache.sh" || {
+          log_err "Failed to download grokgod-cache.sh (fail-closed)."
+          exit 1
+        }
+        curl -fsSL "$RAW_BASE/src/grokgod-run.sh" -o "$GROKGOD_HOME/src/src/grokgod-run.sh" 2>/dev/null || \
+        curl -fsSL "https://raw.githubusercontent.com/${REPO_PATH}/main/src/grokgod-run.sh" -o "$GROKGOD_HOME/src/src/grokgod-run.sh" || {
+          log_err "Failed to download grokgod-run.sh (fail-closed)."
+          exit 1
+        }
+        chmod +x "$GROKGOD_HOME/src/src/shim/grok-shim.sh" "$GROKGOD_HOME/src/src/grokgod-cache.sh" "$GROKGOD_HOME/src/src/grokgod-run.sh"
+        GROKGOD_SRC="$GROKGOD_HOME/src"
+        log_info "Downloaded runtime scripts to $GROKGOD_HOME/src"
+      fi
+    fi
+  fi
+
+  if [ -n "${GROKGOD_SRC:-}" ] && [ -f "$GROKGOD_SRC/src/shim/grok-shim.sh" ]; then
+    SHIM_SRC="$GROKGOD_SRC/src/shim/grok-shim.sh"
+  elif [ -f "$SCRIPT_DIR/src/shim/grok-shim.sh" ]; then
+    SHIM_SRC="$SCRIPT_DIR/src/shim/grok-shim.sh"
+  elif [ -f "$GROKGOD_HOME/src/src/shim/grok-shim.sh" ]; then
+    SHIM_SRC="$GROKGOD_HOME/src/src/shim/grok-shim.sh"
   else
-    log_info "Checking out origin/main..."
-    git -C "$GROK_BUILD_SRC" checkout origin/main || {
-      log_err "Failed to checkout origin/main"
+    log_err "Shim template not found."
+    exit 1
+  fi
+fi
+
+# ─────────────────────────────────────────────────────────
+# SOURCE MODE (Local git + cargo build)
+# ─────────────────────────────────────────────────────────
+if [ "$MODE" = "source" ]; then
+  if [ ! -d "$GROK_BUILD_SRC" ]; then
+    log_err "Source directory not found: $GROK_BUILD_SRC"
+    exit 1
+  fi
+
+  if [ "$NO_UPGRADE" -eq 0 ]; then
+    log_step "Fetching upstream changes in $GROK_BUILD_SRC..."
+    git -C "$GROK_BUILD_SRC" fetch origin || {
+      log_err "Failed to fetch from origin in $GROK_BUILD_SRC"
       exit 1
     }
+
+    if [ -n "$VERSION_SHA" ]; then
+      log_info "Verifying commit $VERSION_SHA exists..."
+      if ! git -C "$GROK_BUILD_SRC" cat-file -e "${VERSION_SHA}^{commit}" 2>/dev/null; then
+        log_err "Commit '$VERSION_SHA' does not exist in $GROK_BUILD_SRC"
+        exit 1
+      fi
+      log_info "Checking out $VERSION_SHA..."
+      git -C "$GROK_BUILD_SRC" checkout "$VERSION_SHA" || {
+        log_err "Failed to checkout $VERSION_SHA"
+        exit 1
+      }
+    else
+      log_info "Checking out origin/main..."
+      git -C "$GROK_BUILD_SRC" checkout origin/main || {
+        log_err "Failed to checkout origin/main"
+        exit 1
+      }
+    fi
   fi
-fi
 
-# ─────────────────────────────────────────────────────────
-# Fast-path check for --no-upgrade
-# ─────────────────────────────────────────────────────────
-CURRENT_SHA="$(git -C "$GROK_BUILD_SRC" rev-parse HEAD 2>/dev/null || echo "unknown")"
-CURRENT_PATCHSET="$(compute_patchset_id)"
+  CURRENT_SHA="$(git -C "$GROK_BUILD_SRC" rev-parse HEAD 2>/dev/null || echo "unknown")"
+  CURRENT_PATCHSET="$(compute_patchset_id)"
 
-NEED_BUILD=1
-if [ "$NO_UPGRADE" -eq 1 ] && [ -x "$GROKGOD_HOME/bin/grok" ] && [ -f "$GROKGOD_HOME/.source-version" ]; then
-  STAMP_SHA="$(grep '^SHA=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
-  STAMP_PATCHSET="$(grep '^PATCHSET=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
-  if [ "$STAMP_SHA" = "$CURRENT_SHA" ] && [ "$STAMP_PATCHSET" = "$CURRENT_PATCHSET" ]; then
-    log_info "Matching stamp found (SHA=$CURRENT_SHA, PATCHSET=$CURRENT_PATCHSET) and binary exists."
-    log_info "Fast-path: skipping cargo build, updating launchers only."
-    NEED_BUILD=0
+  NEED_BUILD=1
+  if [ "$NO_UPGRADE" -eq 1 ] && [ -x "$GROKGOD_HOME/bin/grok" ] && [ -f "$GROKGOD_HOME/.source-version" ]; then
+    STAMP_SHA="$(grep '^SHA=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
+    STAMP_PATCHSET="$(grep '^PATCHSET=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
+    if [ "$STAMP_SHA" = "$CURRENT_SHA" ] && [ "$STAMP_PATCHSET" = "$CURRENT_PATCHSET" ]; then
+      log_info "Matching stamp found (SHA=$CURRENT_SHA, PATCHSET=$CURRENT_PATCHSET) and binary exists."
+      log_info "Fast-path: skipping cargo build, updating launchers only."
+      NEED_BUILD=0
+    fi
   fi
-fi
 
-if [ "$NEED_BUILD" -eq 1 ]; then
-  # ─────────────────────────────────────────────────────────
-  # 4. VERIFY CLEAN TREE & REVERSE PRIOR PATCHES IF NEEDED
-  # ─────────────────────────────────────────────────────────
-  log_step "Verifying clean working tree in $GROK_BUILD_SRC..."
-  if ! git -C "$GROK_BUILD_SRC" diff --quiet 2>/dev/null; then
-    # Working tree is dirty. Check if it matches our patch set in reverse
-    can_reverse=1
+  if [ "$NEED_BUILD" -eq 1 ]; then
+    log_step "Verifying clean working tree in $GROK_BUILD_SRC..."
+    if ! git -C "$GROK_BUILD_SRC" diff --quiet 2>/dev/null; then
+      can_reverse=1
+      patch_files=""
+      if [ -d "$PATCHES_DIR" ]; then
+        for p in "$PATCHES_DIR"/*.patch; do
+          if [ -f "$p" ]; then
+            patch_files="$patch_files $p"
+          fi
+        done
+      fi
+
+      if [ -n "$patch_files" ]; then
+        for p in $patch_files; do
+          if ! git -C "$GROK_BUILD_SRC" apply -R --check "$p" 2>/dev/null; then
+            can_reverse=0
+            break
+          fi
+        done
+      else
+        can_reverse=0
+      fi
+
+      if [ "$can_reverse" -eq 1 ]; then
+        log_info "Previous grokgod patches detected in working tree; reversing them..."
+        for p in $patch_files; do
+          git -C "$GROK_BUILD_SRC" apply -R "$p" || {
+            log_err "Failed to reverse prior patch $p"
+            exit 1
+          }
+        done
+        if ! git -C "$GROK_BUILD_SRC" diff --quiet 2>/dev/null; then
+          log_err "Working tree in $GROK_BUILD_SRC is still dirty after reversing patches. Aborting (fail-closed)."
+          exit 1
+        fi
+      else
+        log_err "Working tree in $GROK_BUILD_SRC is dirty and does not match clean grokgod patches."
+        log_err "Aborting (fail-closed); please resolve git status in $GROK_BUILD_SRC."
+        exit 1
+      fi
+    fi
+
     patch_files=""
     if [ -d "$PATCHES_DIR" ]; then
       for p in "$PATCHES_DIR"/*.patch; do
@@ -380,115 +671,72 @@ if [ "$NEED_BUILD" -eq 1 ]; then
     fi
 
     if [ -n "$patch_files" ]; then
-      # Reverse order check
+      log_step "Testing and applying source patches..."
       for p in $patch_files; do
-        if ! git -C "$GROK_BUILD_SRC" apply -R --check "$p" 2>/dev/null; then
-          can_reverse=0
-          break
+        log_info "Testing patch: $(basename "$p")"
+        if ! git -C "$GROK_BUILD_SRC" apply --check "$p"; then
+          log_err "Patch check failed for $(basename "$p"). Aborting (fail-closed)."
+          log_err "Existing binary in $GROKGOD_HOME/bin/grok is untouched."
+          exit 1
+        fi
+      done
+
+      for p in $patch_files; do
+        log_info "Applying patch: $(basename "$p")"
+        if ! git -C "$GROK_BUILD_SRC" apply "$p"; then
+          log_err "Failed to apply patch $(basename "$p"). Aborting (fail-closed)."
+          exit 1
         fi
       done
     else
-      can_reverse=0
+      log_info "No patch files found in $PATCHES_DIR; proceeding with stock build."
     fi
 
-    if [ "$can_reverse" -eq 1 ]; then
-      log_info "Previous grokgod patches detected in working tree; reversing them..."
-      for p in $patch_files; do
-        git -C "$GROK_BUILD_SRC" apply -R "$p" || {
-          log_err "Failed to reverse prior patch $p"
-          exit 1
-        }
-      done
-      # Verify tree is clean now
-      if ! git -C "$GROK_BUILD_SRC" diff --quiet 2>/dev/null; then
-        log_err "Working tree in $GROK_BUILD_SRC is still dirty after reversing patches. Aborting (fail-closed)."
-        exit 1
-      fi
-    else
-      log_err "Working tree in $GROK_BUILD_SRC is dirty and does not match clean grokgod patches."
-      log_err "Aborting (fail-closed); please resolve git status in $GROK_BUILD_SRC."
+    log_step "Building xai-grok-pager-bin in release mode..."
+    (
+      cd "$GROK_BUILD_SRC"
+      CARGO_TARGET_DIR="$CARGO_TARGET_DIR" cargo build --release -p xai-grok-pager-bin
+    ) || {
+      log_err "Cargo build failed. Aborting (fail-closed)."
+      exit 1
+    }
+
+    log_step "Installing binary to $GROKGOD_HOME/bin/grok..."
+    BUILT_BIN="$CARGO_TARGET_DIR/release/xai-grok-pager"
+    if [ ! -f "$BUILT_BIN" ]; then
+      log_err "Built binary not found at $BUILT_BIN"
       exit 1
     fi
+
+    mkdir -p "$GROKGOD_HOME/bin"
+    cp "$BUILT_BIN" "$GROKGOD_HOME/bin/grok"
+    chmod +x "$GROKGOD_HOME/bin/grok"
+
+    if [ "$(uname -s)" = "Darwin" ]; then
+      codesign -s - --force "$GROKGOD_HOME/bin/grok" 2>/dev/null || true
+    fi
+    log_info "Binary installed successfully."
+
+    CURRENT_SHA="$(git -C "$GROK_BUILD_SRC" rev-parse HEAD 2>/dev/null || echo "unknown")"
+    CURRENT_PATCHSET="$(compute_patchset_id)"
+    printf "SHA=%s\nPATCHSET=%s\nVERSION=%s\nMODE=source\n" "$CURRENT_SHA" "$CURRENT_PATCHSET" "$CURRENT_SHA" > "$GROKGOD_HOME/.source-version"
+    log_info "Stamped version to $GROKGOD_HOME/.source-version (SHA=$CURRENT_SHA, PATCHSET=$CURRENT_PATCHSET)"
   fi
 
-  # ─────────────────────────────────────────────────────────
-  # 5. APPLY PATCHES (Fail-closed)
-  # ─────────────────────────────────────────────────────────
-  patch_files=""
-  if [ -d "$PATCHES_DIR" ]; then
-    for p in "$PATCHES_DIR"/*.patch; do
-      if [ -f "$p" ]; then
-        patch_files="$patch_files $p"
-      fi
-    done
-  fi
-
-  if [ -n "$patch_files" ]; then
-    log_step "Testing and applying source patches..."
-    # 5a. First dry-run check ALL patches
-    for p in $patch_files; do
-      log_info "Testing patch: $(basename "$p")"
-      if ! git -C "$GROK_BUILD_SRC" apply --check "$p"; then
-        log_err "Patch check failed for $(basename "$p"). Aborting (fail-closed)."
-        log_err "Existing binary in $GROKGOD_HOME/bin/grok is untouched."
-        exit 1
-      fi
-    done
-
-    # 5b. Apply for real
-    for p in $patch_files; do
-      log_info "Applying patch: $(basename "$p")"
-      if ! git -C "$GROK_BUILD_SRC" apply "$p"; then
-        log_err "Failed to apply patch $(basename "$p"). Aborting (fail-closed)."
-        exit 1
-      fi
-    done
+  if [ -f "$SCRIPT_DIR/src/shim/grok-shim.sh" ]; then
+    SHIM_SRC="$SCRIPT_DIR/src/shim/grok-shim.sh"
+  elif [ -n "${GROKGOD_SRC:-}" ] && [ -f "$GROKGOD_SRC/src/shim/grok-shim.sh" ]; then
+    SHIM_SRC="$GROKGOD_SRC/src/shim/grok-shim.sh"
+  elif [ -f "$GROKGOD_HOME/src/src/shim/grok-shim.sh" ]; then
+    SHIM_SRC="$GROKGOD_HOME/src/src/shim/grok-shim.sh"
   else
-    log_info "No patch files found in $PATCHES_DIR; proceeding with stock build."
-  fi
-
-  # ─────────────────────────────────────────────────────────
-  # 6. BUILD
-  # ─────────────────────────────────────────────────────────
-  log_step "Building xai-grok-pager-bin in release mode..."
-  (
-    cd "$GROK_BUILD_SRC"
-    CARGO_TARGET_DIR="$CARGO_TARGET_DIR" cargo build --release -p xai-grok-pager-bin
-  ) || {
-    log_err "Cargo build failed. Aborting (fail-closed)."
-    exit 1
-  }
-
-  # ─────────────────────────────────────────────────────────
-  # 7. INSTALL BINARY
-  # ─────────────────────────────────────────────────────────
-  log_step "Installing binary to $GROKGOD_HOME/bin/grok..."
-  BUILT_BIN="$CARGO_TARGET_DIR/release/xai-grok-pager"
-  if [ ! -f "$BUILT_BIN" ]; then
-    log_err "Built binary not found at $BUILT_BIN"
+    log_err "Shim template not found."
     exit 1
   fi
-
-  mkdir -p "$GROKGOD_HOME/bin"
-  cp "$BUILT_BIN" "$GROKGOD_HOME/bin/grok"
-  chmod +x "$GROKGOD_HOME/bin/grok"
-
-  if [ "$(uname -s)" = "Darwin" ]; then
-    codesign -s - --force "$GROKGOD_HOME/bin/grok" 2>/dev/null || true
-  fi
-  log_info "Binary installed successfully."
-
-  # ─────────────────────────────────────────────────────────
-  # 8. STAMP
-  # ─────────────────────────────────────────────────────────
-  CURRENT_SHA="$(git -C "$GROK_BUILD_SRC" rev-parse HEAD 2>/dev/null || echo "unknown")"
-  CURRENT_PATCHSET="$(compute_patchset_id)"
-  printf "SHA=%s\nPATCHSET=%s\n" "$CURRENT_SHA" "$CURRENT_PATCHSET" > "$GROKGOD_HOME/.source-version"
-  log_info "Stamped version to $GROKGOD_HOME/.source-version (SHA=$CURRENT_SHA, PATCHSET=$CURRENT_PATCHSET)"
 fi
 
 # ─────────────────────────────────────────────────────────
-# 9. LAUNCHERS (ClawGod write_launcher pattern)
+# LAUNCHERS (ClawGod write_launcher pattern)
 # ─────────────────────────────────────────────────────────
 log_step "Installing shim launchers to $BIN_DIR and $GROK_HOME/bin..."
 mkdir -p "$BIN_DIR"
@@ -535,7 +783,7 @@ write_launcher "$GROK_HOME/bin/grok" 1
 hash -r 2>/dev/null || true
 
 # ─────────────────────────────────────────────────────────
-# 10. POST-BUILD DISK WARN
+# POST-BUILD DISK WARN
 # ─────────────────────────────────────────────────────────
 free_kb_post="$(get_free_kb "$GROKGOD_HOME")"
 if [ -n "$free_kb_post" ] && [ "$free_kb_post" -ge 0 ] 2>/dev/null; then

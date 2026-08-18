@@ -20,16 +20,33 @@ GB_WORKTREE="$TMP_ROOT/gb_worktree"
 
 cleanup() {
   set +e
-  if [ -d "$GB_WORKTREE" ]; then
+  if [ -d "$GB_WORKTREE" ] && [ -d "$REAL_GROK_BUILD/.git" ]; then
     git -C "$REAL_GROK_BUILD" worktree remove --force "$GB_WORKTREE" 2>/dev/null || true
   fi
   rm -rf "$TMP_ROOT"
 }
 trap cleanup EXIT INT TERM
 
-# Create a clean detached worktree from the real grok-build at commit d71f6e0c
-echo "Creating test worktree from $REAL_GROK_BUILD at commit d71f6e0c..."
-git -C "$REAL_GROK_BUILD" worktree add --detach "$GB_WORKTREE" d71f6e0c >/dev/null 2>&1
+# Setup GB_WORKTREE fixture
+if [ -d "$REAL_GROK_BUILD/.git" ]; then
+  echo "Creating test worktree from $REAL_GROK_BUILD at commit d71f6e0c..."
+  git -C "$REAL_GROK_BUILD" worktree add --detach "$GB_WORKTREE" d71f6e0c >/dev/null 2>&1
+else
+  # CI or standalone fixture without local grok-build clone
+  echo "Building fixture git repository for CI..."
+  mkdir -p "$GB_WORKTREE/crates/codegen/xai-grok-agent/src/plugins"
+  TARGET_FILE="$GB_WORKTREE/crates/codegen/xai-grok-agent/src/plugins/manifest.rs"
+  curl -fsSL "https://raw.githubusercontent.com/xai-org/grok-build/d71f6e0c1f5acc5469e503e192fe14824e6f8c90/crates/codegen/xai-grok-agent/src/plugins/manifest.rs" -o "$TARGET_FILE" || {
+    echo "Warning: curl failed, creating fallback manifest.rs"
+    # Fallback placeholder if offline
+    touch "$TARGET_FILE"
+  }
+  git -C "$GB_WORKTREE" init -b main >/dev/null 2>&1
+  git -C "$GB_WORKTREE" config user.name "CI"
+  git -C "$GB_WORKTREE" config user.email "ci@example.com"
+  git -C "$GB_WORKTREE" add .
+  git -C "$GB_WORKTREE" commit -m "initial d71f6e0c fixture" >/dev/null 2>&1
+fi
 
 echo "=== Running install.sh Test Suite ==="
 
@@ -70,7 +87,11 @@ EOF
 
 # Helper to reset gb_worktree to clean HEAD
 reset_worktree() {
-  git -C "$GB_WORKTREE" reset --hard d71f6e0c >/dev/null 2>&1
+  if [ -d "$REAL_GROK_BUILD/.git" ]; then
+    git -C "$GB_WORKTREE" reset --hard d71f6e0c >/dev/null 2>&1
+  else
+    git -C "$GB_WORKTREE" reset --hard HEAD >/dev/null 2>&1
+  fi
   git -C "$GB_WORKTREE" clean -fdx >/dev/null 2>&1
 }
 
@@ -88,7 +109,7 @@ DRY_OUT="$(
   GROK_BUILD_SRC="$GB_WORKTREE" \
   BIN_DIR="$FAKE_BIN_DIR" \
   CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
-  sh "$INSTALL_SCRIPT" --dry-run
+  sh "$INSTALL_SCRIPT" --from-source --dry-run
 )"
 
 echo "$DRY_OUT" | grep -q "Dry-run completed successfully" || { echo "FAIL: Expected dry-run success message"; exit 1; }
@@ -120,7 +141,7 @@ INSTALL_OUT="$(
   GROK_BUILD_SRC="$GB_WORKTREE" \
   BIN_DIR="$FAKE_BIN_DIR" \
   CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
-  sh "$INSTALL_SCRIPT" --no-upgrade
+  sh "$INSTALL_SCRIPT" --from-source --no-upgrade
 )"
 
 # 1. Verify fake binary copied and executable
@@ -139,6 +160,7 @@ fi
 STAMP_CONTENT="$(cat "$FAKE_GROKGOD_HOME/.source-version")"
 echo "$STAMP_CONTENT" | grep -q "^SHA=" || { echo "FAIL: .source-version missing SHA line"; exit 1; }
 echo "$STAMP_CONTENT" | grep -q "^PATCHSET=" || { echo "FAIL: .source-version missing PATCHSET line"; exit 1; }
+echo "$STAMP_CONTENT" | grep -q "^MODE=source" || { echo "FAIL: .source-version missing MODE=source line"; exit 1; }
 
 # 3. Verify shim launchers installed at BIN_DIR/grok and BIN_DIR/grokgod
 if [ ! -x "$FAKE_BIN_DIR/grok" ]; then
@@ -195,7 +217,7 @@ FAIL_OUT="$(
   GROK_BUILD_SRC="$GB_WORKTREE" \
   BIN_DIR="$FAKE_BIN_DIR" \
   CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
-  sh "$FAKE_REPO_DIR/install.sh" --no-upgrade 2>&1
+  sh "$FAKE_REPO_DIR/install.sh" --from-source --no-upgrade 2>&1
 )"
 FAIL_STATUS=$?
 set -eu
@@ -228,7 +250,7 @@ GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
 GROK_BUILD_SRC="$GB_WORKTREE" \
 BIN_DIR="$FAKE_BIN_DIR" \
 CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
-sh "$INSTALL_SCRIPT" --no-upgrade >/dev/null
+sh "$INSTALL_SCRIPT" --from-source --no-upgrade >/dev/null
 
 if [ ! -f "$CARGO_INVOKED_FILE" ]; then
   echo "FAIL: Cargo was not invoked on first install"; exit 1
@@ -245,7 +267,7 @@ SECOND_OUT="$(
   GROK_BUILD_SRC="$GB_WORKTREE" \
   BIN_DIR="$FAKE_BIN_DIR" \
   CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
-  sh "$INSTALL_SCRIPT" --no-upgrade
+  sh "$INSTALL_SCRIPT" --from-source --no-upgrade
 )"
 
 echo "$SECOND_OUT" | grep -q "Fast-path: skipping cargo build" || { echo "FAIL: Expected fast-path message in output ($SECOND_OUT)"; exit 1; }
@@ -273,7 +295,7 @@ GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
 GROK_BUILD_SRC="$GB_WORKTREE" \
 BIN_DIR="$FAKE_BIN_DIR" \
 CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
-sh "$INSTALL_SCRIPT" --no-upgrade >/dev/null
+sh "$INSTALL_SCRIPT" --from-source --no-upgrade >/dev/null
 
 if [ ! -f "$FAKE_BIN_DIR/grok.orig" ]; then
   echo "FAIL: grok.orig backup was not created"; exit 1
@@ -343,7 +365,7 @@ DISK_ERR="$(
   GROK_BUILD_SRC="$GB_WORKTREE" \
   BIN_DIR="$FAKE_BIN_DIR" \
   CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
-  sh "$INSTALL_SCRIPT" --no-upgrade 2>&1
+  sh "$INSTALL_SCRIPT" --from-source --no-upgrade 2>&1
 )"
 DISK_STATUS=$?
 set -eu
@@ -371,7 +393,7 @@ GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
 GROK_BUILD_SRC="$GB_WORKTREE" \
 BIN_DIR="$FAKE_BIN_DIR" \
 CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
-sh "$INSTALL_SCRIPT" --no-upgrade >/dev/null
+sh "$INSTALL_SCRIPT" --from-source --no-upgrade >/dev/null
 
 if [ ! -x "$FAKE_GROKGOD_HOME/bin/grok" ]; then
   echo "FAIL: Expected successful install on previously patched tree"; exit 1
@@ -389,7 +411,7 @@ PREFIX_TARGET="$TEST_DIR/custom_prefix"
 PATH="$FAKE_BIN_SHADOW:$PATH" \
 HOME="$FAKE_HOME" \
 GROK_BUILD_SRC="$GB_WORKTREE" \
-sh "$INSTALL_SCRIPT" --no-upgrade --prefix "$PREFIX_TARGET" >/dev/null
+sh "$INSTALL_SCRIPT" --from-source --no-upgrade --prefix "$PREFIX_TARGET" >/dev/null
 
 if [ ! -x "$PREFIX_TARGET/grokgod/bin/grok" ]; then
   echo "FAIL: Binary not installed under prefix at $PREFIX_TARGET/grokgod/bin/grok"; exit 1
@@ -429,7 +451,7 @@ GROK_HOME="$FAKE_GROK_HOME" \
 GROK_BUILD_SRC="$GB_WORKTREE" \
 BIN_DIR="$FAKE_BIN_DIR" \
 CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
-sh "$INSTALL_SCRIPT" --no-upgrade >/dev/null
+sh "$INSTALL_SCRIPT" --from-source --no-upgrade >/dev/null
 
 # 1. $FAKE_GROK_HOME/bin/grok is a regular file (NOT a symlink) containing GROKGOD
 if [ -L "$FAKE_GROK_HOME/bin/grok" ]; then
@@ -488,7 +510,7 @@ GROK_HOME="$FAKE_GROK_HOME" \
 GROK_BUILD_SRC="$GB_WORKTREE" \
 BIN_DIR="$FAKE_BIN_DIR" \
 CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
-sh "$INSTALL_SCRIPT" --no-upgrade >/dev/null
+sh "$INSTALL_SCRIPT" --from-source --no-upgrade >/dev/null
 
 # Now uninstall
 PATH="$FAKE_BIN_SHADOW:$PATH" \
@@ -541,5 +563,184 @@ if [ "$RESOLVED_FALLBACK_OUT" != "OFFICIAL_VERSIONED_MACHO_1_0_5" ]; then
 fi
 
 echo "PASS: Test (j) - Uninstall restores official grok in GROK_HOME/bin"
+
+# ─────────────────────────────────────────────────────────
+# Test (k): Release-mode install with mocked curl and checksums
+# ─────────────────────────────────────────────────────────
+echo "Test (k): Release-mode install with mocked curl"
+setup_sandbox "test_k"
+
+# Detect OS and ARCH for the fake asset name
+RAW_OS="$(uname -s)"
+case "$RAW_OS" in
+  Darwin) TEST_OS="darwin" ;;
+  Linux)  TEST_OS="linux" ;;
+  *) TEST_OS="unknown" ;;
+esac
+RAW_ARCH="$(uname -m)"
+case "$RAW_ARCH" in
+  x86_64|amd64) TEST_ARCH="x64" ;;
+  arm64|aarch64) TEST_ARCH="arm64" ;;
+  *) TEST_ARCH="unknown" ;;
+esac
+
+TEST_ASSET="grokgod-${TEST_OS}-${TEST_ARCH}"
+FAKE_DL_DIR="$TEST_DIR/fake_downloads"
+mkdir -p "$FAKE_DL_DIR"
+
+# Create fake prebuilt binary in fake_downloads
+cat << 'BIN_EOF' > "$FAKE_DL_DIR/$TEST_ASSET"
+#!/bin/sh
+echo "PREBUILT_GROKGOD_BINARY_RELEASE_1_0_0"
+BIN_EOF
+chmod +x "$FAKE_DL_DIR/$TEST_ASSET"
+
+# Compute actual SHA256 of fake binary
+if command -v sha256sum >/dev/null 2>&1; then
+  TEST_SHA="$(sha256sum "$FAKE_DL_DIR/$TEST_ASSET" | awk '{print $1}')"
+elif command -v shasum >/dev/null 2>&1; then
+  TEST_SHA="$(shasum -a 256 "$FAKE_DL_DIR/$TEST_ASSET" | awk '{print $1}')"
+else
+  TEST_SHA="dummy_sha"
+fi
+
+# Write fake SHA256SUMS
+printf "%s  %s\n" "$TEST_SHA" "$TEST_ASSET" > "$FAKE_DL_DIR/SHA256SUMS"
+
+# Create mock curl in FAKE_BIN_SHADOW
+cat << EOF > "$FAKE_BIN_SHADOW/curl"
+#!/bin/sh
+set -eu
+
+# Intercept API latest release call
+url=""
+out_file=""
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -o|--output)
+      out_file="\$2"
+      shift 2
+      ;;
+    -fsSL|-sSL|-s|-f|-L|-fsSLk)
+      shift
+      ;;
+    http*|ftp*)
+      url="\$1"
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+if echo "\$url" | grep -q "/releases/latest"; then
+  cat << 'JSON_EOF'
+{
+  "tag_name": "v1.0.0",
+  "assets": [
+    {
+      "name": "$TEST_ASSET",
+      "browser_download_url": "https://github.com/karlorz/grokgod/releases/download/v1.0.0/$TEST_ASSET"
+    },
+    {
+      "name": "SHA256SUMS",
+      "browser_download_url": "https://github.com/karlorz/grokgod/releases/download/v1.0.0/SHA256SUMS"
+    }
+  ]
+}
+JSON_EOF
+  exit 0
+fi
+
+if echo "\$url" | grep -q "SHA256SUMS"; then
+  if [ -n "\$out_file" ]; then
+    cp "$FAKE_DL_DIR/SHA256SUMS" "\$out_file"
+  else
+    cat "$FAKE_DL_DIR/SHA256SUMS"
+  fi
+  exit 0
+fi
+
+if echo "\$url" | grep -q "$TEST_ASSET"; then
+  if [ -n "\$out_file" ]; then
+    cp "$FAKE_DL_DIR/$TEST_ASSET" "\$out_file"
+  else
+    cat "$FAKE_DL_DIR/$TEST_ASSET"
+  fi
+  exit 0
+fi
+
+# Handle raw github content script downloads if needed
+if echo "\$url" | grep -q "raw.githubusercontent.com"; then
+  filename=\$(basename "\$url")
+  case "\$filename" in
+    grok-shim.sh)
+      src_path="$REPO_ROOT/src/shim/grok-shim.sh"
+      ;;
+    grokgod-cache.sh)
+      src_path="$REPO_ROOT/src/grokgod-cache.sh"
+      ;;
+    grokgod-run.sh)
+      src_path="$REPO_ROOT/src/grokgod-run.sh"
+      ;;
+    *)
+      src_path=""
+      ;;
+  esac
+  if [ -n "\$src_path" ] && [ -f "\$src_path" ]; then
+    if [ -n "\$out_file" ]; then
+      cp "\$src_path" "\$out_file"
+    else
+      cat "\$src_path"
+    fi
+    exit 0
+  fi
+fi
+
+echo "mock curl unhandled URL: \$url" >&2
+exit 1
+EOF
+chmod +x "$FAKE_BIN_SHADOW/curl"
+
+# Run install.sh in release mode (default)
+INSTALL_REL_OUT="$(
+  PATH="$FAKE_BIN_SHADOW:$PATH" \
+  HOME="$FAKE_HOME" \
+  GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+  GROK_HOME="$FAKE_GROK_HOME" \
+  BIN_DIR="$FAKE_BIN_DIR" \
+  sh "$INSTALL_SCRIPT" --version 1.0.0
+)"
+
+# 1. Verify fake downloaded binary is in $FAKE_GROKGOD_HOME/bin/grok
+if [ ! -x "$FAKE_GROKGOD_HOME/bin/grok" ]; then
+  echo "FAIL: Test (k) - $FAKE_GROKGOD_HOME/bin/grok is not executable or missing"; exit 1
+fi
+REL_BIN_OUT="$("$FAKE_GROKGOD_HOME/bin/grok")"
+if [ "$REL_BIN_OUT" != "PREBUILT_GROKGOD_BINARY_RELEASE_1_0_0" ]; then
+  echo "FAIL: Test (k) - Executing installed binary gave: $REL_BIN_OUT"; exit 1
+fi
+
+# 2. Verify .source-version contains VERSION=v1.0.0, SHA=, and MODE=release
+if [ ! -f "$FAKE_GROKGOD_HOME/.source-version" ]; then
+  echo "FAIL: Test (k) - .source-version missing"; exit 1
+fi
+REL_STAMP="$(cat "$FAKE_GROKGOD_HOME/.source-version")"
+echo "$REL_STAMP" | grep -q "^VERSION=v1.0.0" || { echo "FAIL: Test (k) - Missing VERSION=v1.0.0 in .source-version ($REL_STAMP)"; exit 1; }
+echo "$REL_STAMP" | grep -q "^SHA=$TEST_SHA" || { echo "FAIL: Test (k) - Missing SHA in .source-version ($REL_STAMP)"; exit 1; }
+echo "$REL_STAMP" | grep -q "^MODE=release" || { echo "FAIL: Test (k) - Missing MODE=release in .source-version ($REL_STAMP)"; exit 1; }
+
+# 3. Verify cargo was NOT invoked
+if [ -f "$CARGO_INVOKED_FILE" ]; then
+  echo "FAIL: Test (k) - Cargo was invoked during release mode install!"; exit 1
+fi
+
+# 4. Verify launchers are installed
+if [ ! -x "$FAKE_BIN_DIR/grok" ] || [ ! -x "$FAKE_BIN_DIR/grokgod" ] || [ ! -x "$FAKE_GROK_HOME/bin/grok" ]; then
+  echo "FAIL: Test (k) - Launchers missing after release install"; exit 1
+fi
+
+echo "PASS: Test (k) - Release-mode install"
 
 echo "=== All install.sh tests passed successfully! ==="

@@ -3,14 +3,36 @@ set -eu
 
 GROKGOD_HOME="${GROKGOD_HOME:-$HOME/.grokgod}"
 GROKGOD_BIN="$GROKGOD_HOME/bin/grok"
-GROKGOD_SRC="${GROKGOD_SRC:-$HOME/Desktop/code/grokgod}"
+
+# Fall back to ~/.grokgod/src or $HOME/Desktop/code/grokgod (dev host compat)
+if [ -n "${GROKGOD_SRC:-}" ]; then
+  : # Keep explicitly provided GROKGOD_SRC
+elif [ -d "$GROKGOD_HOME/src" ]; then
+  GROKGOD_SRC="$GROKGOD_HOME/src"
+elif [ -d "$HOME/Desktop/code/grokgod" ]; then
+  GROKGOD_SRC="$HOME/Desktop/code/grokgod"
+else
+  GROKGOD_SRC="$GROKGOD_HOME/src"
+fi
 
 cmd="${1:-}"
 
 case "$cmd" in
   update)
     shift || true
-    exec sh "$GROKGOD_SRC/install.sh" "$@"
+    # Detect mode from stamp or default to release
+    MODE_ARG=""
+    if [ -f "$GROKGOD_HOME/.source-version" ]; then
+      INST_MODE="$(grep '^MODE=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
+      if [ "$INST_MODE" = "source" ]; then
+        MODE_ARG="--from-source"
+      fi
+    fi
+    if [ -n "$MODE_ARG" ]; then
+      exec sh "$GROKGOD_SRC/install.sh" "$MODE_ARG" "$@"
+    else
+      exec sh "$GROKGOD_SRC/install.sh" "$@"
+    fi
     ;;
   status)
     echo "shim: $0"
