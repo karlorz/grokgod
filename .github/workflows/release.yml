@@ -29,7 +29,7 @@ jobs:
             target: darwin-arm64
             ext: ""
             optional: false
-          - os: macos-13
+          - os: macos-15-intel
             target: darwin-x64
             ext: ""
             optional: true
@@ -44,6 +44,13 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
+
+      # grok-build vendors bin/protoc as a dotslash file; without dotslash on
+      # PATH the xai-grok-tools-api build script panics ("protoc not found").
+      - name: Install dotslash
+        uses: taiki-e/install-action@v2
+        with:
+          tool: dotslash
 
       - name: Install Linux Build Dependencies
         if: runner.os == 'Linux'
@@ -97,10 +104,12 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  # No `if: always()`: per-leg continue-on-error already lets optional legs
+  # fail without blocking; always() would publish a release missing required
+  # assets when a required leg fails.
   release:
     name: Create Release
     needs: build
-    if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -124,6 +133,15 @@ jobs:
           ls -la release-assets/
           echo "=== SHA256SUMS ==="
           cat release-assets/SHA256SUMS
+
+      - name: Verify required assets exist
+        run: |
+          for t in linux-x64 linux-arm64 darwin-arm64; do
+            if [ ! -s "release-assets/grokgod-$t" ]; then
+              echo "::error::missing required asset release-assets/grokgod-$t"
+              exit 1
+            fi
+          done
 
       - name: Resolve versions and build release notes
         id: notes
