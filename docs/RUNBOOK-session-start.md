@@ -1,0 +1,68 @@
+# Runbook: grokgod session-start checks (run once at session start)
+
+Any agent starting development in this repo MUST run this runbook ONCE before
+other work. It replaces scheduled watchers: there is no persistent session, so
+the checks run when an agent session starts in a grokgod-related project.
+
+## 1. Disk watch (every session)
+
+The host data volume runs tight (historically 86-92% used). Cargo builds are the
+main disk eater (`~/.grokgod/target` ~8 GB warm, cold rebuild needs headroom).
+
+```sh
+df -h /System/Volumes/Data | tail -1
+du -sh ~/.grokgod/target 2>/dev/null || echo "no target cache yet"
+```
+
+- Free >= 15 GiB: OK, proceed.
+- Free < 15 GiB: WARN the user in your first reply. Suggest `grokgod cache report`.
+- Free < 10 GiB: strongly recommend `grokgod cache --auto-clean` (removes only
+  `~/.grokgod/target`; rebuild ~8 min) and/or the macos-dev-cache-cleaner skill.
+  Never run a clean or `--apply` yourself without explicit user approval.
+
+## 2. Upstream patch watch (every session)
+
+`patches/0001-normalize-plugin-skill-join.patch` is private. Upstream
+(xai-org/grok-build) is a one-way mirror with issues/PRs disabled, so watch for
+the fix landing on `origin/main` (or forks) instead of expecting a PR.
+
+```sh
+git -C ~/Desktop/code/grok-build fetch origin --quiet
+git -C ~/Desktop/code/grok-build log --oneline -20 origin/main -- crates/codegen/xai-grok-agent/src/plugins/manifest.rs
+git -C ~/Desktop/code/grok-build show origin/main:crates/codegen/xai-grok-agent/src/plugins/manifest.rs | grep -n "CurDir\|normalize" || true
+```
+
+- If CurDir/normalize filtering EXISTS upstream: report FIXED-UPSTREAM to the
+  user; suggest pinning that SHA, dropping `patches/0001`, rebuilding stock.
+- Otherwise: NOT-YET; do nothing. Do not modify patches/, do not rebuild.
+
+NOTE: `git status` in the grok-build checkout showing `manifest.rs` modified is
+EXPECTED - that is our applied patch. Never revert it casually; `install.sh`
+handles reverse/re-apply on update.
+
+## 3. Live state sanity (every session, 10 seconds)
+
+```sh
+grok --version                          # expect: grok 1.0.5 (d71f6e0c)
+grokgod status | head -6                # shim ownership + source-version
+ls -la ~/.local/bin/grok ~/.local/bin/grok.orig
+```
+
+- `~/.local/bin/grok` should be OUR shim (1632+ bytes, contains "GROKGOD").
+- If it is a symlink to `~/.grok/bin/grok` again, the official installer
+  reclaimed PATH: tell the user, offer `sh ~/Desktop/code/grokgod/install.sh`
+  (fast path; only rebuilds if SHA/patchset changed).
+
+## 4. Post-v1 overlay pin facts (context, no action)
+
+- Pin API: `GROK_CONFIG_PATH` via `grokgod run --automation-root
+  ~/.orca/automations/weekly-dev-cache-scan`. NEVER `-m`.
+- Both Saturday schedulers stay OFF (Orca automation + launchd
+  `.plist.disabled`) unless the user explicitly picks a path.
+- `~/.grokgod/overlays.toml` is test-fixtures only; production never reads it.
+
+## Escalation
+
+Anything unexpected (patch reject on update, PATH reclaimed, disk < 10 GiB,
+upstream fix landed): report to the user in that session's first substantive
+reply. Do not auto-fix beyond what is listed above.
