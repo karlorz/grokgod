@@ -54,7 +54,8 @@ Source mode pins base `d71f6e0c1f5acc5469e503e192fe14824e6f8c90` (never silently
 
 Pinned grok-build SHA: `d71f6e0c1f5acc5469e503e192fe14824e6f8c90`. Session-start
 checks: [docs/RUNBOOK-session-start.md](docs/RUNBOOK-session-start.md) (auto-load
-via [AGENTS.md](AGENTS.md)).
+via [AGENTS.md](AGENTS.md)). Persist inventory (keep vs phase-out):
+[docs/patch-inventory.md](docs/patch-inventory.md).
 
 ## grokgod run (overlay pin)
 
@@ -73,7 +74,7 @@ grokgod run --automation-root DIR --prompt "your prompt text"
 # Explicit overlay file path
 grokgod run --overlay /path/to/overlay.toml --prompt "your prompt text"
 
-# Tag inner scan with session UUID and open an Orca resume tab (resumes when scan finishes)
+# PHASE-OUT: Orca resume workaround (hit the request; durable fix is Orca-side)
 grokgod run --automation-root DIR --orca-resume-tag
 
 # Dry run inspection (prints GROK_CONFIG_PATH and exec command without running)
