@@ -74,9 +74,6 @@ grokgod run --automation-root DIR --prompt "your prompt text"
 # Explicit overlay file path
 grokgod run --overlay /path/to/overlay.toml --prompt "your prompt text"
 
-# PHASE-OUT: Orca resume workaround (hit the request; durable fix is Orca-side)
-grokgod run --automation-root DIR --orca-resume-tag
-
 # Dry run inspection (prints GROK_CONFIG_PATH and exec command without running)
 grokgod run --automation-root DIR --dry-run
 ```

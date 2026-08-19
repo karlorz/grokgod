@@ -1,10 +1,9 @@
-# grokgod persist inventory (docs only, 2026-08-19)
+# grokgod persist inventory (2026-08-19)
 
 ClawGod-style tracking of what grokgod **must** re-apply after `grok update`,
 versus wrapper behavior, versus work we will not keep. This file is the
-inventory. Catalog/automation of apply+verify (the ClawGod `patch.mjs` analog)
-waits on `/grill-with-docs`. Do not add or remove source patches from this
-list without that grill.
+inventory. Persist status is exposed via the `grok status` persist block
+(`0001-normalize-plugin-skill-join: applied|missing`, `overlay-pin: wrapper|missing`).
 
 ## Keep — grok-build source patch (re-apply on update)
 
@@ -24,15 +23,11 @@ Production overlay lives under the automation root (Weekly:
 `~/.orca/automations/weekly-dev-cache-scan/grok-overlay.toml`). 
 `~/.grokgod/overlays.toml` is test fixtures only.
 
-## Phase out — wrapper workaround, not a source patch
+## Removed — wrapper workaround, not a source patch
 
 | ID | Mechanism | What | Why drop |
 |----|-----------|------|----------|
-| `ORCA-RESUME` | `grokgod run --orca-resume-tag` (commits `090119d`, `e239bb8`) | Pre-create Orca tab + waiter + `grok --resume <uuid>` | Achieved the request on DEV-TEST run 2. Durable resume is an Orca product gap (in-app history like Codex, or spawn `--resume`). Do not ship as v1 persist. |
-
-Removal of the flag, waiter, automation prompt bit, and tests is a later
-change **after** grill-with-docs. Until then the flag may stay in the tree
-so Saturday still has a workaround.
+| `ORCA-RESUME` | `grokgod run --orca-resume-tag` (introduced `090119d`, `e239bb8`) | Pre-create Orca tab + waiter + `grok --resume <uuid>` | Achieved the request on DEV-TEST run 2. Durable resume is an Orca product gap (in-app history like Codex, or spawn `--resume`). Flag, waiter, and tests deleted in this working tree; removal lands next commit. |
 
 ## Not patches
 

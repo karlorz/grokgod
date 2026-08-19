@@ -178,4 +178,24 @@ if [ "$INV_COUNT" -ne 1 ]; then
 fi
 echo "PASS: Test 6"
 
+# Test 7: Status persist inventory block
+echo "Test 7: Status persist inventory block"
+# 7a: applied and wrapper
+printf "SHA=fake\nPATCHSET=v1.0.3\nVERSION=v1.0.3\nMODE=source\n" > "$TEST_GROKGOD_HOME/.source-version"
+mkdir -p "$TEST_GROKGOD_SRC/src"
+touch "$TEST_GROKGOD_SRC/src/grokgod-run.sh"
+
+STATUS_PERSIST_OUT="$(run_shim status)"
+echo "$STATUS_PERSIST_OUT" | grep -q "^persist:" || { echo "FAIL: status output missing persist header ($STATUS_PERSIST_OUT)"; exit 1; }
+echo "$STATUS_PERSIST_OUT" | grep -q "  0001-normalize-plugin-skill-join: applied" || { echo "FAIL: status output missing applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
+echo "$STATUS_PERSIST_OUT" | grep -q "  overlay-pin: wrapper" || { echo "FAIL: status output missing overlay-pin wrapper ($STATUS_PERSIST_OUT)"; exit 1; }
+
+# 7b: missing and missing
+rm -f "$TEST_GROKGOD_HOME/.source-version" "$TEST_GROKGOD_SRC/src/grokgod-run.sh"
+STATUS_MISSING_OUT="$(run_shim status)"
+echo "$STATUS_MISSING_OUT" | grep -q "^persist:" || { echo "FAIL: status output missing persist header ($STATUS_MISSING_OUT)"; exit 1; }
+echo "$STATUS_MISSING_OUT" | grep -q "  0001-normalize-plugin-skill-join: missing" || { echo "FAIL: status output missing patch missing state ($STATUS_MISSING_OUT)"; exit 1; }
+echo "$STATUS_MISSING_OUT" | grep -q "  overlay-pin: missing" || { echo "FAIL: status output missing overlay-pin missing state ($STATUS_MISSING_OUT)"; exit 1; }
+echo "PASS: Test 7"
+
 echo "=== All tests passed successfully! ==="

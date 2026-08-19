@@ -62,6 +62,26 @@ case "$cmd" in
     fi
     df_output="$(df -h "$df_dir" 2>/dev/null | tail -n 1 || true)"
     echo "free disk: $df_output"
+
+    patchset_val=""
+    if [ -f "$GROKGOD_HOME/.source-version" ]; then
+      patchset_val="$(grep '^PATCHSET=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
+    fi
+    if [ -e "$GROKGOD_BIN" ] && [ -n "$patchset_val" ]; then
+      patch_status="applied"
+    else
+      patch_status="missing"
+    fi
+
+    if [ -f "$GROKGOD_SRC/src/grokgod-run.sh" ]; then
+      overlay_status="wrapper"
+    else
+      overlay_status="missing"
+    fi
+
+    echo "persist:"
+    echo "  0001-normalize-plugin-skill-join: $patch_status"
+    echo "  overlay-pin: $overlay_status"
     exit 0
     ;;
   cache)
