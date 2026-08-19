@@ -1,0 +1,179 @@
+name: Compat Daily
+
+on:
+  schedule:
+    - cron: '23 8 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'patches/**'
+      - '.github/workflows/compat-daily.yml'
+  pull_request:
+    paths:
+      - 'patches/**'
+      - '.github/workflows/compat-daily.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: compat-daily
+  cancel-in-progress: true
+
+jobs:
+  compat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout grokgod
+        uses: actions/checkout@v4
+
+      - name: Clone grok-build (shallow)
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/xai-org/grok-build.git grok-build
+          sha="$(git -C grok-build rev-parse HEAD)"
+          echo "grok-build HEAD SHA: $sha"
+          echo "$sha" > /tmp/grok-build-sha
+
+      - name: Apply-check patches
+        shell: bash
+        run: |
+          shopt -s nullglob
+          patch_files=(patches/*.patch)
+          shopt -u nullglob
+
+          if [ ${#patch_files[@]} -eq 0 ]; then
+            echo "::error::No patch files found matching patches/*.patch (fail-closed)"
+            exit 1
+          fi
+
+          grok_sha="$(cat /tmp/grok-build-sha 2>/dev/null || echo 'unknown')"
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          event_name="${GITHUB_EVENT_NAME}"
+
+          failed_patches=()
+
+          mkdir -p /tmp/compat-details
+
+          for p in "${patch_files[@]}"; do
+            pname="$(basename "$p")"
+            echo "==> Testing patch: $pname"
+
+            if apply_err="$(git -C grok-build apply --check "$GITHUB_WORKSPACE/$p" 2>&1)"; then
+              echo "  ✓ $pname applies cleanly"
+            else
+              echo "  ✗ $pname failed to apply"
+              echo "$apply_err"
+              failed_patches+=("$pname")
+
+              manifest_file="grok-build/crates/codegen/xai-grok-agent/src/plugins/manifest.rs"
+              upstream_diag="upstream status unknown"
+              if [ -f "$manifest_file" ]; then
+                if grep -q 'Component::CurDir' "$manifest_file" || grep -q 'fn normalize_path' "$manifest_file"; then
+                  echo "  note: possible FIXED-UPSTREAM; do not auto-drop"
+                  upstream_diag="possible FIXED-UPSTREAM (CurDir / fn normalize_path present in manifest.rs); do not auto-drop"
+                else
+                  echo "  note: upstream likely drifted; regenerate patch"
+                  upstream_diag="upstream likely drifted (CurDir / fn normalize_path absent in manifest.rs); regenerate patch"
+                fi
+              else
+                echo "  note: manifest.rs not found at expected path"
+                upstream_diag="manifest.rs not found at $manifest_file"
+              fi
+
+              trimmed_err="$(echo "$apply_err" | head -n 20)"
+
+              {
+                echo "### Patch: \`${pname}\`"
+                echo "- **Diagnostic:** ${upstream_diag}"
+                echo '```text'
+                echo "${trimmed_err}"
+                echo '```'
+                echo
+              } >> /tmp/compat-details/details.md
+            fi
+          done
+
+          if [ ${#failed_patches[@]} -gt 0 ]; then
+            touch /tmp/compat-apply-failed
+
+            {
+              echo "Compatibility check failed against \`xai-org/grok-build\` \`origin/main\`."
+              echo
+              echo "- **grok-build SHA:** \`${grok_sha}\`"
+              echo "- **Event:** \`${event_name}\`"
+              echo "- **Run:** ${run_url}"
+              echo "- **Failing patch(es):**"
+              for f in "${failed_patches[@]}"; do
+                echo "- \`${f}\`"
+              done
+              echo
+              echo "## Apply Check Details"
+              cat /tmp/compat-details/details.md
+              echo
+              echo "## Triage"
+              echo "1. Check whether upstream fixed the issue directly or refactored the file."
+              echo "2. If fixed upstream, verify test coverage before retiring the patch."
+              echo "3. If upstream drifted, rebase/regenerate the patch against \`${grok_sha}\`."
+              echo
+              echo "_Auto-opened by \`.github/workflows/compat-daily.yml\` on **this** repository._"
+            } > /tmp/compat-issue-body.md
+
+            {
+              echo "Re-failed against \`xai-org/grok-build\` \`${grok_sha}\` (event=\`${event_name}\`) — [Run ${GITHUB_RUN_ID}](${run_url})"
+              echo
+              echo "**Failing patch(es):**"
+              for f in "${failed_patches[@]}"; do
+                echo "- \`${f}\`"
+              done
+              echo
+              cat /tmp/compat-details/details.md
+            } > /tmp/compat-issue-comment.md
+          else
+            echo "All patches applied cleanly."
+            touch /tmp/compat-apply-ok
+          fi
+
+      - name: Open or comment issue on failure
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ ! -f /tmp/compat-apply-failed ]; then
+            echo "Apply-check succeeded or was skipped; no issue action needed."
+            exit 0
+          fi
+
+          gh label create compat-broken --color "e4e669" --description "compat-daily regression" --force || true
+
+          issue_title="compat-daily: source patches do not apply to grok-build origin/main"
+
+          open_issue_num="$(gh issue list --state open --label compat-broken --json number,title --jq ".[] | select(.title == \"${issue_title}\") | .number" | head -n 1 || true)"
+
+          if [ -z "$open_issue_num" ]; then
+            open_issue_num="$(gh issue list --state open --json number,title --limit 100 --jq ".[] | select(.title == \"${issue_title}\") | .number" | head -n 1 || true)"
+          fi
+
+          if [ -n "$open_issue_num" ]; then
+            echo "Existing open issue found (#$open_issue_num); adding comment..."
+            gh issue comment "$open_issue_num" --body-file /tmp/compat-issue-comment.md
+          else
+            echo "No existing open issue found; creating new issue..."
+            gh issue create \
+              --title "$issue_title" \
+              --label "compat-broken,bug" \
+              --body-file /tmp/compat-issue-body.md
+          fi
+
+      - name: Fail if patches do not apply
+        shell: bash
+        run: |
+          if [ -f /tmp/compat-apply-failed ]; then
+            echo "::error::One or more source patches failed to apply cleanly to grok-build origin/main"
+            exit 1
+          fi

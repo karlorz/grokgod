@@ -11,7 +11,7 @@ inventory. Persist status is exposed via the `grok status` persist block
 |----|------|------|-------------|
 | `0001` | `patches/0001-normalize-plugin-skill-join.patch` | Filter `Component::CurDir` in `manifest.rs` skill joins so `"./skills/"` registers | Official `grok update` replaces the Mach-O; without this, installed plugin skill paths 404 |
 
-Base SHA: see `patches/README.md` (`d71f6e0c`). Fail closed on `git apply --check`.
+Base SHA: see `patches/README.md` (`d71f6e0c`). Fail closed on `git apply --check`. Daily CI `.github/workflows/compat-daily.yml` runs `git apply --check` of `patches/*.patch` against latest `xai-org/grok-build` `origin/main`.
 
 ## Keep — wrapper, not a source patch
 
