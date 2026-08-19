@@ -27,6 +27,23 @@ FAKE_BIN="$TEST_GROKGOD_HOME/bin/grok"
 INVOCATIONS_FILE="$TMP_DIR/invocations.txt"
 touch "$INVOCATIONS_FILE"
 
+ORCA_BIN_DIR="$TMP_DIR/orcapath"
+ORCA_INVOCATIONS_FILE="$TMP_DIR/orca_invocations.txt"
+mkdir -p "$ORCA_BIN_DIR"
+touch "$ORCA_INVOCATIONS_FILE"
+
+FAKE_ORCA_BIN="$ORCA_BIN_DIR/orca"
+cat << 'EOF' > "$FAKE_ORCA_BIN"
+#!/bin/sh
+set -eu
+echo "--- ORCA INVOCATION ---" >> "$ORCA_INVOCATIONS_FILE"
+echo "ARGS:$*" >> "$ORCA_INVOCATIONS_FILE"
+EOF
+chmod +x "$FAKE_ORCA_BIN"
+
+EMPTY_BIN_DIR="$TMP_DIR/emptybin"
+mkdir -p "$EMPTY_BIN_DIR"
+
 cat << 'EOF' > "$FAKE_BIN"
 #!/bin/sh
 set -eu
@@ -34,6 +51,30 @@ echo "--- INVOCATION ---" >> "$TMP_DIR/invocations.txt"
 echo "GROK_CONFIG_PATH=${GROK_CONFIG_PATH:-NOT_SET}" >> "$TMP_DIR/invocations.txt"
 echo "GROK_DISABLE_AUTOUPDATER=${GROK_DISABLE_AUTOUPDATER:-NOT_SET}" >> "$TMP_DIR/invocations.txt"
 echo "ARGS:$*" >> "$TMP_DIR/invocations.txt"
+
+if [ "${FAKE_GROK_MKSESSION:-0}" = "1" ]; then
+  # Parse --session-id from argv
+  sess_id=""
+  prev=""
+  for arg in "$@"; do
+    if [ "$prev" = "--session-id" ]; then
+      sess_id="$arg"
+      break
+    fi
+    prev="$arg"
+  done
+  if [ -n "$sess_id" ]; then
+    phys_pwd="$(pwd -P)"
+    enc_pwd="$(printf "%s" "$phys_pwd" | awk '{gsub("/", "%2F"); print}')"
+    sess_dir="${GROK_HOME:-$HOME/.grok}/sessions/$enc_pwd/$sess_id"
+    mkdir -p "$sess_dir"
+  fi
+fi
+
+if [ "${FAKE_GROK_EXIT:-0}" != "0" ]; then
+  exit "$FAKE_GROK_EXIT"
+fi
+
 echo "FAKE_BIN_SUCCESS"
 EOF
 chmod +x "$FAKE_BIN"
@@ -43,6 +84,7 @@ run_grokgod() {
   GROKGOD_HOME="$TEST_GROKGOD_HOME" \
   GROKGOD_SRC="$REPO_ROOT" \
   TMP_DIR="$TMP_DIR" \
+  ORCA_INVOCATIONS_FILE="$ORCA_INVOCATIONS_FILE" \
   sh "$SHIM_SRC" "$@"
 }
 
@@ -363,5 +405,186 @@ if [ -s "$INVOCATIONS_FILE" ]; then
   echo "FAIL: Fake bin was invoked during --dry-run in Test 13!"; cat "$INVOCATIONS_FILE"; exit 1
 fi
 echo "PASS: Test 13"
+
+# ─────────────────────────────────────────────────────────
+# Test 14: --orca-resume-tag + fake orca + MKSESSION=1
+# ─────────────────────────────────────────────────────────
+echo "Test 14: --orca-resume-tag + fake orca + MKSESSION=1"
+WORKDIR_14="$TMP_DIR/workdir14"
+mkdir -p "$WORKDIR_14"
+PHYSICAL_WORKDIR_14="$(cd "$WORKDIR_14" && pwd -P)"
+
+> "$INVOCATIONS_FILE"
+> "$ORCA_INVOCATIONS_FILE"
+
+OUT14="$(
+  cd "$WORKDIR_14"
+  PATH="$ORCA_BIN_DIR:$PATH" FAKE_GROK_MKSESSION=1 run_grokgod run --automation-root "$AUTO_DIR_1" --orca-resume-tag
+)"
+echo "$OUT14" | grep -q "FAKE_BIN_SUCCESS" || { echo "FAIL: Fake bin was not called in Test 14 ($OUT14)"; exit 1; }
+
+# Verify orca was invoked exactly once
+ORCA_COUNT_14="$(grep -c "^--- ORCA INVOCATION ---$" "$ORCA_INVOCATIONS_FILE" || true)"
+if [ "$ORCA_COUNT_14" -ne 1 ]; then
+  echo "FAIL: Orca not invoked exactly once in Test 14 (count=$ORCA_COUNT_14)"; cat "$ORCA_INVOCATIONS_FILE"; exit 1
+fi
+
+# Extract UUID from fake grok argv
+FAKE_ARGS_14="$(grep "^ARGS:" "$INVOCATIONS_FILE" || true)"
+SESS_ID_14="$(printf "%s" "$FAKE_ARGS_14" | sed -n 's/.*--session-id \([0-9a-fA-F-]*\).*/\1/p')"
+if [ -z "$SESS_ID_14" ]; then
+  echo "FAIL: Fake grok args missing --session-id in Test 14: $FAKE_ARGS_14"; exit 1
+fi
+
+echo "$SESS_ID_14" | grep -E -q '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || {
+  echo "FAIL: UUID format invalid in Test 14 ($SESS_ID_14)"; exit 1
+}
+
+# Verify orca args
+ORCA_ARGS_14="$(grep "^ARGS:" "$ORCA_INVOCATIONS_FILE" || true)"
+echo "$ORCA_ARGS_14" | grep -q "terminal create" || { echo "FAIL: Orca missing terminal create in Test 14 ($ORCA_ARGS_14)"; exit 1; }
+echo "$ORCA_ARGS_14" | grep -q -- "--worktree path:$PHYSICAL_WORKDIR_14" || { echo "FAIL: Orca missing correct --worktree in Test 14 ($ORCA_ARGS_14)"; exit 1; }
+echo "$ORCA_ARGS_14" | grep -q "grok --resume $SESS_ID_14" || { echo "FAIL: Orca missing resume command with UUID in Test 14 ($ORCA_ARGS_14)"; exit 1; }
+
+echo "PASS: Test 14"
+
+# ─────────────────────────────────────────────────────────
+# Test 15: --orca-resume-tag + fake orca + MKSESSION=0 -> orca NOT invoked, stderr warning
+# ─────────────────────────────────────────────────────────
+echo "Test 15: --orca-resume-tag + fake orca + MKSESSION=0"
+WORKDIR_15="$TMP_DIR/workdir15"
+mkdir -p "$WORKDIR_15"
+
+> "$INVOCATIONS_FILE"
+> "$ORCA_INVOCATIONS_FILE"
+
+set +e
+ERR15="$(
+  cd "$WORKDIR_15"
+  PATH="$ORCA_BIN_DIR:$PATH" FAKE_GROK_MKSESSION=0 run_grokgod run --automation-root "$AUTO_DIR_1" --orca-resume-tag 2>&1
+)"
+STATUS15=$?
+set -eu
+
+if [ "$STATUS15" -ne 0 ]; then
+  echo "FAIL: Expected exit 0 in Test 15, got $STATUS15"; exit 1
+fi
+
+ORCA_COUNT_15="$(grep -c "^--- ORCA INVOCATION ---$" "$ORCA_INVOCATIONS_FILE" || true)"
+if [ "$ORCA_COUNT_15" -ne 0 ]; then
+  echo "FAIL: Orca was unexpectedly invoked when session dir missing in Test 15"; cat "$ORCA_INVOCATIONS_FILE"; exit 1
+fi
+
+echo "$ERR15" | grep -q "warning: session directory not found" || {
+  echo "FAIL: Missing stderr warning about session dir not found in Test 15 ($ERR15)"; exit 1
+}
+echo "$ERR15" | grep -q "manual resume:" || {
+  echo "FAIL: Missing manual resume hint in stderr in Test 15 ($ERR15)"; exit 1
+}
+
+echo "PASS: Test 15"
+
+# ─────────────────────────────────────────────────────────
+# Test 16: --orca-resume-tag + FAKE_GROK_EXIT=3 + MKSESSION=1 -> grokgod exits 3, orca still invoked
+# ─────────────────────────────────────────────────────────
+echo "Test 16: --orca-resume-tag + FAKE_GROK_EXIT=3 + MKSESSION=1"
+WORKDIR_16="$TMP_DIR/workdir16"
+mkdir -p "$WORKDIR_16"
+
+> "$INVOCATIONS_FILE"
+> "$ORCA_INVOCATIONS_FILE"
+
+set +e
+(
+  cd "$WORKDIR_16"
+  PATH="$ORCA_BIN_DIR:$PATH" FAKE_GROK_EXIT=3 FAKE_GROK_MKSESSION=1 run_grokgod run --automation-root "$AUTO_DIR_1" --orca-resume-tag
+)
+STATUS16=$?
+set -eu
+
+if [ "$STATUS16" -ne 3 ]; then
+  echo "FAIL: Expected exit 3 in Test 16, got $STATUS16"; exit 1
+fi
+
+ORCA_COUNT_16="$(grep -c "^--- ORCA INVOCATION ---$" "$ORCA_INVOCATIONS_FILE" || true)"
+if [ "$ORCA_COUNT_16" -ne 1 ]; then
+  echo "FAIL: Orca not invoked in Test 16 despite session dir existing (count=$ORCA_COUNT_16)"; exit 1
+fi
+
+echo "PASS: Test 16"
+
+# ─────────────────────────────────────────────────────────
+# Test 17: --orca-resume-tag + MKSESSION=1 + PATH lacking orca -> stderr note that orca CLI is not on PATH; exit 0
+# ─────────────────────────────────────────────────────────
+echo "Test 17: --orca-resume-tag + MKSESSION=1 + PATH lacking orca"
+WORKDIR_17="$TMP_DIR/workdir17"
+mkdir -p "$WORKDIR_17"
+
+> "$INVOCATIONS_FILE"
+> "$ORCA_INVOCATIONS_FILE"
+
+set +e
+ERR17="$(
+  cd "$WORKDIR_17"
+  PATH="$EMPTY_BIN_DIR:/usr/bin:/bin" FAKE_GROK_MKSESSION=1 run_grokgod run --automation-root "$AUTO_DIR_1" --orca-resume-tag 2>&1
+)"
+STATUS17=$?
+set -eu
+
+if [ "$STATUS17" -ne 0 ]; then
+  echo "FAIL: Expected exit 0 in Test 17, got $STATUS17"; exit 1
+fi
+
+echo "$ERR17" | grep -q "note: orca CLI is not on PATH" || {
+  echo "FAIL: Missing note that orca CLI is not on PATH in Test 17 ($ERR17)"; exit 1
+}
+echo "$ERR17" | grep -q "manual resume:" || {
+  echo "FAIL: Missing manual resume hint in Test 17 ($ERR17)"; exit 1
+}
+
+echo "PASS: Test 17"
+
+# ─────────────────────────────────────────────────────────
+# Test 18: --dry-run + --orca-resume-tag -> EXEC has --session-id, RESUME TAG line printed, fake bin NOT invoked
+# ─────────────────────────────────────────────────────────
+echo "Test 18: --dry-run + --orca-resume-tag"
+> "$INVOCATIONS_FILE"
+> "$ORCA_INVOCATIONS_FILE"
+
+OUT18="$(run_grokgod run --automation-root "$AUTO_DIR_1" --orca-resume-tag --dry-run)"
+echo "$OUT18" | grep -q "GROK_CONFIG_PATH=$AUTO_DIR_1/grok-overlay.toml" || { echo "FAIL: dry-run missing GROK_CONFIG_PATH ($OUT18)"; exit 1; }
+echo "$OUT18" | grep -E -q "EXEC: .* --session-id [0-9a-f-]{36} -p Perform weekly cache scan prompt" || { echo "FAIL: dry-run missing --session-id in EXEC line ($OUT18)"; exit 1; }
+echo "$OUT18" | grep -q "RESUME TAG: orca terminal create" || { echo "FAIL: dry-run missing RESUME TAG line ($OUT18)"; exit 1; }
+echo "$OUT18" | grep -q "RESUME: grok sessions list" || { echo "FAIL: dry-run missing RESUME line ($OUT18)"; exit 1; }
+
+if [ -s "$INVOCATIONS_FILE" ]; then
+  echo "FAIL: Fake bin was invoked during --dry-run in Test 18!"; cat "$INVOCATIONS_FILE"; exit 1
+fi
+if [ -s "$ORCA_INVOCATIONS_FILE" ]; then
+  echo "FAIL: Fake orca was invoked during --dry-run in Test 18!"; cat "$ORCA_INVOCATIONS_FILE"; exit 1
+fi
+echo "PASS: Test 18"
+
+# ─────────────────────────────────────────────────────────
+# Test 19: no flag + fake orca on PATH -> fake bin ARGS contain no --session-id, orca never invoked
+# ─────────────────────────────────────────────────────────
+echo "Test 19: no flag + fake orca on PATH"
+> "$INVOCATIONS_FILE"
+> "$ORCA_INVOCATIONS_FILE"
+
+OUT19="$(
+  PATH="$ORCA_BIN_DIR:$PATH" FAKE_GROK_MKSESSION=1 run_grokgod run --automation-root "$AUTO_DIR_1"
+)"
+echo "$OUT19" | grep -q "FAKE_BIN_SUCCESS" || { echo "FAIL: Fake bin was not called in Test 19 ($OUT19)"; exit 1; }
+
+grep -q -- "--session-id" "$INVOCATIONS_FILE" && {
+  echo "FAIL: --session-id was unexpectedly passed to target bin in Test 19"; cat "$INVOCATIONS_FILE"; exit 1
+}
+
+if [ -s "$ORCA_INVOCATIONS_FILE" ]; then
+  echo "FAIL: Fake orca was unexpectedly invoked in Test 19!"; cat "$ORCA_INVOCATIONS_FILE"; exit 1
+fi
+
+echo "PASS: Test 19"
 
 echo "=== All grokgod run tests passed successfully! ==="

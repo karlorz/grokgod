@@ -73,6 +73,9 @@ grokgod run --automation-root DIR --prompt "your prompt text"
 # Explicit overlay file path
 grokgod run --overlay /path/to/overlay.toml --prompt "your prompt text"
 
+# Tag inner scan with session UUID and open an Orca resume tab on completion
+grokgod run --automation-root DIR --orca-resume-tag
+
 # Dry run inspection (prints GROK_CONFIG_PATH and exec command without running)
 grokgod run --automation-root DIR --dry-run
 ```

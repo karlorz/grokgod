@@ -9,18 +9,20 @@ overlay_file=""
 prompt_file=""
 prompt_text=""
 dry_run=0
+orca_resume_tag=0
 
 usage() {
   cat << 'EOF' >&2
 Usage:
-  grokgod run --automation-root DIR [--prompt-file FILE | --prompt "text"] [--dry-run] [-- [GROK_ARGS...]]
-  grokgod run --overlay FILE [--prompt-file FILE | --prompt "text"] [--dry-run] [-- [GROK_ARGS...]]
+  grokgod run --automation-root DIR [--prompt-file FILE | --prompt "text"] [--orca-resume-tag] [--dry-run] [-- [GROK_ARGS...]]
+  grokgod run --overlay FILE [--prompt-file FILE | --prompt "text"] [--orca-resume-tag] [--dry-run] [-- [GROK_ARGS...]]
 
 Options:
   --automation-root DIR   Directory containing grok-overlay.toml and launchd-prompt.txt
   --overlay FILE          Explicit path to overlay TOML file
   --prompt-file FILE      Explicit path to prompt file
   --prompt "text"         Inline prompt string
+  --orca-resume-tag       Tag inner scan with UUID and open Orca resume tab on completion
   --dry-run               Print env and argv that would be executed and exit 0
   --                      Pass all subsequent arguments directly to grok (before -p)
   -h, --help              Show this help message
@@ -53,6 +55,10 @@ while [ $# -gt 0 ]; do
       [ $# -ge 2 ] || { echo "error: --prompt requires a text argument" >&2; exit 1; }
       prompt_text="$2"
       shift 2
+      ;;
+    --orca-resume-tag)
+      orca_resume_tag=1
+      shift
       ;;
     --dry-run)
       dry_run=1
@@ -172,15 +178,80 @@ else
   exit 1
 fi
 
+if [ "$orca_resume_tag" -eq 1 ]; then
+  # Generate lowercase RFC 4122 v4 UUID
+  if command -v uuidgen >/dev/null 2>&1; then
+    scan_session_id="$(uuidgen | tr 'A-F' 'a-f')"
+  elif [ -r /proc/sys/kernel/random/uuid ]; then
+    scan_session_id="$(tr 'A-F' 'a-f' < /proc/sys/kernel/random/uuid)"
+  else
+    hex="$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n\t' | tr 'A-F' 'a-f')"
+    p1="$(printf "%s" "$hex" | cut -c 1-8)"
+    p2="$(printf "%s" "$hex" | cut -c 9-12)"
+    p3_rest="$(printf "%s" "$hex" | cut -c 14-16)"
+    var_raw="$(printf "%s" "$hex" | cut -c 17)"
+    case "$var_raw" in
+      [89ab]) v="$var_raw" ;;
+      [0123]) v="8" ;;
+      [4567]) v="9" ;;
+      [cdef]) v="a" ;;
+      *) v="8" ;;
+    esac
+    p4_rest="$(printf "%s" "$hex" | cut -c 18-20)"
+    p5="$(printf "%s" "$hex" | cut -c 21-32)"
+    scan_session_id="$p1-$p2-4$p3_rest-$v$p4_rest-$p5"
+  fi
+
+  physical_pwd="$(pwd -P)"
+  encoded_physical_pwd="$(printf "%s" "$physical_pwd" | awk '{gsub("/", "%2F"); print}')"
+  escaped_physical_pwd="$(printf "%s" "$physical_pwd" | awk '{gsub(/\047/, "\047\\\047\047"); print}')"
+fi
+
 if [ "$dry_run" -eq 1 ]; then
   echo "GROK_CONFIG_PATH=$target_overlay"
-  if [ $# -gt 0 ]; then
-    echo "EXEC: $GROKGOD_BIN $* -p $final_prompt"
+  if [ "$orca_resume_tag" -eq 1 ]; then
+    if [ $# -gt 0 ]; then
+      echo "EXEC: $GROKGOD_BIN $* --session-id $scan_session_id -p $final_prompt"
+    else
+      echo "EXEC: $GROKGOD_BIN --session-id $scan_session_id -p $final_prompt"
+    fi
+    echo "RESUME TAG: orca terminal create --worktree path:$physical_pwd --title \"grokgod scan resume $(date +%Y-%m-%d)\" --command \"cd '$escaped_physical_pwd' && grok --resume $scan_session_id\""
   else
-    echo "EXEC: $GROKGOD_BIN -p $final_prompt"
+    if [ $# -gt 0 ]; then
+      echo "EXEC: $GROKGOD_BIN $* -p $final_prompt"
+    else
+      echo "EXEC: $GROKGOD_BIN -p $final_prompt"
+    fi
   fi
   echo "RESUME: grok sessions list   # then grok --resume <id> from this cwd (inner -p session)"
   exit 0
+fi
+
+if [ "$orca_resume_tag" -eq 1 ]; then
+  echo "note: inner scan session id: $scan_session_id; resume with 'grok --resume $scan_session_id' from this cwd" >&2
+  export GROK_CONFIG_PATH="$target_overlay"
+
+  set +e
+  "$GROKGOD_BIN" "$@" --session-id "$scan_session_id" -p "$final_prompt"
+  scan_status=$?
+  set -e
+
+  session_dir="${GROK_HOME:-$HOME/.grok}/sessions/$encoded_physical_pwd/$scan_session_id"
+
+  if ! command -v orca >/dev/null 2>&1; then
+    echo "note: orca CLI is not on PATH; manual resume: cd '$escaped_physical_pwd' && grok --resume $scan_session_id" >&2
+  elif [ ! -d "$session_dir" ]; then
+    echo "warning: session directory not found at $session_dir; manual resume: cd '$escaped_physical_pwd' && grok --resume $scan_session_id" >&2
+  else
+    if ! orca terminal create \
+      --worktree "path:$physical_pwd" \
+      --title "grokgod scan resume $(date +%Y-%m-%d)" \
+      --command "cd '$escaped_physical_pwd' && grok --resume $scan_session_id"; then
+      echo "warning: failed to create orca resume terminal; manual resume: cd '$escaped_physical_pwd' && grok --resume $scan_session_id" >&2
+    fi
+  fi
+
+  exit "$scan_status"
 fi
 
 echo "note: after the inner grok -p exits, operator can 'grok sessions list' then 'grok --resume <id>' from this cwd" >&2
