@@ -1,0 +1,37 @@
+# grok-overlay.toml - Grok Build configuration overlay template
+#
+# Official Grok Build 1.0.5 API:
+# GROK_CONFIG_PATH points here; it acts as an additional configuration layer
+# loaded above ~/.grok/config.toml (values here override the base config).
+#
+# Allowlist (sections/keys permitted in overlays):
+# - [models] (e.g. default, session_summary)
+# - [features]
+# - toolset.bash.login_shell_capture
+# - web_search domain lists
+# - shell_environment_policy (inherit, exclude, include_only)
+#
+# Forbidden (rejected by grokgod safety guards; do NOT include):
+# - api_key
+# - [auth]
+# - [mcp_servers]
+# - [plugins]
+# - [subagents]
+# - [model.<id>] aliases
+#
+# How to use:
+# - Full TUI:          GROK_CONFIG_PATH=/path/to/grok-overlay.toml grok
+# - Headless prompt:   GROK_CONFIG_PATH=/path/to/grok-overlay.toml grok -p "prompt"
+# - Automation runner: grokgod run --pin --prompt "prompt"
+#                      grokgod run --overlay /path/to/grok-overlay.toml --prompt "prompt"
+#
+# Inspect active configuration layers:
+#   grok inspect
+#   grok models
+# (Do not dump or share raw inspect JSON if it contains sensitive base config).
+#
+# Operator note: edit `default =` if flash-max is down or unavailable.
+
+[models]
+default = "flash-max"
+session_summary = "flash-non-reasoning"

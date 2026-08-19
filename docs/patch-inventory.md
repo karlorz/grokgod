@@ -17,10 +17,10 @@ Base SHA: see `patches/README.md` (`d71f6e0c`). Fail closed on `git apply --chec
 
 | ID | Mechanism | What | Why persist |
 |----|-----------|------|-------------|
-| `ORCA-PIN` | `src/grokgod-run.sh` + automation-root `grok-overlay.toml` | Export `GROK_CONFIG_PATH` and exec/run `grok -p` (never `-m`) | Orca 1.4.184 has no per-automation env. Interactive grok must stay on `~/.grok/config.toml`. |
+| `ORCA-PIN` | Official `GROK_CONFIG_PATH` env + `src/grokgod-run.sh` runner | Export `GROK_CONFIG_PATH` and exec/run `grok -p` (never `-m`) | Mechanism is official GROK_CONFIG_PATH; grokgod run sets it. Host overlay is operator/template (`examples/grok-overlay.toml`), not Weekly tree on every host. Orca 1.4.184 has no per-automation env. Interactive grok must stay on `~/.grok/config.toml`. |
 
 Production overlay lives under the automation root (Weekly:
-`~/.orca/automations/weekly-dev-cache-scan/grok-overlay.toml`). 
+`~/.orca/automations/weekly-dev-cache-scan/grok-overlay.toml`) or host pin (`~/.grokgod/pin/grok-overlay.toml`). 
 `~/.grokgod/overlays.toml` is test fixtures only.
 
 ## Removed — wrapper workaround, not a source patch

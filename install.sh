@@ -2,7 +2,7 @@
 set -eu
 
 # grokgod install.sh - POSIX sh installer / patch wrapper for grok-build
-# Usage: install.sh [--version TAG_OR_SHA] [--from-source] [--no-upgrade] [--force] [--uninstall] [--dry-run] [--prefix DIR]
+# Usage: install.sh [--version TAG_OR_SHA] [--from-source] [--no-upgrade] [--force] [--yes] [--uninstall] [--dry-run] [--prefix DIR]
 
 GROKGOD_REPO="${GROKGOD_REPO:-https://github.com/karlorz/grokgod}"
 GROKGOD_VERSION="${GROKGOD_VERSION:-}"
@@ -25,6 +25,7 @@ CLI_VERSION=""
 FROM_SOURCE=""
 NO_UPGRADE=0
 FORCE=0
+YES=0
 UNINSTALL=0
 DRY_RUN=0
 PREFIX=""
@@ -76,6 +77,10 @@ while [ $# -gt 0 ]; do
       FORCE=1
       shift
       ;;
+    --yes|-y)
+      YES=1
+      shift
+      ;;
     --uninstall)
       UNINSTALL=1
       shift
@@ -97,12 +102,12 @@ while [ $# -gt 0 ]; do
       shift 2
       ;;
     -h|--help)
-      echo "Usage: install.sh [--version TAG_OR_SHA] [--from-source] [--no-upgrade] [--force] [--uninstall] [--dry-run] [--prefix DIR]"
+      echo "Usage: install.sh [--version TAG_OR_SHA] [--from-source] [--no-upgrade] [--force] [--yes] [--uninstall] [--dry-run] [--prefix DIR]"
       exit 0
       ;;
     *)
       log_err "Unknown option: $1"
-      echo "Usage: install.sh [--version TAG_OR_SHA] [--from-source] [--no-upgrade] [--force] [--uninstall] [--dry-run] [--prefix DIR]" >&2
+      echo "Usage: install.sh [--version TAG_OR_SHA] [--from-source] [--no-upgrade] [--force] [--yes] [--uninstall] [--dry-run] [--prefix DIR]" >&2
       exit 1
       ;;
   esac
@@ -835,6 +840,65 @@ write_launcher "$GROK_HOME/bin/grok" 1
 
 # Flush shell hash cache
 hash -r 2>/dev/null || true
+
+# ─────────────────────────────────────────────────────────
+# PIN OVERLAY SETUP
+# ─────────────────────────────────────────────────────────
+maybe_install_pin_overlay() {
+  PIN="$GROKGOD_HOME/pin/grok-overlay.toml"
+
+  if [ -f "$PIN" ]; then
+    log_info "pin overlay already present: $PIN"
+    return 0
+  fi
+
+  template=""
+  if [ -n "${GROKGOD_SRC:-}" ] && [ -f "$GROKGOD_SRC/examples/grok-overlay.toml" ]; then
+    template="$GROKGOD_SRC/examples/grok-overlay.toml"
+  elif [ -f "$SCRIPT_DIR/examples/grok-overlay.toml" ]; then
+    template="$SCRIPT_DIR/examples/grok-overlay.toml"
+  elif [ -f "$GROKGOD_HOME/src/examples/grok-overlay.toml" ]; then
+    template="$GROKGOD_HOME/src/examples/grok-overlay.toml"
+  fi
+
+  if [ -z "$template" ]; then
+    log_warn "Pin overlay template not found (examples/grok-overlay.toml); skipping pin overlay installation."
+    return 0
+  fi
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log_dry "Would copy pin overlay template: $template -> $PIN"
+    return 0
+  fi
+
+  if [ "$YES" -eq 1 ]; then
+    mkdir -p "$GROKGOD_HOME/pin"
+    cp "$template" "$PIN"
+    log_info "Installed default pin overlay to $PIN"
+    return 0
+  fi
+
+  if [ -t 0 ]; then
+    printf "Install default pin overlay to %s? [y/N] " "$PIN"
+    read -r ans || ans=""
+    case "$ans" in
+      [yY]|[yY][eE][sS])
+        mkdir -p "$GROKGOD_HOME/pin"
+        cp "$template" "$PIN"
+        log_info "Installed default pin overlay to $PIN"
+        ;;
+      *)
+        log_info "Skipping pin overlay installation."
+        ;;
+    esac
+    return 0
+  fi
+
+  log_info "no TTY; pass --yes to install pin template ($PIN)"
+  return 0
+}
+
+maybe_install_pin_overlay
 
 # ─────────────────────────────────────────────────────────
 # POST-BUILD DISK WARN

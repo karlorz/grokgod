@@ -61,6 +61,10 @@ via [AGENTS.md](AGENTS.md)). Persist inventory (keep vs phase-out):
 
 `grokgod run` executes an automation run configured with a TOML config overlay and a prompt.
 
+### For Agents
+
+Everyday agent usage runs stock `grok` (via PATH shim / patched binary). Pin a specific overlay only if `GROK_CONFIG_PATH` is explicitly set in the environment or if an automation prompt directs execution through `grokgod run`.
+
 ### Usage
 
 ```sh
@@ -71,8 +75,9 @@ grokgod run --automation-root /path/to/automation-dir
 grokgod run --automation-root DIR --prompt-file /path/to/prompt.txt
 grokgod run --automation-root DIR --prompt "your prompt text"
 
-# Explicit overlay file path
+# Explicit overlay file path (or --pin)
 grokgod run --overlay /path/to/overlay.toml --prompt "your prompt text"
+grokgod run --pin /path/to/overlay.toml --prompt "your prompt text"
 
 # Dry run inspection (prints GROK_CONFIG_PATH and exec command without running)
 grokgod run --automation-root DIR --dry-run
@@ -80,14 +85,17 @@ grokgod run --automation-root DIR --dry-run
 
 ### Overlay Pin Mechanics & Rules
 
-- **Pin API**: Sets the `GROK_CONFIG_PATH` environment variable pointing to the overlay TOML file, then invokes `$GROKGOD_BIN -p "<prompt>"`. Never passes `-m` (which is the wrong API).
+- **Official Env First**: Grok Build 1.0.5 natively supports `GROK_CONFIG_PATH=<toml> grok` for full interactive TUI sessions and headless `-p` runs as an overlay layer atop `~/.grok/config.toml`. This is official grok-build functionality, not a grokgod TUI patch.
+- **Automation Helper**: `grokgod run --pin` / `--overlay` / `--automation-root` serves as the `-p` helper and enforces file/security guards. It sets `GROK_CONFIG_PATH` before invoking `$GROKGOD_BIN -p "<prompt>"`. It never passes `-m` (which is the wrong API).
 - **Interactive Isolation**: Interactive shim execution (bare `grok ...`) never sets `GROK_CONFIG_PATH`.
 - **Safety Guards**:
   - Rejects `--automation-root` set to `$HOME`, `~/.grok`, or `~/.grokgod`.
   - Rejects overlays containing forbidden full-config sections or keys (`[mcp_servers]`, `[auth]`, `[plugins]`, `[subagents]`, or `api_key`).
-- **Overlay Locations**:
+- **Template & Host Locations**:
+  - Template provided at [`examples/grok-overlay.toml`](examples/grok-overlay.toml) → optional host pin at `~/.grokgod/pin/grok-overlay.toml` (installer may offer to copy if missing; unattended with `--yes`).
+  - We do not ship the Weekly Orca overlay as the product; host overlays remain operator-owned.
   - `~/.grokgod/overlays.toml` is reserved for test fixtures only; production code never reads it.
-  - The live overlay home is the Weekly Dev Cache Scan automation directory.
+  - Inspect layers with `grok inspect` or `grok models` (never paste raw inspect JSON containing secrets).
 
 ## Wiki
 

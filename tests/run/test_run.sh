@@ -365,4 +365,74 @@ if [ -s "$INVOCATIONS_FILE" ]; then
 fi
 echo "PASS: Test 13"
 
+# ─────────────────────────────────────────────────────────
+# Test 14: --pin with GROKGOD_HOME sandbox, pin/grok-overlay.toml present + --prompt
+# ─────────────────────────────────────────────────────────
+echo "Test 14: --pin happy path with --prompt"
+mkdir -p "$TEST_GROKGOD_HOME/pin"
+cat << 'EOF' > "$TEST_GROKGOD_HOME/pin/grok-overlay.toml"
+[models]
+default = "grok-pin-model"
+EOF
+
+> "$INVOCATIONS_FILE"
+OUT14="$(run_grokgod run --pin --prompt "pin test prompt")"
+echo "$OUT14" | grep -q "FAKE_BIN_SUCCESS" || { echo "FAIL: Fake bin was not called in Test 14 ($OUT14)"; exit 1; }
+
+grep -q "GROK_CONFIG_PATH=$TEST_GROKGOD_HOME/pin/grok-overlay.toml" "$INVOCATIONS_FILE" || { echo "FAIL: GROK_CONFIG_PATH not pointing at pin overlay in Test 14"; cat "$INVOCATIONS_FILE"; exit 1; }
+grep -q "ARGS:-p pin test prompt" "$INVOCATIONS_FILE" || { echo "FAIL: Target binary args incorrect in Test 14"; cat "$INVOCATIONS_FILE"; exit 1; }
+
+if grep "ARGS:" "$INVOCATIONS_FILE" | grep -E -q '(^|[[:space:]])-m([[:space:]]|$)'; then
+  echo "FAIL: '-m' found in target binary arguments in Test 14!"; cat "$INVOCATIONS_FILE"; exit 1
+fi
+echo "PASS: Test 14"
+
+# ─────────────────────────────────────────────────────────
+# Test 15: --pin without the file -> exit 1, error mentions examples/grok-overlay.toml
+# ─────────────────────────────────────────────────────────
+echo "Test 15: --pin without pin/grok-overlay.toml -> exit 1 with examples hint"
+MISSING_PIN_GROKGOD_HOME="$TMP_DIR/missing_pin_grokgod"
+mkdir -p "$MISSING_PIN_GROKGOD_HOME/bin"
+cp "$FAKE_BIN" "$MISSING_PIN_GROKGOD_HOME/bin/grok"
+
+set +e
+ERR15="$(HOME="$TEST_HOME" GROKGOD_HOME="$MISSING_PIN_GROKGOD_HOME" GROKGOD_SRC="$REPO_ROOT" TMP_DIR="$TMP_DIR" sh "$SHIM_SRC" run --pin --prompt "prompt" 2>&1)"
+STATUS15=$?
+set -eu
+
+if [ "$STATUS15" -ne 1 ]; then
+  echo "FAIL: Expected exit 1 for missing pin file, got $STATUS15"; exit 1
+fi
+echo "$ERR15" | grep -q "examples/grok-overlay.toml" || { echo "FAIL: Error did not mention examples/grok-overlay.toml ($ERR15)"; exit 1; }
+echo "PASS: Test 15"
+
+# ─────────────────────────────────────────────────────────
+# Test 16: --pin + --overlay -> exit 1
+# ─────────────────────────────────────────────────────────
+echo "Test 16: --pin + --overlay -> exit 1"
+set +e
+ERR16="$(run_grokgod run --pin --overlay "$EXPLICIT_DIR/my-custom-overlay.toml" --prompt "test" 2>&1)"
+STATUS16=$?
+set -eu
+
+if [ "$STATUS16" -ne 1 ]; then
+  echo "FAIL: Expected exit 1 for --pin + --overlay, got $STATUS16"; exit 1
+fi
+echo "$ERR16" | grep -q "cannot combine --automation-root, --overlay, or --pin" || { echo "FAIL: Unexpected error message ($ERR16)"; exit 1; }
+echo "PASS: Test 16"
+
+# ─────────────────────────────────────────────────────────
+# Test 17: --dry-run --pin + --prompt prints GROK_CONFIG_PATH and no binary invoke
+# ─────────────────────────────────────────────────────────
+echo "Test 17: --dry-run --pin + --prompt"
+> "$INVOCATIONS_FILE"
+OUT17="$(run_grokgod run --dry-run --pin --prompt "dry pin prompt")"
+echo "$OUT17" | grep -q "GROK_CONFIG_PATH=$TEST_GROKGOD_HOME/pin/grok-overlay.toml" || { echo "FAIL: dry-run missing pin GROK_CONFIG_PATH ($OUT17)"; exit 1; }
+echo "$OUT17" | grep -q "EXEC: .* -p dry pin prompt" || { echo "FAIL: dry-run missing EXEC line ($OUT17)"; exit 1; }
+
+if [ -s "$INVOCATIONS_FILE" ]; then
+  echo "FAIL: Fake bin was invoked during --dry-run in Test 17!"; cat "$INVOCATIONS_FILE"; exit 1
+fi
+echo "PASS: Test 17"
+
 echo "=== All grokgod run tests passed successfully! ==="

@@ -1543,4 +1543,110 @@ grep -q "$PIN_IN_INSTALL" "$REPO_ROOT/patches/README.md" || {
 }
 echo "PASS: Test (t) - Drift guard"
 
+# ─────────────────────────────────────────────────────────
+# Test (u): Pin overlay skipped on no TTY and no --yes
+# ─────────────────────────────────────────────────────────
+echo "Test (u): Pin overlay skipped on no TTY and no --yes"
+setup_sandbox "test_u"
+reset_worktree
+
+PATH="$FAKE_BIN_SHADOW:$PATH" \
+HOME="$FAKE_HOME" \
+GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+GROK_BUILD_SRC="$GB_WORKTREE" \
+BIN_DIR="$FAKE_BIN_DIR" \
+CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+sh "$INSTALL_SCRIPT" --from-source --no-upgrade >/dev/null
+
+if [ -e "$FAKE_GROKGOD_HOME/pin/grok-overlay.toml" ]; then
+  echo "FAIL: Test (u) - Pin overlay should not be created without --yes on non-TTY"; exit 1
+fi
+echo "PASS: Test (u) - Pin overlay skipped on no TTY"
+
+# ─────────────────────────────────────────────────────────
+# Test (v): Pin overlay created with --yes
+# ─────────────────────────────────────────────────────────
+echo "Test (v): Pin overlay created with --yes"
+setup_sandbox "test_v"
+reset_worktree
+
+PATH="$FAKE_BIN_SHADOW:$PATH" \
+HOME="$FAKE_HOME" \
+GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+GROK_BUILD_SRC="$GB_WORKTREE" \
+BIN_DIR="$FAKE_BIN_DIR" \
+CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+sh "$INSTALL_SCRIPT" --from-source --no-upgrade --yes >/dev/null
+
+if [ ! -f "$FAKE_GROKGOD_HOME/pin/grok-overlay.toml" ]; then
+  echo "FAIL: Test (v) - Pin overlay was not created with --yes"; exit 1
+fi
+if ! grep -q '\[models\]' "$FAKE_GROKGOD_HOME/pin/grok-overlay.toml"; then
+  echo "FAIL: Test (v) - Pin overlay content missing expected models section"; exit 1
+fi
+echo "PASS: Test (v) - Pin overlay created with --yes"
+
+# ─────────────────────────────────────────────────────────
+# Test (w): Pin overlay preserved if already exists even with --yes
+# ─────────────────────────────────────────────────────────
+echo "Test (w): Pin overlay preserved if already exists"
+setup_sandbox "test_w"
+reset_worktree
+
+mkdir -p "$FAKE_GROKGOD_HOME/pin"
+echo "CUSTOM_PREEXISTING_PIN_OVERLAY" > "$FAKE_GROKGOD_HOME/pin/grok-overlay.toml"
+
+PATH="$FAKE_BIN_SHADOW:$PATH" \
+HOME="$FAKE_HOME" \
+GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+GROK_BUILD_SRC="$GB_WORKTREE" \
+BIN_DIR="$FAKE_BIN_DIR" \
+CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+sh "$INSTALL_SCRIPT" --from-source --no-upgrade --yes >/dev/null
+
+PIN_CONTENT="$(cat "$FAKE_GROKGOD_HOME/pin/grok-overlay.toml")"
+if [ "$PIN_CONTENT" != "CUSTOM_PREEXISTING_PIN_OVERLAY" ]; then
+  echo "FAIL: Test (w) - Existing pin overlay was overwritten: $PIN_CONTENT"; exit 1
+fi
+echo "PASS: Test (w) - Existing pin overlay preserved"
+
+# ─────────────────────────────────────────────────────────
+# Test (x): Pin overlay created under --prefix with --yes
+# ─────────────────────────────────────────────────────────
+echo "Test (x): Pin overlay with --prefix and --yes"
+setup_sandbox "test_x"
+reset_worktree
+
+PREFIX_TARGET="$TEST_DIR/custom_prefix"
+PATH="$FAKE_BIN_SHADOW:$PATH" \
+HOME="$FAKE_HOME" \
+GROK_BUILD_SRC="$GB_WORKTREE" \
+sh "$INSTALL_SCRIPT" --from-source --no-upgrade --prefix "$PREFIX_TARGET" --yes >/dev/null
+
+if [ ! -f "$PREFIX_TARGET/grokgod/pin/grok-overlay.toml" ]; then
+  echo "FAIL: Test (x) - Pin overlay was not created under prefix grokgod home"; exit 1
+fi
+echo "PASS: Test (x) - Pin overlay with --prefix and --yes"
+
+# ─────────────────────────────────────────────────────────
+# Test (y): Uninstall does not delete PIN overlay if user keeps or leaves it
+# ─────────────────────────────────────────────────────────
+echo "Test (y): Pin overlay dry-run and uninstall safety"
+setup_sandbox "test_y"
+reset_worktree
+
+# Install with --yes
+PATH="$FAKE_BIN_SHADOW:$PATH" \
+HOME="$FAKE_HOME" \
+GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+GROK_BUILD_SRC="$GB_WORKTREE" \
+BIN_DIR="$FAKE_BIN_DIR" \
+CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+sh "$INSTALL_SCRIPT" --from-source --no-upgrade --dry-run --yes >/dev/null
+
+if [ -e "$FAKE_GROKGOD_HOME/pin/grok-overlay.toml" ]; then
+  echo "FAIL: Test (y) - Dry-run should not create pin overlay"; exit 1
+fi
+echo "PASS: Test (y) - Pin overlay dry-run safety"
+
 echo "=== All install.sh tests passed successfully! ==="

@@ -48,3 +48,7 @@ _Avoid_: binary prove, strings scan, apply --check in status
 `grok status` reports overlay-pin=wrapper when the installed `grokgod-run.sh`
 exists. It does not look at any host automation-root overlay file.
 _Avoid_: requiring Weekly grok-overlay.toml for status to pass
+
+**Pin file**:
+`~/.grokgod/pin/grok-overlay.toml` — optional host overlay template. Bare `grok` does not auto-read it.
+_Avoid_: shipping Weekly config.toml, always-on ClawGod-style inject.

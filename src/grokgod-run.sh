@@ -6,6 +6,7 @@ GROKGOD_BIN="${GROKGOD_BIN:-$GROKGOD_HOME/bin/grok}"
 
 automation_root=""
 overlay_file=""
+use_pin=0
 prompt_file=""
 prompt_text=""
 dry_run=0
@@ -13,10 +14,12 @@ dry_run=0
 usage() {
   cat << 'EOF' >&2
 Usage:
+  grokgod run --pin [--prompt-file FILE | --prompt "text"] [--dry-run] [-- [GROK_ARGS...]]
   grokgod run --automation-root DIR [--prompt-file FILE | --prompt "text"] [--dry-run] [-- [GROK_ARGS...]]
   grokgod run --overlay FILE [--prompt-file FILE | --prompt "text"] [--dry-run] [-- [GROK_ARGS...]]
 
 Options:
+  --pin                   Use pinned overlay at $GROKGOD_HOME/pin/grok-overlay.toml
   --automation-root DIR   Directory containing grok-overlay.toml and launchd-prompt.txt
   --overlay FILE          Explicit path to overlay TOML file
   --prompt-file FILE      Explicit path to prompt file
@@ -33,6 +36,10 @@ while [ $# -gt 0 ]; do
     --)
       shift
       break
+      ;;
+    --pin)
+      use_pin=1
+      shift
       ;;
     --automation-root)
       [ $# -ge 2 ] || { echo "error: --automation-root requires a directory argument" >&2; exit 1; }
@@ -68,13 +75,18 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-if [ -z "$automation_root" ] && [ -z "$overlay_file" ]; then
-  echo "error: either --automation-root or --overlay must be specified" >&2
+mode_count=0
+[ "$use_pin" -eq 1 ] && mode_count=$((mode_count + 1))
+[ -n "$automation_root" ] && mode_count=$((mode_count + 1))
+[ -n "$overlay_file" ] && mode_count=$((mode_count + 1))
+
+if [ "$mode_count" -eq 0 ]; then
+  echo "error: exactly one of --automation-root, --overlay, or --pin must be specified" >&2
   exit 1
 fi
 
-if [ -n "$automation_root" ] && [ -n "$overlay_file" ]; then
-  echo "error: cannot specify both --automation-root and --overlay" >&2
+if [ "$mode_count" -gt 1 ]; then
+  echo "error: cannot combine --automation-root, --overlay, or --pin (specify exactly one)" >&2
   exit 1
 fi
 
@@ -83,8 +95,22 @@ if [ -n "$prompt_file" ] && [ -n "$prompt_text" ]; then
   exit 1
 fi
 
-# Resolve automation_root to absolute path and validate
-if [ -n "$automation_root" ]; then
+# Resolve target overlay file
+if [ "$use_pin" -eq 1 ]; then
+  target_overlay="$GROKGOD_HOME/pin/grok-overlay.toml"
+  if [ ! -f "$target_overlay" ]; then
+    echo "error: pin overlay file does not exist: $target_overlay (copy examples/grok-overlay.toml to $target_overlay)" >&2
+    exit 1
+  fi
+
+  # For --pin, only use launchd-prompt.txt if the file exists and no prompt was given
+  if [ -z "$prompt_file" ] && [ -z "$prompt_text" ]; then
+    if [ -f "$GROKGOD_HOME/pin/launchd-prompt.txt" ]; then
+      prompt_file="$GROKGOD_HOME/pin/launchd-prompt.txt"
+    fi
+  fi
+elif [ -n "$automation_root" ]; then
+  # Resolve automation_root to absolute path and validate
   case "$automation_root" in
     /*) abs_automation_root="$automation_root" ;;
     *)  abs_automation_root="$PWD/$automation_root" ;;
