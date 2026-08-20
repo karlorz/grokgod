@@ -398,8 +398,10 @@ echo "Test (g): Dirty tree with prior patch is automatically reversed and applie
 setup_sandbox "test_g"
 reset_worktree
 
-# Pre-apply patch to simulate a previously patched tree
-git -C "$GB_WORKTREE" apply "$PATCH_FILE"
+# Pre-apply all patches to simulate a previously patched tree
+for p in "$REPO_ROOT"/patches/*.patch; do
+  [ -f "$p" ] && git -C "$GB_WORKTREE" apply "$p"
+done
 git -C "$GB_WORKTREE" diff --quiet && { echo "FAIL: Worktree should be dirty after manual apply"; exit 1; }
 
 PATH="$FAKE_BIN_SHADOW:$PATH" \
