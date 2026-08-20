@@ -12,6 +12,7 @@ main disk eater (`~/.grokgod/target` ~8 GB warm, cold rebuild needs headroom).
 ```sh
 df -h /System/Volumes/Data | tail -1
 du -sh ~/.grokgod/target 2>/dev/null || echo "no target cache yet"
+du -sh ~/.grok/sessions 2>/dev/null || echo "no grok sessions dir"
 ```
 
 - Free >= 15 GiB: OK, proceed.
@@ -19,6 +20,8 @@ du -sh ~/.grokgod/target 2>/dev/null || echo "no target cache yet"
 - Free < 10 GiB: strongly recommend `grokgod cache --auto-clean` (removes only
   `~/.grokgod/target`; rebuild ~8 min) and/or the macos-dev-cache-cleaner skill.
   Never run a clean or `--apply` yourself without explicit user approval.
+- If `~/.grok/sessions` is larger than 2 GiB: WARN and suggest
+  `grokgod sessions prune --dry-run` only. Never prune from this runbook.
 
 ## 2. Upstream patch watch (every session)
 

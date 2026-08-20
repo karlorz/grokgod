@@ -94,6 +94,27 @@ case "$cmd" in
       exit 1
     fi
     ;;
+  sessions)
+    # Official `grok sessions` must reach the grok binary. Only argv0 grokgod
+    # runs the wrapper prune.
+    if [ "$(basename "$0")" = "grokgod" ]; then
+      shift || true
+      sessions_script="$GROKGOD_SRC/src/grokgod-sessions.sh"
+      if [ -f "$sessions_script" ]; then
+        exec sh "$sessions_script" "$@"
+      else
+        echo "grokgod sessions not installed" >&2
+        exit 1
+      fi
+    fi
+    export GROK_DISABLE_AUTOUPDATER=1
+    if [ ! -x "$GROKGOD_BIN" ]; then
+      echo "error: grokgod binary not found or not executable at $GROKGOD_BIN" >&2
+      echo "hint: run 'grokgod update' to build/install" >&2
+      exit 127
+    fi
+    exec "$GROKGOD_BIN" "$@"
+    ;;
   run)
     shift || true
     exec sh "$GROKGOD_SRC/src/grokgod-run.sh" "$@"

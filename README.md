@@ -46,7 +46,8 @@ sh install.sh --uninstall      # restore grok.orig
 grok update                    # check latest; no-op "Already up to date" when current
                                # (release: compares release tag; source: SHA+patchset)
 grok status                    # shim ownership + .source-version
-grokgod cache report           # disk / target size
+grokgod cache report           # disk / target size + ~/.grok/sessions age buckets
+grokgod sessions prune         # dry-run old sessions; --yes --max-age 7d uses grok sessions delete
 ```
 
 Source mode pins base `d71f6e0c1f5acc5469e503e192fe14824e6f8c90` (never silently tracks

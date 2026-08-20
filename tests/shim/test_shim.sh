@@ -198,4 +198,40 @@ echo "$STATUS_MISSING_OUT" | grep -q "  0001-normalize-plugin-skill-join: missin
 echo "$STATUS_MISSING_OUT" | grep -q "  overlay-pin: missing" || { echo "FAIL: status output missing overlay-pin missing state ($STATUS_MISSING_OUT)"; exit 1; }
 echo "PASS: Test 7"
 
+echo "Test 8: argv0 sessions — grok passthrough, grokgod wrapper"
+mkdir -p "$TEST_GROKGOD_SRC/src"
+cat << 'EOF' > "$TEST_GROKGOD_SRC/src/grokgod-sessions.sh"
+#!/bin/sh
+echo "SESSIONS_WRAPPER:$*"
+exit 0
+EOF
+chmod +x "$TEST_GROKGOD_SRC/src/grokgod-sessions.sh"
+BIND="$TMP_DIR/argv0bin"
+mkdir -p "$BIND"
+cp "$SHIM_SRC" "$BIND/grok"
+cp "$SHIM_SRC" "$BIND/grokgod"
+chmod +x "$BIND/grok" "$BIND/grokgod"
+
+echo "0" > "$INVOCATION_COUNT_FILE"
+GROK_SESS_OUT="$(
+  HOME="$TEST_HOME" \
+  GROKGOD_HOME="$TEST_GROKGOD_HOME" \
+  GROKGOD_SRC="$TEST_GROKGOD_SRC" \
+  TMP_DIR="$TMP_DIR" \
+  "$BIND/grok" sessions list --limit 2
+)"
+echo "$GROK_SESS_OUT" | grep -q "FAKE_BIN_CALLED" || { echo "FAIL: grok sessions did not reach binary ($GROK_SESS_OUT)"; exit 1; }
+echo "$GROK_SESS_OUT" | grep -q "ARGS:sessions list --limit 2" || { echo "FAIL: grok sessions args lost ($GROK_SESS_OUT)"; exit 1; }
+echo "$GROK_SESS_OUT" | grep -q "SESSIONS_WRAPPER" && { echo "FAIL: grok sessions hit wrapper ($GROK_SESS_OUT)"; exit 1; }
+
+GOD_SESS_OUT="$(
+  HOME="$TEST_HOME" \
+  GROKGOD_HOME="$TEST_GROKGOD_HOME" \
+  GROKGOD_SRC="$TEST_GROKGOD_SRC" \
+  "$BIND/grokgod" sessions prune --help
+)"
+echo "$GOD_SESS_OUT" | grep -q "SESSIONS_WRAPPER:prune --help" || { echo "FAIL: grokgod sessions missed wrapper ($GOD_SESS_OUT)"; exit 1; }
+echo "$GOD_SESS_OUT" | grep -q "FAKE_BIN_CALLED" && { echo "FAIL: grokgod sessions hit grok binary ($GOD_SESS_OUT)"; exit 1; }
+echo "PASS: Test 8"
+
 echo "=== All tests passed successfully! ==="

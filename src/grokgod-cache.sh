@@ -89,6 +89,52 @@ do_report() {
     echo "  grokgod home:     $GROKGOD_HOME (does not exist)"
   fi
 
+  GROK_HOME="${GROK_HOME:-${HOME:-}/.grok}"
+  SESSIONS_DIR="$GROK_HOME/sessions"
+  echo ""
+  echo "grok sessions:"
+  if [ -n "$GROK_HOME" ] && [ "$GROK_HOME" != "/" ] && [ -d "$SESSIONS_DIR" ]; then
+    sess_sz="$(get_size "$SESSIONS_DIR")"
+    echo "  sessions dir:     $SESSIONS_DIR ($sess_sz)"
+    now_s="$(date +%s)"
+    n_sess=0
+    n_lt1=0
+    n_1_7=0
+    n_7_14=0
+    n_14_30=0
+    n_gt30=0
+    for cwd_key in "$SESSIONS_DIR"/*; do
+      [ -d "$cwd_key" ] || continue
+      for sid_dir in "$cwd_key"/*; do
+        [ -d "$sid_dir" ] || continue
+        sid="$(basename "$sid_dir")"
+        echo "$sid" | grep -E -q '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' || continue
+        n_sess=$((n_sess + 1))
+        mt=""
+        mt="$(stat -f %m "$sid_dir" 2>/dev/null || stat -c %Y "$sid_dir" 2>/dev/null || echo "")"
+        if [ -z "$mt" ]; then
+          continue
+        fi
+        age=$((now_s - mt))
+        if [ "$age" -lt 86400 ]; then
+          n_lt1=$((n_lt1 + 1))
+        elif [ "$age" -lt 604800 ]; then
+          n_1_7=$((n_1_7 + 1))
+        elif [ "$age" -lt 1209600 ]; then
+          n_7_14=$((n_7_14 + 1))
+        elif [ "$age" -lt 2592000 ]; then
+          n_14_30=$((n_14_30 + 1))
+        else
+          n_gt30=$((n_gt30 + 1))
+        fi
+      done
+    done
+    echo "  session dirs:     $n_sess"
+    echo "  session age:      <1d=$n_lt1  1-7d=$n_1_7  7-14d=$n_7_14  14-30d=$n_14_30  >30d=$n_gt30"
+  else
+    echo "  sessions dir:     $SESSIONS_DIR (does not exist)"
+  fi
+
   echo ""
   echo "cargo cache (read-only):"
   if [ -d "$CARGO_REGISTRY" ]; then
