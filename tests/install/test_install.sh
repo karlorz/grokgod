@@ -35,15 +35,27 @@ if [ -d "$REAL_GROK_BUILD/.git" ]; then
   echo "Creating test worktree from $REAL_GROK_BUILD at commit d71f6e0c..."
   git -C "$REAL_GROK_BUILD" worktree add --detach "$GB_WORKTREE" d71f6e0c >/dev/null 2>&1
 else
-  # CI or standalone fixture without local grok-build clone
+  # CI or standalone fixture without local grok-build clone.
+  # Fetch every path grokgod patches touch so `git apply --check` 0001+0002 works.
   echo "Building fixture git repository for CI..."
-  mkdir -p "$GB_WORKTREE/crates/codegen/xai-grok-agent/src/plugins"
-  TARGET_FILE="$GB_WORKTREE/crates/codegen/xai-grok-agent/src/plugins/manifest.rs"
-  curl -fsSL "https://raw.githubusercontent.com/xai-org/grok-build/d71f6e0c1f5acc5469e503e192fe14824e6f8c90/crates/codegen/xai-grok-agent/src/plugins/manifest.rs" -o "$TARGET_FILE" || {
-    echo "Warning: curl failed, creating fallback manifest.rs"
-    # Fallback placeholder if offline
-    touch "$TARGET_FILE"
-  }
+  PIN_SHA="d71f6e0c1f5acc5469e503e192fe14824e6f8c90"
+  RAW_BASE="https://raw.githubusercontent.com/xai-org/grok-build/${PIN_SHA}"
+  PATCH_PATHS="$(
+    grep -h '^diff --git ' "$REPO_ROOT"/patches/*.patch 2>/dev/null \
+      | awk '{print $3}' \
+      | sed 's#^a/##' \
+      | sort -u
+  )"
+  if [ -z "$PATCH_PATHS" ]; then
+    PATCH_PATHS="crates/codegen/xai-grok-agent/src/plugins/manifest.rs"
+  fi
+  for rel in $PATCH_PATHS; do
+    mkdir -p "$GB_WORKTREE/$(dirname "$rel")"
+    if ! curl -fsSL "$RAW_BASE/$rel" -o "$GB_WORKTREE/$rel"; then
+      echo "Warning: curl failed for $rel, creating empty fallback"
+      : > "$GB_WORKTREE/$rel"
+    fi
+  done
   git -C "$GB_WORKTREE" init -b main >/dev/null 2>&1
   git -C "$GB_WORKTREE" config user.name "CI"
   git -C "$GB_WORKTREE" config user.email "ci@example.com"
