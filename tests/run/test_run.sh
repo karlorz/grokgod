@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
 
+# Isolate from a host Orca grok session that may export GROK_CONFIG_PATH /
+# ORCA_WORKTREE_ID (live orca-pin). Tests set these explicitly when needed.
+unset GROK_CONFIG_PATH GROK_CONFIG ORCA_WORKTREE_ID ORCA_WORKSPACE_ID || true
+
 # test_run.sh: Standalone tests for grokgod run (--automation-root and --overlay)
 # Uses isolated sandbox in mktemp -d, never touches live files or live PATH.
 

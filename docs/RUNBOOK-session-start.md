@@ -60,19 +60,28 @@ ls -la ~/.local/bin/grok ~/.local/bin/grok.orig
 
 ## 4. Post-v1 overlay pin facts (context, no action)
 
-- Pin API: Official `GROK_CONFIG_PATH` env layer (e.g. `GROK_CONFIG_PATH=~/.grokgod/pin/grok-overlay.toml grok` or via `grokgod run --automation-root …` / `grokgod run --pin …`). NEVER `-m` on that overlay path.
+- Pin API: Official `GROK_CONFIG_PATH` env layer. NEVER `-m` on the overlay
+  path. Two production uses:
+  - **Orca automations only:** the PATH shim injects
+    `~/.grokgod/pin/orca-pin.toml` when argv is `grok -- <prompt>` and
+    `ORCA_WORKTREE_ID` is set. That is Daily Wiki Sleep and Weekly Dev Cache
+    Scan. Interactive Orca grok tags (`--agent grok`, `terminal create grok`,
+    bare `grok`, `grok -m …`, `grok --resume`) do **not** get this overlay;
+    they use `~/.grok/config.toml` `[models] default` (currently grok-4.6).
+  - **Explicit helper:** `grokgod run --automation-root …` / `grokgod run --pin`
+    still exports `GROK_CONFIG_PATH` for the disabled DEV-TEST fixture.
 - Local grokgod real-session tests (headed Orca TUI / interactive grok against
   the patched binary): always `grok -m flash-max` (or `/model flash-max`).
   Never grok-4.6 for those tests. Overlay pin and local `-m flash-max` are
   different paths; do not mix them.
-- Overlay on a new host: use the official `GROK_CONFIG_PATH` env var; the template is at `examples/grok-overlay.toml` (or optional `~/.grokgod/pin/grok-overlay.toml`). Do NOT `mkdir ~/.orca/automations/weekly-dev-cache-scan` on servers without Orca.
-- Scheduler path DECIDED 2026-08-19 (user): Orca automation `0bbdc998` is the
-  single Saturday trigger — global `~/.grok/config.toml` default (`flash-max`)
-  pins the automation top thread; GROK_CONFIG_PATH overlay was retired for
-  Weekly 2026-08-20; `grokgod run` remains for the disabled DEV-TEST fixture.
-  launchd is retired (`.plist.disabled` lives in the automation root);
-  NEVER re-enable launchd while the Orca automation is enabled (double-fire).
-  Rollback: `orca automations edit 0bbdc998-… --disabled`.
+- Overlay on a new host: copy `examples/orca-pin.toml` to
+  `~/.grokgod/pin/orca-pin.toml` to opt in. Do NOT `mkdir
+  ~/.orca/automations/weekly-dev-cache-scan` on servers without Orca.
+- Scheduler path: Orca Weekly `f91e2fc7` (Sat 10:00 Asia/Tokyo) and Daily
+  `04136086` (23:00) are the live grok automations. Precheck is
+  `grokgod pin check --expect-orca-pin flash-max`. Historical id `0bbdc998`
+  is retired. launchd stays retired. Codex Scheduled copies stay PAUSED.
+  NEVER re-enable launchd while Orca automations are enabled (double-fire).
 - `~/.grokgod/overlays.toml` is test-fixtures only; production never reads it.
 
 ## 5. Release CI facts (context, no action)

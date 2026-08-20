@@ -11,14 +11,13 @@ Before any other work in this repo, read and run
 1. Disk watch (host volume is tight; cargo builds eat GBs)
 2. Upstream patch watch (is our manifest.rs normalize fixed upstream?)
 3. Live state sanity (shim ownership of `~/.local/bin/grok`)
-4. Weekly pin facts (global ~/.grok/config.toml default = flash-max pins the
-   automation top thread; orca-pin overlay option ~/.grokgod/pin/orca-pin.toml
-   provides shim overlay injection when ORCA_WORKSPACE_ID is set; GROK_CONFIG_PATH
-   overlay via grokgod run retired for Weekly 2026-08-20; grokgod run remains
-   for the disabled DEV-TEST fixture; Orca automation 0bbdc998 is the single
-   Saturday trigger, launchd retired; the automation precheck runs
-   `$HOME/.local/bin/grokgod pin check --expect-default flash-max --expect-no-overlay`
-   or `--expect-orca-pin flash-max` fail-closed (non-zero exit records the run skipped))
+4. Pin facts: interactive default is ~/.grok/config.toml (currently grok-4.6).
+   Orca automations (Daily 04136086, Weekly f91e2fc7) launch `grok -- <prompt>`
+   and get ~/.grokgod/pin/orca-pin.toml flash-max via the shim. `--agent grok`
+   tags do not. Precheck is `grokgod pin check --expect-orca-pin flash-max`
+   (do not use --expect-no-overlay on this path). grokgod run remains for the
+   disabled DEV-TEST fixture. Historical Weekly id 0bbdc998 is retired.
+   launchd retired. Codex Scheduled copies stay PAUSED.
 5. Release CI facts (`macos-13` retired -> `macos-15-intel`; dotslash required
    for vendored `bin/protoc`; release job gates on required legs)
 6. Local real-session tests use `flash-max` (`grok -m flash-max`), not grok-4.6

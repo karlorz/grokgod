@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
 
+# Isolate from a host Orca grok session that may export GROK_CONFIG_PATH /
+# ORCA_WORKTREE_ID. Tests set these explicitly when needed.
+unset GROK_CONFIG_PATH GROK_CONFIG ORCA_WORKTREE_ID ORCA_WORKSPACE_ID || true
+
 # test_orca_pin.sh: Standalone tests for Orca-aware shim overlay injection
 # and grokgod pin check --expect-orca-pin.
 # Uses isolated sandbox in mktemp -d, never touches live files or live PATH.
@@ -20,6 +24,10 @@ cleanup() {
   rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT INT TERM
+
+# Ensure ambient environment does not leak into tests
+unset GROK_CONFIG_PATH || true
+unset ORCA_WORKTREE_ID || true
 
 TEST_HOME="$TMP_DIR/home"
 TEST_GROKGOD_HOME="$TEST_HOME/.grokgod"
@@ -61,6 +69,7 @@ run_shim() {
   HOME="$TEST_HOME" \
   GROKGOD_HOME="$TEST_GROKGOD_HOME" \
   GROKGOD_SRC="$TEST_GROKGOD_SRC" \
+  GROK_CONFIG_PATH="${GROK_CONFIG_PATH:-}" \
   TMP_DIR="$TMP_DIR" \
   sh "$SHIM_SRC" "$@"
 }
@@ -69,6 +78,7 @@ run_pin() {
   HOME="$TEST_HOME" \
   GROKGOD_HOME="$TEST_GROKGOD_HOME" \
   GROKGOD_SRC="$TEST_GROKGOD_SRC" \
+  GROK_CONFIG_PATH="${GROK_CONFIG_PATH:-}" \
   TMP_DIR="$TMP_DIR" \
   sh "$PIN_SRC" "$@"
 }
@@ -76,21 +86,47 @@ run_pin() {
 echo "=== Running Orca Pin Test Suite ==="
 
 # ─────────────────────────────────────────────────────────
-# Test (a): ORCA_WORKTREE_ID set + overlay file exists → GROK_CONFIG_PATH exported
+# Test (a): automation argv (grok -- <prompt>) + ORCA_WORKTREE_ID set + overlay file exists → GROK_CONFIG_PATH exported
 # ─────────────────────────────────────────────────────────
-echo "Test (a): ORCA_WORKTREE_ID set + overlay file exists -> GROK_CONFIG_PATH exported"
+echo "Test (a): automation argv (grok -- <prompt>) + ORCA_WORKTREE_ID set + overlay file exists -> GROK_CONFIG_PATH exported"
 cat << 'EOF' > "$TEST_GROKGOD_HOME/pin/orca-pin.toml"
 [models]
 default = "flash-max"
 EOF
 > "$INVOCATIONS_FILE"
 
-OUT_A="$(ORCA_WORKTREE_ID="orca-ws-123" run_shim "hello" "--flag")"
+OUT_A="$(ORCA_WORKTREE_ID="orca-ws-123" run_shim -- "hello")"
 echo "$OUT_A" | grep -q "FAKE_BIN_SUCCESS" || { echo "FAIL: Fake bin not called in Test (a)"; exit 1; }
 grep -q "GROK_CONFIG_PATH=$TEST_GROKGOD_HOME/pin/orca-pin.toml" "$INVOCATIONS_FILE" || {
   echo "FAIL: GROK_CONFIG_PATH not exported in Test (a)"; cat "$INVOCATIONS_FILE"; exit 1
 }
 echo "PASS: Test (a)"
+
+# ─────────────────────────────────────────────────────────
+# Test (a2): interactive Orca tag (no args) → GROK_CONFIG_PATH NOT set
+# ─────────────────────────────────────────────────────────
+echo "Test (a2): interactive Orca tag (no args) -> GROK_CONFIG_PATH NOT set"
+> "$INVOCATIONS_FILE"
+
+OUT_A2="$(ORCA_WORKTREE_ID="orca-ws-123" run_shim)"
+echo "$OUT_A2" | grep -q "FAKE_BIN_SUCCESS" || { echo "FAIL: Fake bin not called in Test (a2)"; exit 1; }
+grep -q "GROK_CONFIG_PATH=NOT_SET" "$INVOCATIONS_FILE" || {
+  echo "FAIL: GROK_CONFIG_PATH was set unexpectedly in Test (a2)"; cat "$INVOCATIONS_FILE"; exit 1
+}
+echo "PASS: Test (a2)"
+
+# ─────────────────────────────────────────────────────────
+# Test (a3): positional without -- (e.g. grok "hello") → GROK_CONFIG_PATH NOT set
+# ─────────────────────────────────────────────────────────
+echo "Test (a3): positional without -- -> GROK_CONFIG_PATH NOT set"
+> "$INVOCATIONS_FILE"
+
+OUT_A3="$(ORCA_WORKTREE_ID="orca-ws-123" run_shim "hello")"
+echo "$OUT_A3" | grep -q "FAKE_BIN_SUCCESS" || { echo "FAIL: Fake bin not called in Test (a3)"; exit 1; }
+grep -q "GROK_CONFIG_PATH=NOT_SET" "$INVOCATIONS_FILE" || {
+  echo "FAIL: GROK_CONFIG_PATH was set unexpectedly in Test (a3)"; cat "$INVOCATIONS_FILE"; exit 1
+}
+echo "PASS: Test (a3)"
 
 # ─────────────────────────────────────────────────────────
 # Test (b): ORCA_WORKTREE_ID set + overlay file missing → GROK_CONFIG_PATH NOT set
@@ -99,7 +135,7 @@ echo "Test (b): ORCA_WORKTREE_ID set + overlay file missing -> GROK_CONFIG_PATH 
 rm -f "$TEST_GROKGOD_HOME/pin/orca-pin.toml"
 > "$INVOCATIONS_FILE"
 
-OUT_B="$(ORCA_WORKTREE_ID="orca-ws-123" run_shim "hello")"
+OUT_B="$(ORCA_WORKTREE_ID="orca-ws-123" run_shim -- "hello")"
 echo "$OUT_B" | grep -q "FAKE_BIN_SUCCESS" || { echo "FAIL: Fake bin not called in Test (b)"; exit 1; }
 grep -q "GROK_CONFIG_PATH=NOT_SET" "$INVOCATIONS_FILE" || {
   echo "FAIL: GROK_CONFIG_PATH was set unexpectedly in Test (b)"; cat "$INVOCATIONS_FILE"; exit 1
@@ -116,7 +152,7 @@ default = "flash-max"
 EOF
 > "$INVOCATIONS_FILE"
 
-OUT_C="$(ORCA_WORKTREE_ID="" run_shim "hello")"
+OUT_C="$(ORCA_WORKTREE_ID="" run_shim -- "hello")"
 echo "$OUT_C" | grep -q "FAKE_BIN_SUCCESS" || { echo "FAIL: Fake bin not called in Test (c)"; exit 1; }
 grep -q "GROK_CONFIG_PATH=NOT_SET" "$INVOCATIONS_FILE" || {
   echo "FAIL: GROK_CONFIG_PATH was set unexpectedly in Test (c)"; cat "$INVOCATIONS_FILE"; exit 1
@@ -129,7 +165,7 @@ echo "PASS: Test (c)"
 echo "Test (d): GROK_CONFIG_PATH already set by caller -> NOT overwritten"
 > "$INVOCATIONS_FILE"
 
-OUT_D="$(ORCA_WORKTREE_ID="orca-ws-123" GROK_CONFIG_PATH="/custom/caller/config.toml" run_shim "hello")"
+OUT_D="$(ORCA_WORKTREE_ID="orca-ws-123" GROK_CONFIG_PATH="/custom/caller/config.toml" run_shim -- "hello")"
 echo "$OUT_D" | grep -q "FAKE_BIN_SUCCESS" || { echo "FAIL: Fake bin not called in Test (d)"; exit 1; }
 grep -q "GROK_CONFIG_PATH=/custom/caller/config.toml" "$INVOCATIONS_FILE" || {
   echo "FAIL: GROK_CONFIG_PATH was overwritten in Test (d)"; cat "$INVOCATIONS_FILE"; exit 1

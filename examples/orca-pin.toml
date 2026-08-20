@@ -1,4 +1,5 @@
-# Opt-in overlay for Orca-launched grok sessions.
+# Opt-in overlay for Orca AUTOMATION grok only (argv: grok -- <prompt>).
+# Interactive Orca grok tags (bare grok / -m / --resume) do not load this file.
 # Copy to ~/.grokgod/pin/orca-pin.toml to enable.
 # GROK_CONFIG_PATH merges this ON TOP of config.toml at startup.
 # Allowlisted sections only: [models], [features], [toolset.bash],

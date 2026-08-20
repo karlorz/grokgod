@@ -1,6 +1,9 @@
 #!/bin/sh
 set -eu
 
+# Isolate from a host Orca grok session that may export GROK_CONFIG_PATH.
+unset GROK_CONFIG_PATH GROK_CONFIG ORCA_WORKTREE_ID ORCA_WORKSPACE_ID || true
+
 # test_shim.sh: Standalone tests for grok-shim.sh
 # Requires NO root, does NOT touch real ~/.local/bin or ~/.grokgod.
 
