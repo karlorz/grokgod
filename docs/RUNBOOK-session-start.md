@@ -67,11 +67,12 @@ ls -la ~/.local/bin/grok ~/.local/bin/grok.orig
   different paths; do not mix them.
 - Overlay on a new host: use the official `GROK_CONFIG_PATH` env var; the template is at `examples/grok-overlay.toml` (or optional `~/.grokgod/pin/grok-overlay.toml`). Do NOT `mkdir ~/.orca/automations/weekly-dev-cache-scan` on servers without Orca.
 - Scheduler path DECIDED 2026-08-19 (user): Orca automation `0bbdc998` is the
-  single Saturday trigger — its prompt is a thin wrapper that calls
-  `grokgod run --automation-root … --prompt-file …/weekly-prompt.txt --
-  --always-approve`. launchd is retired (`.plist.disabled` lives in the
-  automation root); NEVER re-enable launchd while the Orca automation is
-  enabled (double-fire). Rollback: `orca automations edit 0bbdc998-… --disabled`.
+  single Saturday trigger — global `~/.grok/config.toml` default (`flash-max`)
+  pins the automation top thread; GROK_CONFIG_PATH overlay was retired for
+  Weekly 2026-08-20; `grokgod run` remains for the disabled DEV-TEST fixture.
+  launchd is retired (`.plist.disabled` lives in the automation root);
+  NEVER re-enable launchd while the Orca automation is enabled (double-fire).
+  Rollback: `orca automations edit 0bbdc998-… --disabled`.
 - `~/.grokgod/overlays.toml` is test-fixtures only; production never reads it.
 
 ## 5. Release CI facts (context, no action)

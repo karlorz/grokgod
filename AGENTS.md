@@ -11,8 +11,10 @@ Before any other work in this repo, read and run
 1. Disk watch (host volume is tight; cargo builds eat GBs)
 2. Upstream patch watch (is our manifest.rs normalize fixed upstream?)
 3. Live state sanity (shim ownership of `~/.local/bin/grok`)
-4. Overlay pin facts (GROK_CONFIG_PATH, never `-m`; Orca automation is the
-   single Saturday trigger, launchd retired)
+4. Weekly pin facts (global ~/.grok/config.toml default = flash-max pins the
+   automation top thread; GROK_CONFIG_PATH overlay retired for Weekly 2026-08-20;
+   grokgod run remains for the disabled DEV-TEST fixture; Orca automation
+   0bbdc998 is the single Saturday trigger, launchd retired)
 5. Release CI facts (`macos-13` retired -> `macos-15-intel`; dotslash required
    for vendored `bin/protoc`; release job gates on required legs)
 6. Local real-session tests use `flash-max` (`grok -m flash-max`), not grok-4.6
@@ -31,8 +33,10 @@ the runbook lists.
 - Never modify `patches/` or rebuild unless the user approves or
   `grokgod update` flow requires it.
 - `~/.grokgod/overlays.toml` is test fixtures only; production code must not
-  read it. The live overlay lives under
-  `~/.orca/automations/weekly-dev-cache-scan/grok-overlay.toml`.
+  read it. The Weekly overlay
+  (`~/.orca/automations/weekly-dev-cache-scan/grok-overlay.toml`) was retired
+  2026-08-20 (pin is now the global config default); the file is kept in place
+  for the disabled DEV-TEST fixture.
 - No Docker. No secrets in this repo.
 - grok-build checkout showing `manifest.rs` modified is EXPECTED (our applied
   patch); `install.sh` handles reverse/re-apply on update.
