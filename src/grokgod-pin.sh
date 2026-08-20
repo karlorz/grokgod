@@ -2,18 +2,19 @@
 set -eu
 
 # grokgod-pin.sh - assertion and inspection command for grok model pin
-# Usage: grokgod pin check [--expect-default <model>] [--expect-no-overlay]
+# Usage: grokgod pin check [--expect-default <model>] [--expect-no-overlay] [--expect-orca-pin <model>]
 
 usage() {
   cat << 'EOF' >&2
 Usage:
-  grokgod pin check [--expect-default <model>] [--expect-no-overlay]
+  grokgod pin check [--expect-default <model>] [--expect-no-overlay] [--expect-orca-pin <model>]
   grokgod pin help | -h | --help
 
 Options:
-  --expect-default <model>   Assert that the default model matches <model>
-  --expect-no-overlay        Assert that GROK_CONFIG_PATH and GROK_CONFIG are not set
-  -h, --help                 Show this help message
+  --expect-default <model>    Assert that the default model matches <model>
+  --expect-no-overlay         Assert that GROK_CONFIG_PATH and GROK_CONFIG are not set
+  --expect-orca-pin <model>   Assert that orca-pin.toml exists and pins <model>
+  -h, --help                  Show this help message
 EOF
   exit 2
 }
@@ -38,6 +39,7 @@ esac
 
 expect_default=""
 expect_no_overlay=0
+expect_orca_pin=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -53,6 +55,14 @@ while [ $# -gt 0 ]; do
       expect_no_overlay=1
       shift
       ;;
+    --expect-orca-pin)
+      if [ $# -lt 2 ]; then
+        echo "error: --expect-orca-pin requires a model argument" >&2
+        usage
+      fi
+      expect_orca_pin="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       ;;
@@ -63,8 +73,27 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# Resolve grok binary
 GROKGOD_HOME="${GROKGOD_HOME:-$HOME/.grokgod}"
+
+# Check orca-pin if requested
+if [ -n "$expect_orca_pin" ]; then
+  orca_pin_file="$GROKGOD_HOME/pin/orca-pin.toml"
+  if [ ! -f "$orca_pin_file" ]; then
+    echo "pin_check fail orca_pin_missing" >&2
+    exit 1
+  fi
+  orca_pin_default="$(sed -n -E 's/^[[:space:]]*default[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$orca_pin_file" | head -n 1)"
+  if [ "$orca_pin_default" != "$expect_orca_pin" ]; then
+    echo "pin_check fail orca_pin default_model=${orca_pin_default:-none} expect=$expect_orca_pin" >&2
+    exit 1
+  fi
+  if [ -z "$expect_default" ] && [ "$expect_no_overlay" -eq 0 ]; then
+    echo "pin_check ok orca_pin default_model=$expect_orca_pin"
+    exit 0
+  fi
+fi
+
+# Resolve grok binary
 GROK_BIN=""
 if [ -x "$GROKGOD_HOME/bin/grok" ]; then
   GROK_BIN="$GROKGOD_HOME/bin/grok"
@@ -88,7 +117,7 @@ if [ -z "$actual_default" ]; then
 fi
 
 # Flagless mode
-if [ -z "$expect_default" ] && [ "$expect_no_overlay" -eq 0 ]; then
+if [ -z "$expect_default" ] && [ "$expect_no_overlay" -eq 0 ] && [ -z "$expect_orca_pin" ]; then
   cfg_path_set="false"
   cfg_set="false"
   if [ -n "${GROK_CONFIG_PATH:-}" ]; then cfg_path_set="true"; fi
@@ -116,5 +145,9 @@ if [ -n "$expect_default" ]; then
   fi
 fi
 
-echo "pin_check ok default_model=$actual_default"
+if [ -n "$expect_orca_pin" ]; then
+  echo "pin_check ok default_model=$actual_default orca_pin default_model=$expect_orca_pin"
+else
+  echo "pin_check ok default_model=$actual_default"
+fi
 exit 0

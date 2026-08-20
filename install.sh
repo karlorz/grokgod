@@ -577,6 +577,9 @@ except Exception:
           log_err "Failed to download grokgod-sessions.sh (fail-closed)."
           exit 1
         }
+        mkdir -p "$GROKGOD_HOME/src/examples"
+        curl -fsSL "$RAW_BASE/examples/orca-pin.toml" -o "$GROKGOD_HOME/src/examples/orca-pin.toml" 2>/dev/null || \
+        curl -fsSL "https://raw.githubusercontent.com/${REPO_PATH}/main/examples/orca-pin.toml" -o "$GROKGOD_HOME/src/examples/orca-pin.toml" 2>/dev/null || true
         chmod +x "$GROKGOD_HOME/src/src/shim/grok-shim.sh" "$GROKGOD_HOME/src/src/grokgod-cache.sh" "$GROKGOD_HOME/src/src/grokgod-run.sh" "$GROKGOD_HOME/src/src/grokgod-pin.sh" "$GROKGOD_HOME/src/src/grokgod-sessions.sh"
         GROKGOD_SRC="$GROKGOD_HOME/src"
         log_info "Downloaded runtime scripts to $GROKGOD_HOME/src"

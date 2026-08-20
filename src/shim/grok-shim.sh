@@ -84,6 +84,11 @@ case "$cmd" in
     echo "  0002-plan-mode-extra-writable: $patch_status"
     echo "  overlay-pin: $overlay_status"
     echo "  weekly-pin: global-default"
+    if [ -f "$GROKGOD_HOME/pin/orca-pin.toml" ]; then
+      echo "  orca-pin: enabled"
+    else
+      echo "  orca-pin: disabled"
+    fi
     exit 0
     ;;
   cache)
@@ -125,6 +130,15 @@ case "$cmd" in
       echo "hint: run 'grokgod update' to build/install" >&2
       exit 127
     fi
+    # Orca-aware overlay injection: if ORCA_WORKSPACE_ID is set and the opt-in
+    # overlay file exists, export GROK_CONFIG_PATH so grok merges the overlay
+    # on top of config.toml at startup. This pins the model for Orca-launched
+    # grok without touching config.toml or requiring Orca settings changes.
+    # Do NOT overwrite a caller-set GROK_CONFIG_PATH.
+    ORCA_PIN_FILE="$GROKGOD_HOME/pin/orca-pin.toml"
+    if [ -n "${ORCA_WORKSPACE_ID:-}" ] && [ -z "${GROK_CONFIG_PATH:-}" ] && [ -f "$ORCA_PIN_FILE" ]; then
+        export GROK_CONFIG_PATH="$ORCA_PIN_FILE"
+    fi
     exec "$GROKGOD_BIN" "$@"
     ;;
   run)
@@ -137,6 +151,15 @@ case "$cmd" in
       echo "error: grokgod binary not found or not executable at $GROKGOD_BIN" >&2
       echo "hint: run 'grokgod update' to build/install" >&2
       exit 127
+    fi
+    # Orca-aware overlay injection: if ORCA_WORKSPACE_ID is set and the opt-in
+    # overlay file exists, export GROK_CONFIG_PATH so grok merges the overlay
+    # on top of config.toml at startup. This pins the model for Orca-launched
+    # grok without touching config.toml or requiring Orca settings changes.
+    # Do NOT overwrite a caller-set GROK_CONFIG_PATH.
+    ORCA_PIN_FILE="$GROKGOD_HOME/pin/orca-pin.toml"
+    if [ -n "${ORCA_WORKSPACE_ID:-}" ] && [ -z "${GROK_CONFIG_PATH:-}" ] && [ -f "$ORCA_PIN_FILE" ]; then
+        export GROK_CONFIG_PATH="$ORCA_PIN_FILE"
     fi
     exec "$GROKGOD_BIN" "$@"
     ;;

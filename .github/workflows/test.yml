@@ -31,6 +31,7 @@ jobs:
           sh tests/cache/test_cache.sh
           sh tests/run/test_run.sh
           sh tests/run/test_pin.sh
+          sh tests/run/test_orca_pin.sh
 
       - name: Run Install Test Suite
         env:

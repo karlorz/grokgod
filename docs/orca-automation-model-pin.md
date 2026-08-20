@@ -6,13 +6,25 @@ Orca 1.4.x automations lack per-job configuration for environment variables (`ag
 
 Because automations run unattended, runs must guarantee they execute against the intended model (e.g. `flash-max`) without relying on interactive model selection or fragile runtime workarounds.
 
-## 2. Three Pin Mechanisms
+## 2. Pin Mechanisms
 
 | Mechanism | Description | Scope / Behavior | Status |
 |---|---|---|---|
 | **(a) Global Config Default** | Set `[models] default = "flash-max"` in `~/.grok/config.toml` | Global to all standard interactive and headless grok invocations | **Active / Production** (used for Weekly scan) |
 | **(b) Orca Global Argv** | Set `agentDefaultArgs.grok = ["-m", "flash-max"]` in Orca settings | Global across all Orca grok tabs and automations | Flip-proof across profile changes, but too broad (not applied) |
 | **(c) GROK_CONFIG_PATH Overlay** | Run via `grokgod run --automation-root DIR` / `grokgod run --pin` | Per-job isolated overlay TOML via official environment variable | **Retired for Weekly 2026-08-20**; retained for DEV-TEST fixture & per-job pins |
+| **(d) Shim Overlay Injection** | Export `GROK_CONFIG_PATH=~/.grokgod/pin/orca-pin.toml` when `ORCA_WORKSPACE_ID` is set | Scoped to Orca-launched grok sessions without modifying global config or Orca settings | **Available (Phase 1 opt-in)** via `~/.grokgod/pin/orca-pin.toml` |
+
+### 2.1 Shim Overlay Injection (Mechanism d)
+
+When Orca launches grok (in both interactive Orca tabs and Orca automations), Orca injects `ORCA_WORKSPACE_ID` into the execution environment.
+
+The grokgod shim (`src/shim/grok-shim.sh`) checks for this environment variable during passthrough execution:
+- If `ORCA_WORKSPACE_ID` is non-empty, `GROK_CONFIG_PATH` is not already set by the caller, and `~/.grokgod/pin/orca-pin.toml` exists, the shim exports `GROK_CONFIG_PATH="$GROKGOD_HOME/pin/orca-pin.toml"`.
+- Grok merges this overlay on top of `~/.grok/config.toml` at startup, pinning the model for all Orca-spawned sessions without altering `config.toml` or requiring Orca settings modifications.
+- Callers who explicitly set `GROK_CONFIG_PATH` retain their custom overlay (shim does not overwrite caller-specified values).
+- The opt-in template is provided at `examples/orca-pin.toml`. Copy it to `~/.grokgod/pin/orca-pin.toml` to activate.
+- Status and assertions: `grok status` displays `orca-pin: enabled/disabled`, and `grokgod pin check --expect-orca-pin <model>` provides fail-closed assertion support.
 
 ## 3. Findings (2026-08-20 Probes)
 

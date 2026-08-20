@@ -60,7 +60,7 @@ grok update                                                  # check latest; no-
 grok status                                                  # shim ownership + .source-version
 grokgod cache report                                         # disk / target size + ~/.grok/sessions age buckets
 grokgod sessions prune                                       # dry-run old sessions; --yes --max-age 7d uses grok sessions delete
-grokgod pin check [--expect-default M] [--expect-no-overlay]  # fail-closed automation precheck assertion
+grokgod pin check [--expect-default M] [--expect-no-overlay] [--expect-orca-pin M]  # fail-closed pin precheck assertion
 ```
 
 Source mode pins base `d71f6e0c1f5acc5469e503e192fe14824e6f8c90` (never silently tracks
@@ -102,7 +102,7 @@ grokgod run --automation-root DIR --dry-run
 
 - **Official Env First**: Grok Build 1.0.5 natively supports `GROK_CONFIG_PATH=<toml> grok` for full interactive TUI sessions and headless `-p` runs as an overlay layer atop `~/.grok/config.toml`. This is official grok-build functionality, not a grokgod TUI patch.
 - **Automation Helper**: `grokgod run --pin` / `--overlay` / `--automation-root` serves as the `-p` helper and enforces file/security guards. It sets `GROK_CONFIG_PATH` before invoking `$GROKGOD_BIN -p "<prompt>"`. It never passes `-m` (which is the wrong API).
-- **Interactive Isolation**: Interactive shim execution (bare `grok ...`) never sets `GROK_CONFIG_PATH`.
+- **Interactive Isolation**: Interactive shim execution (bare `grok ...`) never sets `GROK_CONFIG_PATH` outside of Orca sessions. For Orca-launched sessions (`ORCA_WORKSPACE_ID` set), the shim injects the opt-in `~/.grokgod/pin/orca-pin.toml` overlay if present (see `examples/orca-pin.toml` and [docs/orca-automation-model-pin.md](docs/orca-automation-model-pin.md)).
 - **Safety Guards**:
   - Rejects `--automation-root` set to `$HOME`, `~/.grok`, or `~/.grokgod`.
   - Rejects overlays containing forbidden full-config sections or keys (`[mcp_servers]`, `[auth]`, `[plugins]`, `[subagents]`, or `api_key`).
