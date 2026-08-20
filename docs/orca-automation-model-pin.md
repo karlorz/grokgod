@@ -30,6 +30,11 @@ To ensure automated runs execute with the correct model fail-closed:
    $HOME/.local/bin/grokgod pin check --expect-default flash-max --expect-no-overlay
    ```
    *Exit 0 allows the automation run to proceed; non-zero hard-skips the run.*
+   
+   Verified Orca semantics (2026-08-20):
+   - **Scheduler fires**: Non-zero exit records status `skipped_precheck` and populates `precheckResult` (`command`, `exitCode`, `stderr`, `durationMs`).
+   - **Manual fires**: `orca automations run <id>` bypasses precheck entirely (`precheckResult` remains null) and dispatches directly to an agent session.
+   - **Drift protection**: Operator changes to `~/.grok/config.toml` `[models] default` (e.g. moving between models mid-day) fail closed into skipped runs rather than wrong-model execution.
 3. **Prompt Step-0 Guard**: Include an in-prompt fail-closed verification step at step 0 to confirm runtime model identity before taking actions.
 
 ## 5. Rollback
