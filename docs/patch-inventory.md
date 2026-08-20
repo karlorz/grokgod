@@ -3,13 +3,14 @@
 ClawGod-style tracking of what grokgod **must** re-apply after `grok update`,
 versus wrapper behavior, versus work we will not keep. This file is the
 inventory. Persist status is exposed via the `grok status` persist block
-(`0001-normalize-plugin-skill-join: applied|missing`, `overlay-pin: wrapper|missing`).
+(`0001-normalize-plugin-skill-join: applied|missing`, `0002-plan-mode-extra-writable: applied|missing`, `overlay-pin: wrapper|missing`).
 
 ## Keep — grok-build source patch (re-apply on update)
 
 | ID | File | What | Why persist |
 |----|------|------|-------------|
 | `0001` | `patches/0001-normalize-plugin-skill-join.patch` | Filter `Component::CurDir` in `manifest.rs` skill joins so `"./skills/"` registers | Official `grok update` replaces the Mach-O; without this, installed plugin skill paths 404 |
+| `0002` | `patches/0002-plan-mode-extra-writable.patch` | Plan-mode extra writable globs + implement-via-subagents (exit reminders + PlanReady/EmptyPlan after `a`) | Session plan.md is the only native writable path; PRD markdown (work items, `docs/superpowers/`) is rejected while Active; stock PlanReady said “start coding” |
 
 Base SHA: see `patches/README.md` (`d71f6e0c`). Fail closed on `git apply --check`. Daily CI `.github/workflows/compat-daily.yml` runs `git apply --check` of `patches/*.patch` against latest `xai-org/grok-build` `origin/main`.
 

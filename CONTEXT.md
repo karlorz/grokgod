@@ -7,14 +7,39 @@ shared language for what grokgod keeps across `grok update`, not a spec.
 
 **Source patch**:
 A `git apply` diff under `patches/` against a pinned grok-build SHA. Re-applied
-on `grok update` / `grokgod update`. v1 has one: `0001-normalize-plugin-skill-join`.
+on `grok update` / `grokgod update`. Current set: `0001-normalize-plugin-skill-join`,
+`0002-plan-mode-extra-writable`.
 _Avoid_: Mach-O hex edit, plugin.json rewrite as the engine fix
+
+**Session plan file**:
+Grok plan-mode exclusive live file at `~/.grok/sessions/<cwd>/<id>/plan.md`.
+The TUI preview and `exit_plan_mode` read this path.
+_Avoid_: vault plan, work-item plan.md, grok plan (bare)
+
+**Extra writable glob**:
+`[plan_mode] extra_writable_globs` matched against an absolute edit path while
+plan mode is Active. Default catalog is generic PRD markdown locations, not a
+SkillWiki API. `[]` restores stock Grok. Skills choose the path; the gate only
+stops rejecting matches.
+_Avoid_: hardcoded /using-skillwiki, vault path in grok-build
+
+**Implement-phase subagents**:
+`[plan_mode] implement_via_subagents`. Default **true** in 0002: after `a`,
+`exit_plan_mode` PlanReady/EmptyPlan and the toggle-exit reminder prefer
+second-tier implementer subagents and parent verification. Set `false` to
+restore stock “start coding” / “you can proceed”.
+_Avoid_: runtime ban on parent writes, same-tier spawn as parent
 
 **Overlay pin**:
 `grokgod run` exporting `GROK_CONFIG_PATH` to an automation-root overlay TOML
 so a headless `grok -p` uses a different `[models]` default than interactive grok.
-Never `-m`.
+Never `-m` on that overlay path.
 _Avoid_: global Orca agentDefaultEnv, overlays.toml as production
+
+**Local real-session test**:
+Headed Orca grok TUI / interactive grok against the live patched binary.
+Always `grok -m flash-max` (or `/model flash-max`). Not grok-4.6.
+_Avoid_: mixing this with overlay pin; Saturday automation `-m`
 
 **Resume tag**:
 The grokgod `--orca-resume-tag` workaround (create-first waiter + `grok --resume`).

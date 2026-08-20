@@ -32,10 +32,19 @@ ClawGod extracts `cli.js` from a Bun standalone and regex-patches JavaScript. Gr
 
 ## v1 (live)
 
-PATH `grok` / `grokgod` is the shim. Engine fix is a source patch on
-`manifest.rs` (filter `Component::CurDir` after `plugin_root.join`) plus
+PATH `grok` / `grokgod` is the shim. Engine fixes are source patches plus
 `cargo build --release -p xai-grok-pager-bin`. Not plugin.json rewrite, not
 Mach-O hex.
+
+- `0001` — `manifest.rs` filters `Component::CurDir` after `plugin_root.join`
+- `0002` — plan-mode extra writable globs + `implement_via_subagents` (default
+  true). Skills may write matching PRD markdown while plan mode is Active.
+  After `a`, PlanReady tells the model to spawn second-tier implementers
+  (not “start coding”). Canonical session `plan.md` is unchanged.
+
+Local headed grokgod real-session tests use `grok -m flash-max` (see
+[AGENTS.md](AGENTS.md)). Saturday overlay pin is still
+`GROK_CONFIG_PATH` via `grokgod run`, not `-m`.
 
 ```sh
 sh install.sh                  # release mode: download prebuilt binary + shims

@@ -81,6 +81,7 @@ case "$cmd" in
 
     echo "persist:"
     echo "  0001-normalize-plugin-skill-join: $patch_status"
+    echo "  0002-plan-mode-extra-writable: $patch_status"
     echo "  overlay-pin: $overlay_status"
     exit 0
     ;;

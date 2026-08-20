@@ -5,6 +5,7 @@ This directory contains upstream source patches applied to `grok-build` for `gro
 ## Patches
 
 - `0001-normalize-plugin-skill-join.patch`: Normalizes manifest path joins by filtering out `Component::CurDir` (`.`) components so relative paths like `"./skills/"` resolve identically to `"skills"`.
+- `0002-plan-mode-extra-writable.patch`: Plan-mode extra writable globs (`[plan_mode] extra_writable_globs`) and implement-via-subagents (default **true**): extra-glob Active writes, exit reminders, and `exit_plan_mode` PlanReady/EmptyPlan strings. Does not change the canonical session `plan.md`.
 
 ## Target Commit
 

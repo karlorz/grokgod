@@ -15,6 +15,7 @@ Before any other work in this repo, read and run
    single Saturday trigger, launchd retired)
 5. Release CI facts (`macos-13` retired -> `macos-15-intel`; dotslash required
    for vendored `bin/protoc`; release job gates on required legs)
+6. Local real-session tests use `flash-max` (`grok -m flash-max`), not grok-4.6
 
 Report anomalies in your first substantive reply. Do not auto-fix beyond what
 the runbook lists.
@@ -35,6 +36,11 @@ the runbook lists.
 - No Docker. No secrets in this repo.
 - grok-build checkout showing `manifest.rs` modified is EXPECTED (our applied
   patch); `install.sh` handles reverse/re-apply on update.
+- Local grokgod real-session tests (headed Orca TUI / interactive grok against
+  the live patched binary) MUST use model `flash-max`: `grok -m flash-max`
+  (or `/model flash-max` after launch). Do not test on grok-4.6. This is
+  separate from Saturday overlay pin (`GROK_CONFIG_PATH`; that path still
+  never uses `-m`).
 
 ## Repo map
 

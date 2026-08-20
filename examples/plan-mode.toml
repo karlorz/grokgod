@@ -1,0 +1,14 @@
+# Merge into ~/.grok/config.toml (not GROK_CONFIG_PATH overlay —
+# [plan_mode] is not on the overlay allowlist).
+#
+# implement_via_subagents defaults true in grokgod 0002 (patched grok).
+# Set false to restore stock “start coding” on the parent.
+#
+# Absent extra_writable_globs → default catalog:
+#   **/projects/*/work/*/*.md
+#   **/docs/superpowers/**/*.md
+# extra_writable_globs = [] restores stock Grok (session plan.md only).
+
+[plan_mode]
+# extra_writable_globs = []
+implement_via_subagents = true

@@ -905,6 +905,45 @@ maybe_install_pin_overlay() {
 
 maybe_install_pin_overlay
 
+# Merge [plan_mode] implement_via_subagents = true into ~/.grok/config.toml
+# when the key is absent. Overlay GROK_CONFIG_PATH cannot carry this table.
+maybe_merge_plan_mode_config() {
+  cfg="$GROK_HOME/config.toml"
+  if grep -q '^[[:space:]]*implement_via_subagents[[:space:]]*=' "$cfg" 2>/dev/null; then
+    log_info "plan_mode implement_via_subagents already set in $cfg"
+    return 0
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log_dry "Would merge [plan_mode] implement_via_subagents = true into $cfg"
+    return 0
+  fi
+  mkdir -p "$GROK_HOME"
+  if [ -f "$cfg" ] && grep -q '^[[:space:]]*\[plan_mode\]' "$cfg"; then
+    tmp="$cfg.grokgod-plan-mode.tmp"
+    awk '
+      BEGIN { added=0 }
+      /^[[:space:]]*\[plan_mode\]/ && added==0 {
+        print
+        print "implement_via_subagents = true"
+        added=1
+        next
+      }
+      { print }
+    ' "$cfg" > "$tmp" && mv "$tmp" "$cfg"
+    log_info "Merged implement_via_subagents = true into existing [plan_mode] in $cfg"
+    return 0
+  fi
+  {
+    if [ -f "$cfg" ] && [ -s "$cfg" ]; then
+      printf '\n'
+    fi
+    printf '[plan_mode]\nimplement_via_subagents = true\n'
+  } >> "$cfg"
+  log_info "Wrote [plan_mode] implement_via_subagents = true to $cfg"
+}
+
+maybe_merge_plan_mode_config
+
 # ─────────────────────────────────────────────────────────
 # POST-BUILD DISK WARN
 # ─────────────────────────────────────────────────────────

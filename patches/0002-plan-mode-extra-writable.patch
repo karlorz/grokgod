@@ -1,0 +1,721 @@
+diff --git a/crates/codegen/xai-grok-config-types/src/lib.rs b/crates/codegen/xai-grok-config-types/src/lib.rs
+index 8e0d8da9..cf01a8be 100644
+--- a/crates/codegen/xai-grok-config-types/src/lib.rs
++++ b/crates/codegen/xai-grok-config-types/src/lib.rs
+@@ -28,6 +28,47 @@ pub struct CampaignOverride {
+     #[serde(flatten, default)]
+     pub patch: serde_json::Map<String, serde_json::Value>,
+ }
++/// `[plan_mode]` TOML table. Extra writable markdown globs and the
++/// implement-via-subagents reminder (default on). `None` fields fall through
++/// to client defaults in the shell resolver.
++#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(default)]
++pub struct PlanModeSettings {
++    /// Glob list matched against the absolute edit path while plan mode is
++    /// Active. `None` ⇒ client default catalog. `Some([])` ⇒ no extra paths
++    /// (session plan file only). Non-empty replaces the catalog.
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub extra_writable_globs: Option<Vec<String>>,
++    /// When `Some(false)`, stock “start coding” messages. Absent/`true` ⇒
++    /// second-tier implementer subagents with parent verification.
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub implement_via_subagents: Option<bool>,
++}
++
++impl PlanModeSettings {
++    /// Default extra-path catalog when `extra_writable_globs` is absent.
++    pub const DEFAULT_EXTRA_WRITABLE_GLOBS: &'static [&'static str] = &[
++        "**/projects/*/work/*/*.md",
++        "**/docs/superpowers/**/*.md",
++    ];
++
++    /// `None` → default catalog. `Some([])` → no extra paths. Non-empty replaces.
++    pub fn resolved_extra_writable_globs(&self) -> Vec<String> {
++        match &self.extra_writable_globs {
++            None => Self::DEFAULT_EXTRA_WRITABLE_GLOBS
++                .iter()
++                .map(|s| (*s).to_string())
++                .collect(),
++            Some(v) => v.clone(),
++        }
++    }
++
++    /// Absent or `true` → implement-via-subagents reminders. `Some(false)` opts out.
++    pub fn resolved_implement_via_subagents(&self) -> bool {
++        self.implement_via_subagents.unwrap_or(true)
++    }
++}
++
+ /// Doom-loop recovery settings: ONE struct serves both the local
+ /// `[doom_loop_recovery]` TOML table and the remote settings
+ /// `doom_loop_recovery` JSON object, so the two stay 1:1. All fields are
+diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
+index 2a2ab049..1081eca5 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/config.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
+@@ -1295,6 +1295,9 @@ pub struct Config {
+     /// object. See [`crate::util::config::DoomLoopRecoverySettings`].
+     #[serde(default)]
+     pub doom_loop_recovery: crate::util::config::DoomLoopRecoverySettings,
++    /// `[plan_mode]` extra writable globs and implement-via-subagents flag.
++    #[serde(default)]
++    pub plan_mode: crate::util::config::PlanModeSettings,
+     /// `[worktree]` section (currently `[worktree.auto_gc]` only).
+     #[serde(default)]
+     pub worktree: WorktreeConfigSection,
+@@ -1744,6 +1747,7 @@ impl Default for Config {
+             goal: GoalConfig::default(),
+             workflows: WorkflowsConfig::default(),
+             doom_loop_recovery: crate::util::config::DoomLoopRecoverySettings::default(),
++            plan_mode: crate::util::config::PlanModeSettings::default(),
+             worktree: WorktreeConfigSection::default(),
+             auto_mode: AutoModeConfig::default(),
+             feature_values: BTreeMap::new(),
+@@ -2568,6 +2572,15 @@ impl Config {
+                 ),
+         })
+     }
++    /// Extra markdown globs writable in plan mode. `None` config → default
++    /// catalog; `Some([])` → session plan file only.
++    pub(crate) fn resolve_plan_mode_extra_writable_globs(&self) -> Vec<String> {
++        self.plan_mode.resolved_extra_writable_globs()
++    }
++    /// Implement-via-subagents post-exit reminder. Default true; `false` opts out.
++    pub(crate) fn resolve_plan_mode_implement_via_subagents(&self) -> bool {
++        self.plan_mode.resolved_implement_via_subagents()
++    }
+     /// Automatic worktree GC policy. Precedence: env kill/dry-run >
+     /// `[worktree.auto_gc]` TOML > remote `worktree_auto_gc` > defaults.
+     /// Platform age-expiry (dead-only where no process-CWD scan exists) is
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
+index e6e5d2ad..40374f53 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
+@@ -205,10 +205,21 @@ impl SessionActor {
+             if let Some(client) = self.rebuild_spec.managed_gateway_tool_client.clone() {
+                 bridge.update_resource(client).await;
+             }
+-            let plan_path = self.plan_mode.lock().plan_file_path().to_path_buf();
++            let (plan_path, implement_via_subagents) = {
++                let guard = self.plan_mode.lock();
++                (
++                    guard.plan_file_path().to_path_buf(),
++                    guard.implement_via_subagents(),
++                )
++            };
+             bridge
+                 .update_resource(xai_grok_tools::types::resources::PlanFilePath(plan_path))
+                 .await;
++            bridge
++                .update_resource(xai_grok_tools::types::resources::ImplementViaSubagents(
++                    implement_via_subagents,
++                ))
++                .await;
+             if let Some(display_cwd) = self.display_cwd.get() {
+                 bridge
+                     .set_display_cwd(std::path::PathBuf::from(display_cwd))
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/session_mode.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/session_mode.rs
+index d98e26e1..d1fc3220 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/session_mode.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/session_mode.rs
+@@ -382,9 +382,21 @@ impl SessionActor {
+         plan_path: &std::path::Path,
+         plan_has_content: bool,
+     ) -> Option<String> {
++        let (has_extra_writable, extra_writable_globs, implement_via_subagents) = {
++            let tracker = self.plan_mode.lock();
++            let globs = tracker.extra_writable_globs();
++            (
++                !globs.is_empty(),
++                globs.join(", "),
++                tracker.implement_via_subagents(),
++            )
++        };
+         let extra = serde_json::json!({
+             "plan_path": plan_path.display().to_string(),
+             "plan_has_content": plan_has_content,
++            "has_extra_writable": has_extra_writable,
++            "extra_writable_globs": extra_writable_globs,
++            "implement_via_subagents": implement_via_subagents,
+         });
+         self.agent
+             .borrow()
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
+index 6a310cd8..6ac9f3ab 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
+@@ -1503,6 +1503,13 @@ pub(crate) async fn spawn_session_actor(
+         }
+     };
+     let doom_loop_recovery = effective_config.resolve_doom_loop_recovery();
++    {
++        let mut tracker = plan_mode.lock();
++        tracker.set_extra_writable_globs(effective_config.resolve_plan_mode_extra_writable_globs());
++        tracker.set_implement_via_subagents(
++            effective_config.resolve_plan_mode_implement_via_subagents(),
++        );
++    }
+     let resolved_tool_overrides: std::sync::Arc<
+         arc_swap::ArcSwapOption<xai_grok_sampling_types::ToolOverrides>,
+     > = std::sync::Arc::new(arc_swap::ArcSwapOption::empty());
+@@ -1815,13 +1822,27 @@ pub(crate) async fn spawn_session_actor(
+             .await;
+     }
+     {
+-        let plan_path = session.plan_mode.lock().plan_file_path().to_path_buf();
++        let (plan_path, implement_via_subagents) = {
++            let guard = session.plan_mode.lock();
++            (
++                guard.plan_file_path().to_path_buf(),
++                guard.implement_via_subagents(),
++            )
++        };
+         session
+             .agent
+             .borrow()
+             .tool_bridge()
+             .update_resource(xai_grok_tools::types::resources::PlanFilePath(plan_path))
+             .await;
++        session
++            .agent
++            .borrow()
++            .tool_bridge()
++            .update_resource(xai_grok_tools::types::resources::ImplementViaSubagents(
++                implement_via_subagents,
++            ))
++            .await;
+     }
+     session.inject_deny_read_globs().await;
+     if session.permissions.is_auto_mode() {
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
+index 966c4bd1..f024f8c8 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
+@@ -234,6 +234,12 @@ pub(super) enum PlanEditGate {
+ /// flow to the normal permission path, where yolo may still auto-approve
+ /// them. `enter_plan_mode` / `exit_plan_mode` map to `AccessKind::Read` and
+ /// are likewise never gated.
++fn extra_glob_edit_tool(tool_input: &ToolInput) -> bool {
++    matches!(
++        tool_input,
++        ToolInput::Write(_) | ToolInput::SearchReplace(_) | ToolInput::HashlineEdit(_)
++    )
++}
+ pub(super) fn plan_mode_edit_gate(
+     tracker: &crate::session::plan_mode::PlanModeTracker,
+     tool_input: &ToolInput,
+@@ -242,10 +248,16 @@ pub(super) fn plan_mode_edit_gate(
+     if !tracker.is_active() {
+         return PlanEditGate::Allow;
+     }
+-    let _ = tool_input;
+     match access_kind {
+-        AccessKind::Edit(path) if !tracker.should_auto_approve_edit(Path::new(path)) => {
+-            PlanEditGate::RejectNonPlanFile
++        AccessKind::Edit(path) => {
++            let path = Path::new(path);
++            if tracker.should_auto_approve_edit(path) {
++                PlanEditGate::Allow
++            } else if extra_glob_edit_tool(tool_input) && tracker.extra_writable_matches(path) {
++                PlanEditGate::Allow
++            } else {
++                PlanEditGate::RejectNonPlanFile
++            }
+         }
+         _ => PlanEditGate::Allow,
+     }
+@@ -3279,6 +3291,74 @@ mod plan_mode_edit_gate_tests {
+             "Pending means the model has no plan-mode instructions yet — don't gate"
+         );
+     }
++    #[test]
++    fn default_catalog_work_item_and_prd_markdown_allowed() {
++        let t = active_tracker();
++        assert_eq!(
++            gate(
++                &t,
++                &search_replace("/Users/x/wiki/projects/foo/work/2026-08-20-bar/plan.md")
++            ),
++            PlanEditGate::Allow
++        );
++        assert_eq!(
++            gate(&t, &write("/repo/docs/superpowers/plans/foo.md")),
++            PlanEditGate::Allow
++        );
++        assert_eq!(
++            gate(&t, &search_replace("/repo/src/lib.rs")),
++            PlanEditGate::RejectNonPlanFile
++        );
++    }
++    #[test]
++    fn empty_extra_globs_restore_stock_gate() {
++        let mut t = active_tracker();
++        t.set_extra_writable_globs(Vec::new());
++        assert_eq!(
++            gate(
++                &t,
++                &search_replace("/Users/x/wiki/projects/foo/work/2026-08-20-bar/plan.md")
++            ),
++            PlanEditGate::RejectNonPlanFile
++        );
++        assert_eq!(
++            gate(&t, &search_replace("/tmp/gate-session/plan.md")),
++            PlanEditGate::Allow
++        );
++    }
++    #[test]
++    fn apply_patch_still_rejected_for_catalog_paths() {
++        use xai_grok_tools::implementations::codex::apply_patch::ApplyPatchInput;
++        let t = active_tracker();
++        assert_eq!(
++            gate(
++                &t,
++                &ToolInput::ApplyPatch(ApplyPatchInput {
++                    patch: String::new()
++                })
++            ),
++            PlanEditGate::RejectNonPlanFile
++        );
++    }
++    #[test]
++    fn hashline_edit_catalog_path_allowed() {
++        use xai_grok_tools::implementations::grok_build_hashline::edit::types::{
++            HashlineEditInput, HashlineOp,
++        };
++        let t = active_tracker();
++        assert_eq!(
++            gate(
++                &t,
++                &ToolInput::HashlineEdit(HashlineEditInput {
++                    file_path: "/repo/docs/superpowers/specs/x.md".into(),
++                    edits: vec![HashlineOp::Write {
++                        content: "x".into()
++                    }],
++                })
++            ),
++            PlanEditGate::Allow
++        );
++    }
+ }
+ #[cfg(test)]
+ mod plan_approval_helper_tests {
+diff --git a/crates/codegen/xai-grok-shell/src/session/plan_mode.rs b/crates/codegen/xai-grok-shell/src/session/plan_mode.rs
+index c899722a..52bc96cf 100644
+--- a/crates/codegen/xai-grok-shell/src/session/plan_mode.rs
++++ b/crates/codegen/xai-grok-shell/src/session/plan_mode.rs
+@@ -77,6 +77,12 @@ pub struct PlanModeTracker {
+     /// Lives inside the session directory:
+     /// `~/.grok/sessions/<cwd>/<session_id>/plan.md`
+     plan_file_path: PathBuf,
++    /// Extra markdown globs allowed for write/search_replace while Active.
++    extra_writable_globs: Vec<String>,
++    /// Compiled matcher for `extra_writable_globs` (rebuilt only when globs change).
++    extra_writable_set: globset::GlobSet,
++    /// When true, exit reminders prefer second-tier implementer subagents.
++    implement_via_subagents: bool,
+ }
+ /// A buffered mid-turn activation reminder plus the state needed to roll the
+ /// activation back if it is withdrawn before delivery.
+@@ -108,6 +114,9 @@ impl PlanModeTracker {
+     /// Create a new tracker. `session_dir` is the session's storage
+     /// directory (e.g., `~/.grok/sessions/<encoded-cwd>/<session-id>/`).
+     pub fn new(session_dir: PathBuf) -> Self {
++        let extra_writable_globs = crate::util::config::PlanModeSettings::default()
++            .resolved_extra_writable_globs();
++        let extra_writable_set = compile_extra_writable_set(&extra_writable_globs);
+         Self {
+             state: PlanModeState::Inactive,
+             was_previously_active: false,
+@@ -116,6 +125,9 @@ impl PlanModeTracker {
+             awaiting_plan_approval: false,
+             pending_activation: None,
+             plan_file_path: session_dir.join("plan.md"),
++            extra_writable_globs,
++            extra_writable_set,
++            implement_via_subagents: true,
+         }
+     }
+     /// Restore a tracker from a persisted snapshot.
+@@ -136,6 +148,9 @@ impl PlanModeTracker {
+             }
+             _ => {}
+         }
++        let extra_writable_globs = crate::util::config::PlanModeSettings::default()
++            .resolved_extra_writable_globs();
++        let extra_writable_set = compile_extra_writable_set(&extra_writable_globs);
+         Self {
+             state: snapshot.state,
+             was_previously_active: snapshot.was_previously_active,
+@@ -144,8 +159,28 @@ impl PlanModeTracker {
+             awaiting_plan_approval: snapshot.awaiting_plan_approval,
+             pending_activation: None,
+             plan_file_path: session_dir.join("plan.md"),
++            extra_writable_globs,
++            extra_writable_set,
++            implement_via_subagents: true,
+         }
+     }
++    /// Replace extra writable globs (session spawn applies resolved config).
++    pub(crate) fn set_extra_writable_globs(&mut self, globs: Vec<String>) {
++        self.extra_writable_set = compile_extra_writable_set(&globs);
++        self.extra_writable_globs = globs;
++    }
++    pub(crate) fn extra_writable_matches(&self, path: &Path) -> bool {
++        extra_writable_set_matches(path, &self.extra_writable_set)
++    }
++    pub(crate) fn extra_writable_globs(&self) -> &[String] {
++        &self.extra_writable_globs
++    }
++    pub(crate) fn set_implement_via_subagents(&mut self, enabled: bool) {
++        self.implement_via_subagents = enabled;
++    }
++    pub(crate) fn implement_via_subagents(&self) -> bool {
++        self.implement_via_subagents
++    }
+     /// Mark that the client is waiting on plan approval (`exit_plan_mode` parked).
+     pub(crate) fn set_awaiting_plan_approval(&mut self, awaiting: bool) {
+         self.awaiting_plan_approval = awaiting;
+@@ -386,7 +421,13 @@ using the ${{ tools.by_kind.edit }} tool.
+ ${%- endif %}
+ 
+ You should build your plan by writing to or editing this file. \
++${%- if has_extra_writable %}
++Markdown paths matching extra writable globs (${{ extra_writable_globs }}) may also be edited. \
++If you write one, also update ${{ plan_path }} so the approval preview stays current. \
++Use the calling skill's required frontmatter when writing that skill's file.
++${%- else %}
+ Note that this is the only file you are allowed to edit.
++${%- endif %}
+ 
+ Your turn should only end with either ${{ tools.by_kind.ask_user }} to clarify \
+ requirements or ${{ tools.by_kind.exit_plan }} to present your plan to the user."
+@@ -428,7 +469,13 @@ pub(crate) fn plan_mode_edit_rejected_template() -> &'static str {
+ /// (user-initiated exit via toggle). Contains no placeholders.
+ pub(crate) fn plan_mode_exit_reminder_template() -> &'static str {
+     "\
+-You have exited plan mode. You can now make edits, run tools, and take actions."
++You have exited plan mode. You can now make edits, run tools, and take actions.\
++${%- if implement_via_subagents %}
++Prefer implementer subagents on the configured second-tier subagent model, not the parent. \
++The parent reviews diffs and tests and owns accept/reject. \
++If a subagent would inherit the parent model, do not spawn — implement on the parent. \
++If a test-first execute skill is in play, the implementer follows it.\
++${%- endif %}"
+ }
+ /// Check if a write target matches the plan file.
+ ///
+@@ -437,6 +484,35 @@ You have exited plan mode. You can now make edits, run tools, and take actions."
+ pub(crate) fn is_plan_file_write(target_path: &Path, plan_file: &Path) -> bool {
+     target_path == plan_file
+ }
++fn compile_extra_writable_set(globs: &[String]) -> globset::GlobSet {
++    let mut builder = globset::GlobSetBuilder::new();
++    for pattern in globs {
++        if let Ok(glob) = globset::Glob::new(pattern) {
++            builder.add(glob);
++        }
++    }
++    builder
++        .build()
++        .unwrap_or_else(|_| globset::GlobSetBuilder::new().build().expect("empty globset"))
++}
++fn extra_writable_set_matches(target_path: &Path, set: &globset::GlobSet) -> bool {
++    if set.is_empty() {
++        return false;
++    }
++    let normalized = if cfg!(windows) {
++        target_path.to_string_lossy().replace('\\', "/")
++    } else {
++        target_path.to_string_lossy().into_owned()
++    };
++    set.is_match(normalized)
++}
++/// True when `target_path` matches any extra writable glob (slash-normalized).
++pub(crate) fn is_extra_writable_plan_path(target_path: &Path, globs: &[String]) -> bool {
++    if globs.is_empty() {
++        return false;
++    }
++    extra_writable_set_matches(target_path, &compile_extra_writable_set(globs))
++}
+ /// Whether the path's final component ends with a markdown suffix (case-insensitive).
+ ///
+ /// Suffixes align with client / workspace `MARKDOWN_SUFFIXES`:
+@@ -862,6 +938,21 @@ mod tests {
+         assert!(!text.contains("${{"));
+     }
+     #[test]
++    fn exit_reminder_renders_implement_via_subagents() {
++        let r = test_renderer();
++        let extra = serde_json::json!({
++            "plan_path": "/tmp/plan.md",
++            "plan_has_content": false,
++            "implement_via_subagents": true,
++        });
++        let text = r
++            .render_with_extra(plan_mode_exit_reminder_template(), &extra)
++            .unwrap();
++        assert!(text.contains("Prefer implementer subagents"));
++        assert!(text.contains("second-tier"));
++        assert!(!text.contains("${{"));
++    }
++    #[test]
+     fn edit_rejected_template_renders() {
+         let r = test_renderer();
+         let text = render(
+@@ -914,6 +1005,27 @@ mod tests {
+         assert!(!is_plan_file_write(target, plan));
+     }
+     #[test]
++    fn extra_writable_matches_default_catalog() {
++        let globs = crate::util::config::PlanModeSettings::default()
++            .resolved_extra_writable_globs();
++        assert!(is_extra_writable_plan_path(
++            Path::new("/Users/x/wiki/projects/foo/work/2026-08-20-bar/plan.md"),
++            &globs
++        ));
++        assert!(is_extra_writable_plan_path(
++            Path::new("/repo/docs/superpowers/plans/foo.md"),
++            &globs
++        ));
++        assert!(!is_extra_writable_plan_path(
++            Path::new("/repo/src/lib.rs"),
++            &globs
++        ));
++        assert!(!is_extra_writable_plan_path(
++            Path::new("/Users/x/wiki/projects/foo/work/2026-08-20-bar/plan.md"),
++            &[]
++        ));
++    }
++    #[test]
+     fn is_markdown_file_path_recognizes_extensions() {
+         assert!(is_markdown_file_path(Path::new("/x/plan.md")));
+         assert!(is_markdown_file_path(Path::new("notes.MDX")));
+diff --git a/crates/codegen/xai-grok-shell/src/util/config/mod.rs b/crates/codegen/xai-grok-shell/src/util/config/mod.rs
+index 3067942e..971fe077 100644
+--- a/crates/codegen/xai-grok-shell/src/util/config/mod.rs
++++ b/crates/codegen/xai-grok-shell/src/util/config/mod.rs
+@@ -35,6 +35,6 @@ pub use tips::*;
+ pub use worktree::*;
+ pub use xai_grok_config_types::{
+     CampaignOverride, ConsentGate, ContextualHintsRemote, DisplayRefreshSettings,
+-    DoomLoopRecoverySettings, GoalRoleModel, RemoteSettings, WorktreeAutoGcSettings,
+-    WorktreeKindMaxAge, deserialize_tolerant,
++    DoomLoopRecoverySettings, GoalRoleModel, PlanModeSettings, RemoteSettings,
++    WorktreeAutoGcSettings, WorktreeKindMaxAge, deserialize_tolerant,
+ };
+diff --git a/crates/codegen/xai-grok-tools/src/implementations/grok_build/exit_plan_mode/mod.rs b/crates/codegen/xai-grok-tools/src/implementations/grok_build/exit_plan_mode/mod.rs
+index cc68e8d9..beaa5702 100644
+--- a/crates/codegen/xai-grok-tools/src/implementations/grok_build/exit_plan_mode/mod.rs
++++ b/crates/codegen/xai-grok-tools/src/implementations/grok_build/exit_plan_mode/mod.rs
+@@ -26,7 +26,9 @@ pub use types::{ExitPlanModeExtRequest, ExitPlanModeExtResponse};
+ use crate::notification::types::PlanModeExited;
+ use crate::types::output::ExitPlanModeOutput;
+ use crate::types::requirements::{Expr, ToolRequirement};
+-use crate::types::resources::{FileSystem, NotificationHandle, require_plan_file_path};
++use crate::types::resources::{
++    FileSystem, ImplementViaSubagents, NotificationHandle, require_plan_file_path,
++};
+ use crate::types::tool::{ToolKind, ToolNamespace};
+ 
+ /// Input for the `ExitPlanMode` tool.
+@@ -118,11 +120,13 @@ impl xai_tool_runtime::Tool for ExitPlanModeTool {
+         use crate::types::tool_metadata::shared_resources;
+         let resources = shared_resources(&ctx)?;
+ 
+-        let (plan_file_path, plan_content) = {
++        let (plan_file_path, plan_content, implement_via_subagents) = {
+             let res = resources.lock().await;
+ 
+             let (plan_path, plan_file_path_display) = require_plan_file_path(&res)?;
+ 
++            let implement_via_subagents = res.get::<ImplementViaSubagents>().is_some_and(|r| r.0);
++
+             // Read the plan file from disk via the FileSystem abstraction.
+             let content = if let Some(fs) = res.get::<FileSystem>() {
+                 match fs.0.read_file(&plan_path).await {
+@@ -144,7 +148,7 @@ impl xai_tool_runtime::Tool for ExitPlanModeTool {
+                 }
+             };
+ 
+-            (plan_file_path_display, content)
++            (plan_file_path_display, content, implement_via_subagents)
+         };
+ 
+         // Notify the gateway / client.
+@@ -159,6 +163,8 @@ impl xai_tool_runtime::Tool for ExitPlanModeTool {
+             }
+         }
+ 
++        const SECOND_TIER_CLAUSE: &str = "Spawn implementer subagents on the configured second-tier subagent model, not the parent. The parent reviews diffs and tests and owns accept/reject. If a subagent would inherit the parent model, do not spawn — implement on the parent. If a test-first execute skill is in play, the implementer follows it.";
++
+         match plan_content {
+             Some(content) => {
+                 tracing::info!(
+@@ -166,7 +172,11 @@ impl xai_tool_runtime::Tool for ExitPlanModeTool {
+                     "Exiting plan mode with plan content"
+                 );
+ 
+-                let message = "Your plan has been approved. You can now start coding.".to_owned();
++                let message = if implement_via_subagents {
++                    format!("Your plan has been approved. {SECOND_TIER_CLAUSE}")
++                } else {
++                    "Your plan has been approved. You can now start coding.".to_owned()
++                };
+ 
+                 Ok(ExitPlanModeOutput::PlanReady {
+                     message,
+@@ -177,10 +187,17 @@ impl xai_tool_runtime::Tool for ExitPlanModeTool {
+             None => {
+                 tracing::info!("Exiting plan mode with empty/missing plan file");
+ 
++                let message = if implement_via_subagents {
++                    format!(
++                        "Plan mode exit approved. No plan content was found. {SECOND_TIER_CLAUSE}"
++                    )
++                } else {
++                    "Plan mode exit approved. No plan content was found — you can proceed."
++                        .to_string()
++                };
++
+                 Ok(ExitPlanModeOutput::EmptyPlan {
+-                    message:
+-                        "Plan mode exit approved. No plan content was found — you can proceed."
+-                            .to_string(),
++                    message,
+                     plan_file_path,
+                 })
+             }
+@@ -404,6 +421,117 @@ mod tests {
+ 
+     // -- PlanFilePath resource tests --
+ 
++    #[tokio::test]
++    async fn exit_with_plan_content_implement_via_subagents() {
++        let tmp = TempDir::new().unwrap();
++        let plan_dir = tmp.path().join(".grok");
++        std::fs::create_dir_all(&plan_dir).unwrap();
++        std::fs::write(
++            plan_dir.join("plan.md"),
++            "# My Plan\n\n1. Do thing A\n2. Do thing B\n",
++        )
++        .unwrap();
++
++        let mut resources = resources_with_cwd(tmp.path());
++        resources.insert(crate::types::resources::ImplementViaSubagents(true));
++        let shared = resources.into_shared();
++        let tool = ExitPlanModeTool;
++
++        let result = xai_tool_runtime::Tool::run(
++            &tool,
++            test_ctx_with_call_id(shared, "test-call"),
++            ExitPlanModeInput {},
++        )
++        .await
++        .unwrap();
++
++        match result {
++            ExitPlanModeOutput::PlanReady {
++                ref message,
++                ref plan_content,
++                ref plan_file_path,
++            } => {
++                assert!(message.contains("plan has been approved"));
++                assert!(message.contains("second-tier"));
++                assert!(message.contains("implementer subagents"));
++                assert!(!message.contains("start coding"));
++                assert!(plan_content.contains("Do thing A"));
++                assert!(plan_content.contains("Do thing B"));
++                assert!(plan_file_path.ends_with(".grok/plan.md"));
++            }
++            other => panic!("Expected PlanReady, got {:?}", other),
++        }
++    }
++
++    #[tokio::test]
++    async fn exit_with_empty_plan_implement_via_subagents() {
++        let tmp = TempDir::new().unwrap();
++
++        let mut resources = resources_with_cwd(tmp.path());
++        resources.insert(crate::types::resources::ImplementViaSubagents(true));
++        let shared = resources.into_shared();
++        let tool = ExitPlanModeTool;
++
++        let result = xai_tool_runtime::Tool::run(
++            &tool,
++            test_ctx_with_call_id(shared, "test-call"),
++            ExitPlanModeInput {},
++        )
++        .await
++        .unwrap();
++
++        match result {
++            ExitPlanModeOutput::EmptyPlan { ref message, .. } => {
++                assert!(message.contains("Plan mode exit approved"));
++                assert!(message.contains("No plan content was found"));
++                assert!(message.contains("second-tier"));
++                assert!(message.contains("implementer subagents"));
++                assert!(!message.contains("you can proceed"));
++                assert!(!message.contains("start coding"));
++            }
++            other => panic!("Expected EmptyPlan, got {:?}", other),
++        }
++    }
++
++    #[tokio::test]
++    async fn exit_with_plan_content_flag_false() {
++        let tmp = TempDir::new().unwrap();
++        let plan_dir = tmp.path().join(".grok");
++        std::fs::create_dir_all(&plan_dir).unwrap();
++        std::fs::write(
++            plan_dir.join("plan.md"),
++            "# My Plan\n\n1. Do thing A\n2. Do thing B\n",
++        )
++        .unwrap();
++
++        let mut resources = resources_with_cwd(tmp.path());
++        resources.insert(crate::types::resources::ImplementViaSubagents(false));
++        let shared = resources.into_shared();
++        let tool = ExitPlanModeTool;
++
++        let result = xai_tool_runtime::Tool::run(
++            &tool,
++            test_ctx_with_call_id(shared, "test-call"),
++            ExitPlanModeInput {},
++        )
++        .await
++        .unwrap();
++
++        match result {
++            ExitPlanModeOutput::PlanReady {
++                ref message,
++                ref plan_content,
++                ..
++            } => {
++                assert!(message.contains("plan has been approved"));
++                assert!(message.contains("start coding"));
++                assert!(!message.contains("second-tier"));
++                assert!(plan_content.contains("Do thing A"));
++            }
++            other => panic!("Expected PlanReady, got {:?}", other),
++        }
++    }
++
+     #[tokio::test]
+     async fn reads_from_plan_file_path_resource() {
+         let tmp = TempDir::new().unwrap();
+diff --git a/crates/codegen/xai-grok-tools/src/types/resources.rs b/crates/codegen/xai-grok-tools/src/types/resources.rs
+index b796032d..37b04aa3 100644
+--- a/crates/codegen/xai-grok-tools/src/types/resources.rs
++++ b/crates/codegen/xai-grok-tools/src/types/resources.rs
+@@ -411,6 +411,10 @@ pub struct Cwd(pub PathBuf);
+ /// tool falls back to `Cwd/.grok/plan.md`.
+ #[derive(Debug, Clone)]
+ pub struct PlanFilePath(pub PathBuf);
++/// When true, ExitPlanMode PlanReady/EmptyPlan messages prefer second-tier
++/// implementer subagents. Absent ⇒ stock “start coding” / “you can proceed”.
++#[derive(Debug, Clone, Copy)]
++pub struct ImplementViaSubagents(pub bool);
+ /// Default plan-file path (relative to the workspace root) used when no
+ /// explicit [`PlanFilePath`] is set. Shared by the plan-mode tools.
+ pub const PLAN_FILE_RELATIVE_PATH: &str = ".grok/plan.md";

@@ -74,7 +74,17 @@ jobs:
         shell: bash
         run: |
           REPO_DIR="$PWD"
-          git -C grok-build apply "$REPO_DIR/patches/0001-normalize-plugin-skill-join.patch"
+          shopt -s nullglob
+          patches=("$REPO_DIR"/patches/*.patch)
+          shopt -u nullglob
+          if [ ${#patches[@]} -eq 0 ]; then
+            echo "::error::No patch files found matching patches/*.patch (fail-closed)"
+            exit 1
+          fi
+          for p in "${patches[@]}"; do
+            echo "Applying $(basename "$p")"
+            git -C grok-build apply "$p"
+          done
 
       - name: Build xai-grok-pager-bin
         shell: bash

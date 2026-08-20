@@ -60,7 +60,11 @@ ls -la ~/.local/bin/grok ~/.local/bin/grok.orig
 
 ## 4. Post-v1 overlay pin facts (context, no action)
 
-- Pin API: Official `GROK_CONFIG_PATH` env layer (e.g. `GROK_CONFIG_PATH=~/.grokgod/pin/grok-overlay.toml grok` or via `grokgod run --automation-root …` / `grokgod run --pin …`). NEVER `-m`.
+- Pin API: Official `GROK_CONFIG_PATH` env layer (e.g. `GROK_CONFIG_PATH=~/.grokgod/pin/grok-overlay.toml grok` or via `grokgod run --automation-root …` / `grokgod run --pin …`). NEVER `-m` on that overlay path.
+- Local grokgod real-session tests (headed Orca TUI / interactive grok against
+  the patched binary): always `grok -m flash-max` (or `/model flash-max`).
+  Never grok-4.6 for those tests. Overlay pin and local `-m flash-max` are
+  different paths; do not mix them.
 - Overlay on a new host: use the official `GROK_CONFIG_PATH` env var; the template is at `examples/grok-overlay.toml` (or optional `~/.grokgod/pin/grok-overlay.toml`). Do NOT `mkdir ~/.orca/automations/weekly-dev-cache-scan` on servers without Orca.
 - Scheduler path DECIDED 2026-08-19 (user): Orca automation `0bbdc998` is the
   single Saturday trigger — its prompt is a thin wrapper that calls
