@@ -51,7 +51,7 @@ fi
 
 echo "--- INVOCATION ---" >> "$TMP_DIR/invocations.txt"
 echo "GROK_CONFIG_PATH=${GROK_CONFIG_PATH:-NOT_SET}" >> "$TMP_DIR/invocations.txt"
-echo "ORCA_WORKSPACE_ID=${ORCA_WORKSPACE_ID:-NOT_SET}" >> "$TMP_DIR/invocations.txt"
+echo "ORCA_WORKTREE_ID=${ORCA_WORKTREE_ID:-NOT_SET}" >> "$TMP_DIR/invocations.txt"
 echo "ARGS:$*" >> "$TMP_DIR/invocations.txt"
 echo "FAKE_BIN_SUCCESS"
 EOF
@@ -76,16 +76,16 @@ run_pin() {
 echo "=== Running Orca Pin Test Suite ==="
 
 # ─────────────────────────────────────────────────────────
-# Test (a): ORCA_WORKSPACE_ID set + overlay file exists → GROK_CONFIG_PATH exported
+# Test (a): ORCA_WORKTREE_ID set + overlay file exists → GROK_CONFIG_PATH exported
 # ─────────────────────────────────────────────────────────
-echo "Test (a): ORCA_WORKSPACE_ID set + overlay file exists -> GROK_CONFIG_PATH exported"
+echo "Test (a): ORCA_WORKTREE_ID set + overlay file exists -> GROK_CONFIG_PATH exported"
 cat << 'EOF' > "$TEST_GROKGOD_HOME/pin/orca-pin.toml"
 [models]
 default = "flash-max"
 EOF
 > "$INVOCATIONS_FILE"
 
-OUT_A="$(ORCA_WORKSPACE_ID="orca-ws-123" run_shim "hello" "--flag")"
+OUT_A="$(ORCA_WORKTREE_ID="orca-ws-123" run_shim "hello" "--flag")"
 echo "$OUT_A" | grep -q "FAKE_BIN_SUCCESS" || { echo "FAIL: Fake bin not called in Test (a)"; exit 1; }
 grep -q "GROK_CONFIG_PATH=$TEST_GROKGOD_HOME/pin/orca-pin.toml" "$INVOCATIONS_FILE" || {
   echo "FAIL: GROK_CONFIG_PATH not exported in Test (a)"; cat "$INVOCATIONS_FILE"; exit 1
@@ -93,13 +93,13 @@ grep -q "GROK_CONFIG_PATH=$TEST_GROKGOD_HOME/pin/orca-pin.toml" "$INVOCATIONS_FI
 echo "PASS: Test (a)"
 
 # ─────────────────────────────────────────────────────────
-# Test (b): ORCA_WORKSPACE_ID set + overlay file missing → GROK_CONFIG_PATH NOT set
+# Test (b): ORCA_WORKTREE_ID set + overlay file missing → GROK_CONFIG_PATH NOT set
 # ─────────────────────────────────────────────────────────
-echo "Test (b): ORCA_WORKSPACE_ID set + overlay file missing -> GROK_CONFIG_PATH NOT set"
+echo "Test (b): ORCA_WORKTREE_ID set + overlay file missing -> GROK_CONFIG_PATH NOT set"
 rm -f "$TEST_GROKGOD_HOME/pin/orca-pin.toml"
 > "$INVOCATIONS_FILE"
 
-OUT_B="$(ORCA_WORKSPACE_ID="orca-ws-123" run_shim "hello")"
+OUT_B="$(ORCA_WORKTREE_ID="orca-ws-123" run_shim "hello")"
 echo "$OUT_B" | grep -q "FAKE_BIN_SUCCESS" || { echo "FAIL: Fake bin not called in Test (b)"; exit 1; }
 grep -q "GROK_CONFIG_PATH=NOT_SET" "$INVOCATIONS_FILE" || {
   echo "FAIL: GROK_CONFIG_PATH was set unexpectedly in Test (b)"; cat "$INVOCATIONS_FILE"; exit 1
@@ -107,16 +107,16 @@ grep -q "GROK_CONFIG_PATH=NOT_SET" "$INVOCATIONS_FILE" || {
 echo "PASS: Test (b)"
 
 # ─────────────────────────────────────────────────────────
-# Test (c): ORCA_WORKSPACE_ID unset + overlay file exists → GROK_CONFIG_PATH NOT set
+# Test (c): ORCA_WORKTREE_ID unset + overlay file exists → GROK_CONFIG_PATH NOT set
 # ─────────────────────────────────────────────────────────
-echo "Test (c): ORCA_WORKSPACE_ID unset + overlay file exists -> GROK_CONFIG_PATH NOT set"
+echo "Test (c): ORCA_WORKTREE_ID unset + overlay file exists -> GROK_CONFIG_PATH NOT set"
 cat << 'EOF' > "$TEST_GROKGOD_HOME/pin/orca-pin.toml"
 [models]
 default = "flash-max"
 EOF
 > "$INVOCATIONS_FILE"
 
-OUT_C="$(ORCA_WORKSPACE_ID="" run_shim "hello")"
+OUT_C="$(ORCA_WORKTREE_ID="" run_shim "hello")"
 echo "$OUT_C" | grep -q "FAKE_BIN_SUCCESS" || { echo "FAIL: Fake bin not called in Test (c)"; exit 1; }
 grep -q "GROK_CONFIG_PATH=NOT_SET" "$INVOCATIONS_FILE" || {
   echo "FAIL: GROK_CONFIG_PATH was set unexpectedly in Test (c)"; cat "$INVOCATIONS_FILE"; exit 1
@@ -129,7 +129,7 @@ echo "PASS: Test (c)"
 echo "Test (d): GROK_CONFIG_PATH already set by caller -> NOT overwritten"
 > "$INVOCATIONS_FILE"
 
-OUT_D="$(ORCA_WORKSPACE_ID="orca-ws-123" GROK_CONFIG_PATH="/custom/caller/config.toml" run_shim "hello")"
+OUT_D="$(ORCA_WORKTREE_ID="orca-ws-123" GROK_CONFIG_PATH="/custom/caller/config.toml" run_shim "hello")"
 echo "$OUT_D" | grep -q "FAKE_BIN_SUCCESS" || { echo "FAIL: Fake bin not called in Test (d)"; exit 1; }
 grep -q "GROK_CONFIG_PATH=/custom/caller/config.toml" "$INVOCATIONS_FILE" || {
   echo "FAIL: GROK_CONFIG_PATH was overwritten in Test (d)"; cat "$INVOCATIONS_FILE"; exit 1
