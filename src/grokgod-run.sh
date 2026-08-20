@@ -18,6 +18,8 @@ Usage:
   grokgod run --automation-root DIR [--prompt-file FILE | --prompt "text"] [--dry-run] [-- [GROK_ARGS...]]
   grokgod run --overlay FILE [--prompt-file FILE | --prompt "text"] [--dry-run] [-- [GROK_ARGS...]]
 
+Note: Weekly Dev Cache Scan retired this path 2026-08-20 — production Saturday runs top-thread with the global config default pin plus `grokgod pin check` precheck. `grokgod run` remains for the disabled DEV-TEST fixture and future per-job pins.
+
 Options:
   --pin                   Use pinned overlay at $GROKGOD_HOME/pin/grok-overlay.toml
   --automation-root DIR   Directory containing grok-overlay.toml and launchd-prompt.txt

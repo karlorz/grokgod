@@ -14,7 +14,9 @@ Before any other work in this repo, read and run
 4. Weekly pin facts (global ~/.grok/config.toml default = flash-max pins the
    automation top thread; GROK_CONFIG_PATH overlay retired for Weekly 2026-08-20;
    grokgod run remains for the disabled DEV-TEST fixture; Orca automation
-   0bbdc998 is the single Saturday trigger, launchd retired)
+   0bbdc998 is the single Saturday trigger, launchd retired; the automation
+   precheck runs `$HOME/.local/bin/grokgod pin check --expect-default flash-max --expect-no-overlay`
+   fail-closed (non-zero exit records the run skipped))
 5. Release CI facts (`macos-13` retired -> `macos-15-intel`; dotslash required
    for vendored `bin/protoc`; release job gates on required legs)
 6. Local real-session tests use `flash-max` (`grok -m flash-max`), not grok-4.6

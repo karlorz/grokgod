@@ -43,20 +43,24 @@ Mach-O hex.
   (not “start coding”). Canonical session `plan.md` is unchanged.
 
 Local headed grokgod real-session tests use `grok -m flash-max` (see
-[AGENTS.md](AGENTS.md)). Saturday overlay pin is still
-`GROK_CONFIG_PATH` via `grokgod run`, not `-m`.
+[AGENTS.md](AGENTS.md)). The Saturday Weekly pin is the global `~/.grok/config.toml`
+default `flash-max` (top-thread), asserted fail-closed by a `grokgod pin check`
+precheck on the Orca automation; the `GROK_CONFIG_PATH` overlay via `grokgod run`
+was retired for Weekly 2026-08-20 and remains for the disabled DEV-TEST fixture
+and future per-job pins.
 
 ```sh
-sh install.sh                  # release mode: download prebuilt binary + shims
-sh install.sh --from-source    # source mode: fetch + apply patches + rebuild
-sh install.sh --no-upgrade     # re-apply / restore launchers, skip download/build
-sh install.sh --force          # rebuild / re-download even when already current
-sh install.sh --uninstall      # restore grok.orig
-grok update                    # check latest; no-op "Already up to date" when current
-                               # (release: compares release tag; source: SHA+patchset)
-grok status                    # shim ownership + .source-version
-grokgod cache report           # disk / target size + ~/.grok/sessions age buckets
-grokgod sessions prune         # dry-run old sessions; --yes --max-age 7d uses grok sessions delete
+sh install.sh                                                # release mode: download prebuilt binary + shims
+sh install.sh --from-source                                  # source mode: fetch + apply patches + rebuild
+sh install.sh --no-upgrade                                   # re-apply / restore launchers, skip download/build
+sh install.sh --force                                        # rebuild / re-download even when already current
+sh install.sh --uninstall                                    # restore grok.orig
+grok update                                                  # check latest; no-op "Already up to date" when current
+                                                             # (release: compares release tag; source: SHA+patchset)
+grok status                                                  # shim ownership + .source-version
+grokgod cache report                                         # disk / target size + ~/.grok/sessions age buckets
+grokgod sessions prune                                       # dry-run old sessions; --yes --max-age 7d uses grok sessions delete
+grokgod pin check [--expect-default M] [--expect-no-overlay]  # fail-closed automation precheck assertion
 ```
 
 Source mode pins base `d71f6e0c1f5acc5469e503e192fe14824e6f8c90` (never silently tracks
@@ -70,6 +74,7 @@ via [AGENTS.md](AGENTS.md)). Persist inventory (keep vs phase-out):
 ## grokgod run (overlay pin)
 
 `grokgod run` executes an automation run configured with a TOML config overlay and a prompt.
+(Note: Weekly Dev Cache Scan overlay execution was retired 2026-08-20 in favor of the global config default pin; see [docs/orca-automation-model-pin.md](docs/orca-automation-model-pin.md) for the current automation pin architecture.)
 
 ### For Agents
 

@@ -567,12 +567,17 @@ except Exception:
           log_err "Failed to download grokgod-run.sh (fail-closed)."
           exit 1
         }
+        curl -fsSL "$RAW_BASE/src/grokgod-pin.sh" -o "$GROKGOD_HOME/src/src/grokgod-pin.sh" 2>/dev/null || \
+        curl -fsSL "https://raw.githubusercontent.com/${REPO_PATH}/main/src/grokgod-pin.sh" -o "$GROKGOD_HOME/src/src/grokgod-pin.sh" || {
+          log_err "Failed to download grokgod-pin.sh (fail-closed)."
+          exit 1
+        }
         curl -fsSL "$RAW_BASE/src/grokgod-sessions.sh" -o "$GROKGOD_HOME/src/src/grokgod-sessions.sh" 2>/dev/null || \
         curl -fsSL "https://raw.githubusercontent.com/${REPO_PATH}/main/src/grokgod-sessions.sh" -o "$GROKGOD_HOME/src/src/grokgod-sessions.sh" || {
           log_err "Failed to download grokgod-sessions.sh (fail-closed)."
           exit 1
         }
-        chmod +x "$GROKGOD_HOME/src/src/shim/grok-shim.sh" "$GROKGOD_HOME/src/src/grokgod-cache.sh" "$GROKGOD_HOME/src/src/grokgod-run.sh" "$GROKGOD_HOME/src/src/grokgod-sessions.sh"
+        chmod +x "$GROKGOD_HOME/src/src/shim/grok-shim.sh" "$GROKGOD_HOME/src/src/grokgod-cache.sh" "$GROKGOD_HOME/src/src/grokgod-run.sh" "$GROKGOD_HOME/src/src/grokgod-pin.sh" "$GROKGOD_HOME/src/src/grokgod-sessions.sh"
         GROKGOD_SRC="$GROKGOD_HOME/src"
         log_info "Downloaded runtime scripts to $GROKGOD_HOME/src"
       fi

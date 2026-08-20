@@ -701,6 +701,9 @@ if echo "\$url" | grep -q "raw.githubusercontent.com"; then
     grokgod-run.sh)
       src_path="$REPO_ROOT/src/grokgod-run.sh"
       ;;
+    grokgod-pin.sh)
+      src_path="$REPO_ROOT/src/grokgod-pin.sh"
+      ;;
     *)
       src_path=""
       ;;
@@ -857,6 +860,7 @@ if echo "\$url" | grep -q "raw.githubusercontent.com"; then
     grok-shim.sh) src_path="$REPO_ROOT/src/shim/grok-shim.sh" ;;
     grokgod-cache.sh) src_path="$REPO_ROOT/src/grokgod-cache.sh" ;;
     grokgod-run.sh) src_path="$REPO_ROOT/src/grokgod-run.sh" ;;
+    grokgod-pin.sh) src_path="$REPO_ROOT/src/grokgod-pin.sh" ;;
     *) src_path="" ;;
   esac
   if [ -n "\$src_path" ] && [ -f "\$src_path" ]; then
@@ -998,6 +1002,7 @@ if echo "\$url" | grep -q "raw.githubusercontent.com"; then
     grok-shim.sh) src_path="$REPO_ROOT/src/shim/grok-shim.sh" ;;
     grokgod-cache.sh) src_path="$REPO_ROOT/src/grokgod-cache.sh" ;;
     grokgod-run.sh) src_path="$REPO_ROOT/src/grokgod-run.sh" ;;
+    grokgod-pin.sh) src_path="$REPO_ROOT/src/grokgod-pin.sh" ;;
     *) src_path="" ;;
   esac
   if [ -n "\$src_path" ] && [ -f "\$src_path" ]; then
@@ -1113,6 +1118,7 @@ if echo "\$url" | grep -q "raw.githubusercontent.com"; then
     grok-shim.sh) src_path="$REPO_ROOT/src/shim/grok-shim.sh" ;;
     grokgod-cache.sh) src_path="$REPO_ROOT/src/grokgod-cache.sh" ;;
     grokgod-run.sh) src_path="$REPO_ROOT/src/grokgod-run.sh" ;;
+    grokgod-pin.sh) src_path="$REPO_ROOT/src/grokgod-pin.sh" ;;
     *) src_path="" ;;
   esac
   if [ -n "\$src_path" ] && [ -f "\$src_path" ]; then
@@ -1235,6 +1241,7 @@ if echo "\$url" | grep -q "raw.githubusercontent.com"; then
     grok-shim.sh) src_path="$REPO_ROOT/src/shim/grok-shim.sh" ;;
     grokgod-cache.sh) src_path="$REPO_ROOT/src/grokgod-cache.sh" ;;
     grokgod-run.sh) src_path="$REPO_ROOT/src/grokgod-run.sh" ;;
+    grokgod-pin.sh) src_path="$REPO_ROOT/src/grokgod-pin.sh" ;;
     *) src_path="" ;;
   esac
   if [ -n "\$src_path" ] && [ -f "\$src_path" ]; then

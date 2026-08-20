@@ -148,6 +148,27 @@ chmod +x "$TEST_GROKGOD_SRC/src/grokgod-cache.sh"
 
 CACHE_OUT="$(run_shim cache --clean)"
 echo "$CACHE_OUT" | grep -q "CACHE_SCRIPT_CALLED:--clean" || { echo "FAIL: grokgod-cache.sh not called properly ($CACHE_OUT)"; exit 1; }
+
+# 5c: Pin dispatch when grokgod-pin.sh missing
+set +e
+PIN_ERR="$(run_shim pin check 2>&1)"
+PIN_STATUS=$?
+set -eu
+if [ "$PIN_STATUS" -ne 1 ]; then
+  echo "FAIL: Expected exit code 1 when grokgod-pin.sh not found, got $PIN_STATUS"; exit 1
+fi
+echo "$PIN_ERR" | grep -q "grokgod pin not installed" || { echo "FAIL: Unexpected pin missing message ($PIN_ERR)"; exit 1; }
+
+# 5d: Pin dispatch when grokgod-pin.sh exists
+cat << 'EOF' > "$TEST_GROKGOD_SRC/src/grokgod-pin.sh"
+#!/bin/sh
+echo "PIN_SCRIPT_CALLED:$*"
+exit 0
+EOF
+chmod +x "$TEST_GROKGOD_SRC/src/grokgod-pin.sh"
+
+PIN_OUT="$(run_shim pin check --expect-default test)"
+echo "$PIN_OUT" | grep -q "PIN_SCRIPT_CALLED:check --expect-default test" || { echo "FAIL: grokgod-pin.sh not called properly ($PIN_OUT)"; exit 1; }
 echo "PASS: Test 5"
 
 # Test 6: No PATH recursion / Absolute path exec check
@@ -190,6 +211,7 @@ echo "$STATUS_PERSIST_OUT" | grep -q "^persist:" || { echo "FAIL: status output 
 echo "$STATUS_PERSIST_OUT" | grep -q "  0001-normalize-plugin-skill-join: applied" || { echo "FAIL: status output missing applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
 echo "$STATUS_PERSIST_OUT" | grep -q "  0002-plan-mode-extra-writable: applied" || { echo "FAIL: status output missing 0002 applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
 echo "$STATUS_PERSIST_OUT" | grep -q "  overlay-pin: wrapper" || { echo "FAIL: status output missing overlay-pin wrapper ($STATUS_PERSIST_OUT)"; exit 1; }
+echo "$STATUS_PERSIST_OUT" | grep -q "  weekly-pin: global-default" || { echo "FAIL: status output missing weekly-pin ($STATUS_PERSIST_OUT)"; exit 1; }
 
 # 7b: missing and missing
 rm -f "$TEST_GROKGOD_HOME/.source-version" "$TEST_GROKGOD_SRC/src/grokgod-run.sh"
@@ -198,6 +220,7 @@ echo "$STATUS_MISSING_OUT" | grep -q "^persist:" || { echo "FAIL: status output 
 echo "$STATUS_MISSING_OUT" | grep -q "  0001-normalize-plugin-skill-join: missing" || { echo "FAIL: status output missing patch missing state ($STATUS_MISSING_OUT)"; exit 1; }
 echo "$STATUS_MISSING_OUT" | grep -q "  0002-plan-mode-extra-writable: missing" || { echo "FAIL: status output missing 0002 missing state ($STATUS_MISSING_OUT)"; exit 1; }
 echo "$STATUS_MISSING_OUT" | grep -q "  overlay-pin: missing" || { echo "FAIL: status output missing overlay-pin missing state ($STATUS_MISSING_OUT)"; exit 1; }
+echo "$STATUS_MISSING_OUT" | grep -q "  weekly-pin: global-default" || { echo "FAIL: status output missing weekly-pin ($STATUS_MISSING_OUT)"; exit 1; }
 echo "PASS: Test 7"
 
 echo "Test 8: argv0 sessions — grok passthrough, grokgod wrapper"

@@ -30,6 +30,7 @@ jobs:
           sh tests/shim/test_shim.sh
           sh tests/cache/test_cache.sh
           sh tests/run/test_run.sh
+          sh tests/run/test_pin.sh
 
       - name: Run Install Test Suite
         env:

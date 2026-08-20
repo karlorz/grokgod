@@ -83,6 +83,7 @@ case "$cmd" in
     echo "  0001-normalize-plugin-skill-join: $patch_status"
     echo "  0002-plan-mode-extra-writable: $patch_status"
     echo "  overlay-pin: $overlay_status"
+    echo "  weekly-pin: global-default"
     exit 0
     ;;
   cache)
@@ -92,6 +93,16 @@ case "$cmd" in
       exec sh "$cache_script" "$@"
     else
       echo "grokgod cache not installed" >&2
+      exit 1
+    fi
+    ;;
+  pin)
+    shift || true
+    pin_script="$GROKGOD_SRC/src/grokgod-pin.sh"
+    if [ -f "$pin_script" ]; then
+      exec sh "$pin_script" "$@"
+    else
+      echo "grokgod pin not installed" >&2
       exit 1
     fi
     ;;
