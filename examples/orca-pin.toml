@@ -2,11 +2,12 @@
 # Copy to ~/.grokgod/pin/orca-pin.toml to enable.
 # GROK_CONFIG_PATH merges this ON TOP of config.toml at startup.
 # Allowlisted sections only: [models], [features], [toolset.bash],
-# [toolset.web_search], [shell_environment_policy], [model.<id>].
+# [toolset.web_search], [shell_environment_policy].
+# NOTE: [model.<id>] per-model sections are NOT in the overlay allowlist
+# (only the [models] table passes through). Use default_reasoning_effort
+# in [models] instead of [model.<id>].reasoning_effort.
 # Never add api_key/auth/mcp_servers/plugins/subagents here.
 
 [models]
 default = "flash-max"
-
-[model.flash-max]
-reasoning_effort = "max"
+default_reasoning_effort = "max"
