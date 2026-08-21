@@ -1276,7 +1276,7 @@ fi
 echo "PASS: Test (o) - Release-mode --force"
 
 # ─────────────────────────────────────────────────────────
-# Test (p): Source-mode no-op when stamp matches pin and binary present
+# Test (p): Source-mode no-op when stamp matches target and binary present
 # ─────────────────────────────────────────────────────────
 echo "Test (p): Source-mode no-op when stamp matches"
 setup_sandbox "test_p"
@@ -1291,12 +1291,46 @@ BIN_EOF
 chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
 
 PATCHSET_HASH="$(cat "$REPO_ROOT/patches"/*.patch | (shasum -a 256 2>/dev/null || sha256sum 2>/dev/null || cksum 2>/dev/null) | awk '{print $1}')"
-printf "SHA=d71f6e0c1f5acc5469e503e192fe14824e6f8c90\nPATCHSET=%s\nVERSION=d71f6e0c1f5acc5469e503e192fe14824e6f8c90\nMODE=source\n" "$PATCHSET_HASH" > "$FAKE_GROKGOD_HOME/.source-version"
+
+# Mock git wrapper to track invocations and simulate origin/main rev-parse
+GIT_INVOKED_FILE="$TEST_DIR/git_invoked.txt"
+rm -f "$GIT_INVOKED_FILE"
+cat << EOF > "$FAKE_BIN_SHADOW/git"
+#!/bin/sh
+set -eu
+echo "git \$*" >> "$GIT_INVOKED_FILE"
+dir=""
+if [ "\$1" = "-C" ]; then
+  dir="\$2"
+  shift 2
+fi
+
+if [ "\$1" = "fetch" ]; then
+  exit 0
+fi
+
+if [ "\$1" = "rev-parse" ]; then
+  case "\$*" in
+    *"origin/main"*)
+      echo "origin_main_target_sha_12345"
+      exit 0
+      ;;
+  esac
+fi
+
+if [ -n "\$dir" ]; then
+  exec /usr/bin/git -C "\$dir" "\$@"
+fi
+exec /usr/bin/git "\$@"
+EOF
+chmod +x "$FAKE_BIN_SHADOW/git"
+
+printf "SHA=origin_main_target_sha_12345\nPATCHSET=%s\nVERSION=origin_main_target_sha_12345\nMODE=source\n" "$PATCHSET_HASH" > "$FAKE_GROKGOD_HOME/.source-version"
 INITIAL_STAMP="$(cat "$FAKE_GROKGOD_HOME/.source-version")"
 
 rm -f "$CARGO_INVOKED_FILE"
 
-# Plain run without --force or --no-upgrade (simulates grok update with matching pin)
+# Plain run without --force or --no-upgrade (simulates grok update with matching resolved origin/main)
 UPDATE_OUT="$(
   PATH="$FAKE_BIN_SHADOW:$PATH" \
   HOME="$FAKE_HOME" \
@@ -1322,13 +1356,13 @@ fi
 echo "PASS: Test (p) - Source-mode no-op"
 
 # ─────────────────────────────────────────────────────────
-# Test (q): Source-mode default checkout targets PINNED_BASE_SHA, never origin/main
+# Test (q): Source-mode default checkout targets origin/main, never PINNED_BASE_SHA
 # ─────────────────────────────────────────────────────────
-echo "Test (q): Source-mode default checkout targets PINNED_BASE_SHA"
+echo "Test (q): Source-mode default checkout targets origin/main"
 setup_sandbox "test_q"
 reset_worktree
 
-# Mock git wrapper to track invocations and shim fetch/cat-file/checkout on CI fixture
+# Mock git wrapper to track invocations and shim fetch/rev-parse/checkout
 GIT_INVOKED_FILE="$TEST_DIR/git_invoked.txt"
 rm -f "$GIT_INVOKED_FILE"
 cat << EOF > "$FAKE_BIN_SHADOW/git"
@@ -1345,22 +1379,18 @@ if [ "\$1" = "fetch" ]; then
   exit 0
 fi
 
-if [ "\$1" = "cat-file" ]; then
-  # If checking commit existence for pinned base commit, succeed even if commit object is missing in fixture
+if [ "\$1" = "rev-parse" ]; then
   case "\$*" in
-    *"d71f6e0c1f5acc5469e503e192fe14824e6f8c90"*)
-      if [ -n "\$dir" ]; then
-        /usr/bin/git -C "\$dir" "\$@" 2>/dev/null && exit 0 || exit 0
-      else
-        /usr/bin/git "\$@" 2>/dev/null && exit 0 || exit 0
-      fi
+    *"origin/main"*)
+      echo "origin_main_resolved_sha_67890"
+      exit 0
       ;;
   esac
 fi
 
 if [ "\$1" = "checkout" ]; then
   case "\$*" in
-    *"d71f6e0c1f5acc5469e503e192fe14824e6f8c90"*)
+    *"origin_main_resolved_sha_67890"*)
       if [ -n "\$dir" ]; then
         /usr/bin/git -C "\$dir" "\$@" 2>/dev/null && exit 0 || exit 0
       else
@@ -1385,13 +1415,13 @@ BIN_DIR="$FAKE_BIN_DIR" \
 CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
 sh "$INSTALL_SCRIPT" --from-source >/dev/null
 
-if grep -q "checkout origin/main" "$GIT_INVOKED_FILE"; then
-  echo "FAIL: Test (q) - Git checked out origin/main instead of pinned base SHA!"; exit 1
+if grep -q "checkout d71f6e0c1f5acc5469e503e192fe14824e6f8c90" "$GIT_INVOKED_FILE"; then
+  echo "FAIL: Test (q) - Git checked out PINNED_BASE_SHA instead of resolved origin/main!"; exit 1
 fi
-grep -q "checkout d71f6e0c1f5acc5469e503e192fe14824e6f8c90" "$GIT_INVOKED_FILE" || {
-  echo "FAIL: Test (q) - Git did not checkout d71f6e0c1f5acc5469e503e192fe14824e6f8c90"; exit 1
+grep -q "checkout origin_main_resolved_sha_67890" "$GIT_INVOKED_FILE" || {
+  echo "FAIL: Test (q) - Git did not checkout resolved origin/main SHA origin_main_resolved_sha_67890"; exit 1
 }
-echo "PASS: Test (q) - Default checkout targets pin"
+echo "PASS: Test (q) - Default checkout targets origin/main"
 
 # ─────────────────────────────────────────────────────────
 # Test (r): Source-mode rebuilds when stamp SHA is different
@@ -1400,7 +1430,7 @@ echo "Test (r): Source-mode update when stamp SHA differs"
 setup_sandbox "test_r"
 reset_worktree
 
-# Mock git wrapper to track invocations and shim fetch/cat-file/checkout on CI fixture
+# Mock git wrapper to track invocations and shim fetch/rev-parse/cat-file/checkout on CI fixture
 GIT_INVOKED_FILE="$TEST_DIR/git_invoked.txt"
 rm -f "$GIT_INVOKED_FILE"
 cat << EOF > "$FAKE_BIN_SHADOW/git"
@@ -1415,6 +1445,15 @@ fi
 
 if [ "\$1" = "fetch" ]; then
   exit 0
+fi
+
+if [ "\$1" = "rev-parse" ]; then
+  case "\$*" in
+    *"origin/main"*)
+      echo "d71f6e0c1f5acc5469e503e192fe14824e6f8c90"
+      exit 0
+      ;;
+  esac
 fi
 
 if [ "\$1" = "cat-file" ]; then
@@ -1476,7 +1515,7 @@ echo "Test (s): Source-mode --force"
 setup_sandbox "test_s"
 reset_worktree
 
-# Mock git wrapper to track invocations and shim fetch/cat-file/checkout on CI fixture
+# Mock git wrapper to track invocations and shim fetch/rev-parse/cat-file/checkout on CI fixture
 GIT_INVOKED_FILE="$TEST_DIR/git_invoked.txt"
 rm -f "$GIT_INVOKED_FILE"
 cat << EOF > "$FAKE_BIN_SHADOW/git"
@@ -1491,6 +1530,15 @@ fi
 
 if [ "\$1" = "fetch" ]; then
   exit 0
+fi
+
+if [ "\$1" = "rev-parse" ]; then
+  case "\$*" in
+    *"origin/main"*)
+      echo "d71f6e0c1f5acc5469e503e192fe14824e6f8c90"
+      exit 0
+      ;;
+  esac
 fi
 
 if [ "\$1" = "cat-file" ]; then

@@ -63,12 +63,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config cmake libssl-dev
 
-      - name: Clone and checkout pinned grok-build
+      - name: Clone grok-build origin/main
         shell: bash
         run: |
           git clone --depth 1 https://github.com/xai-org/grok-build.git grok-build
-          git -C grok-build fetch --depth 1 origin d71f6e0c1f5acc5469e503e192fe14824e6f8c90
-          git -C grok-build checkout FETCH_HEAD
+          git -C grok-build rev-parse HEAD
 
       - name: Apply grokgod patches
         shell: bash

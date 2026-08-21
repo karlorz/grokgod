@@ -7,7 +7,7 @@ set -eu
 GROKGOD_REPO="${GROKGOD_REPO:-https://github.com/karlorz/grokgod}"
 GROKGOD_VERSION="${GROKGOD_VERSION:-}"
 
-# Pinned base commit for source builds (mirrors patches/README.md)
+# Base commit that source patches were authored against (mirrors patches/README.md)
 PINNED_BASE_SHA=d71f6e0c1f5acc5469e503e192fe14824e6f8c90
 
 GROKGOD_HOME="${GROKGOD_HOME:-$HOME/.grokgod}"
@@ -311,7 +311,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
         log_dry "Would checkout commit: git -C $GROK_BUILD_SRC checkout $VERSION_SHA"
       else
         log_dry "Would fetch: git -C $GROK_BUILD_SRC fetch origin"
-        log_dry "Would checkout pinned base: git -C $GROK_BUILD_SRC checkout $PINNED_BASE_SHA"
+        log_dry "Would checkout origin/main: git -C $GROK_BUILD_SRC checkout origin/main"
       fi
     else
       log_dry "Skipping git fetch/checkout (--no-upgrade)"
@@ -608,18 +608,40 @@ if [ "$MODE" = "source" ]; then
     exit 1
   fi
 
-  # Early no-op check: if stamp matches intended target and binary exists,
-  # skip fetch, checkout, patch, and build without requiring git object resolution.
-  TARGET_SHA="${VERSION_SHA:-$PINNED_BASE_SHA}"
+  TARGET_SHA=""
+  if [ "$NO_UPGRADE" -eq 0 ]; then
+    log_step "Fetching upstream changes in $GROK_BUILD_SRC..."
+    git -C "$GROK_BUILD_SRC" fetch origin || {
+      log_err "Failed to fetch from origin in $GROK_BUILD_SRC"
+      exit 1
+    }
+
+    if [ -n "$VERSION_SHA" ]; then
+      log_info "Verifying commit $VERSION_SHA exists..."
+      if ! git -C "$GROK_BUILD_SRC" cat-file -e "${VERSION_SHA}^{commit}" 2>/dev/null; then
+        log_err "Commit '$VERSION_SHA' does not exist in $GROK_BUILD_SRC"
+        exit 1
+      fi
+      TARGET_SHA="$(git -C "$GROK_BUILD_SRC" rev-parse "${VERSION_SHA}^{commit}" 2>/dev/null || echo "$VERSION_SHA")"
+    else
+      TARGET_SHA="$(git -C "$GROK_BUILD_SRC" rev-parse origin/main 2>/dev/null || true)"
+      if [ -z "$TARGET_SHA" ]; then
+        log_err "Failed to resolve origin/main in $GROK_BUILD_SRC"
+        exit 1
+      fi
+    fi
+  else
+    TARGET_SHA="$(git -C "$GROK_BUILD_SRC" rev-parse HEAD 2>/dev/null || echo "unknown")"
+  fi
+
+  NOW_PATCHSET="$(compute_patchset_id)"
   EARLY_NOOP=0
   if [ "$FORCE" -eq 0 ] && [ -x "$GROKGOD_HOME/bin/grok" ] && [ -f "$GROKGOD_HOME/.source-version" ]; then
     STAMP_SHA="$(grep '^SHA=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
     STAMP_PATCHSET="$(grep '^PATCHSET=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
-    NOW_PATCHSET="$(compute_patchset_id)"
     if [ "$NO_UPGRADE" -eq 1 ]; then
-      CURRENT_SHA="$(git -C "$GROK_BUILD_SRC" rev-parse HEAD 2>/dev/null || echo "unknown")"
-      if [ "$STAMP_SHA" = "$CURRENT_SHA" ] && [ "$STAMP_PATCHSET" = "$NOW_PATCHSET" ]; then
-        log_info "Matching stamp found (SHA=$CURRENT_SHA, PATCHSET=$NOW_PATCHSET) and binary exists."
+      if [ "$STAMP_SHA" = "$TARGET_SHA" ] && [ "$STAMP_PATCHSET" = "$NOW_PATCHSET" ]; then
+        log_info "Matching stamp found (SHA=$TARGET_SHA, PATCHSET=$NOW_PATCHSET) and binary exists."
         log_info "Fast-path: skipping cargo build, updating launchers only."
         EARLY_NOOP=1
       fi
@@ -633,61 +655,13 @@ if [ "$MODE" = "source" ]; then
     NEED_BUILD=0
   else
     if [ "$NO_UPGRADE" -eq 0 ]; then
-      log_step "Fetching upstream changes in $GROK_BUILD_SRC..."
-      git -C "$GROK_BUILD_SRC" fetch origin || {
-        log_err "Failed to fetch from origin in $GROK_BUILD_SRC"
+      log_info "Checking out target commit $TARGET_SHA..."
+      git -C "$GROK_BUILD_SRC" checkout "$TARGET_SHA" || {
+        log_err "Failed to checkout $TARGET_SHA"
         exit 1
       }
-
-      if [ -n "$VERSION_SHA" ]; then
-        log_info "Verifying commit $VERSION_SHA exists..."
-        if ! git -C "$GROK_BUILD_SRC" cat-file -e "${VERSION_SHA}^{commit}" 2>/dev/null; then
-          log_err "Commit '$VERSION_SHA' does not exist in $GROK_BUILD_SRC"
-          exit 1
-        fi
-        log_info "Checking out $VERSION_SHA..."
-        git -C "$GROK_BUILD_SRC" checkout "$VERSION_SHA" || {
-          log_err "Failed to checkout $VERSION_SHA"
-          exit 1
-        }
-      else
-        log_info "Verifying pinned base commit $PINNED_BASE_SHA exists..."
-        if ! git -C "$GROK_BUILD_SRC" cat-file -e "${PINNED_BASE_SHA}^{commit}" 2>/dev/null; then
-          log_err "Pinned commit '$PINNED_BASE_SHA' does not exist in $GROK_BUILD_SRC"
-          exit 1
-        fi
-        log_info "Checking out pinned base commit $PINNED_BASE_SHA..."
-        git -C "$GROK_BUILD_SRC" checkout "$PINNED_BASE_SHA" || {
-          log_err "Failed to checkout $PINNED_BASE_SHA"
-          exit 1
-        }
-
-        # Upstream-moved hint: check if origin/main is ahead of the pinned base
-        ahead_count="$(git -C "$GROK_BUILD_SRC" rev-list --count "${PINNED_BASE_SHA}..origin/main" 2>/dev/null || true)"
-        if [ -n "$ahead_count" ] && [ "$ahead_count" -gt 0 ] 2>/dev/null; then
-          echo "note: upstream origin/main moved ${ahead_count} commit(s) past the pin; see docs/RUNBOOK-session-start.md §2; bump base with --version <sha> if intended"
-        fi
-      fi
     fi
-
-    CURRENT_SHA="$(git -C "$GROK_BUILD_SRC" rev-parse HEAD 2>/dev/null || echo "unknown")"
-    CURRENT_PATCHSET="$(compute_patchset_id)"
-
     NEED_BUILD=1
-    if [ "$FORCE" -eq 0 ] && [ -x "$GROKGOD_HOME/bin/grok" ] && [ -f "$GROKGOD_HOME/.source-version" ]; then
-      STAMP_SHA="$(grep '^SHA=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
-      STAMP_PATCHSET="$(grep '^PATCHSET=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
-      if [ "$NO_UPGRADE" -eq 1 ]; then
-        if [ "$STAMP_SHA" = "$CURRENT_SHA" ] && [ "$STAMP_PATCHSET" = "$CURRENT_PATCHSET" ]; then
-          log_info "Matching stamp found (SHA=$CURRENT_SHA, PATCHSET=$CURRENT_PATCHSET) and binary exists."
-          log_info "Fast-path: skipping cargo build, updating launchers only."
-          NEED_BUILD=0
-        fi
-      elif [ "$STAMP_SHA" = "$CURRENT_SHA" ] && [ "$STAMP_PATCHSET" = "$CURRENT_PATCHSET" ]; then
-        log_info "Already up to date (SHA=$CURRENT_SHA, PATCHSET=$CURRENT_PATCHSET)"
-        NEED_BUILD=0
-      fi
-    fi
   fi
 
   if [ "$NEED_BUILD" -eq 1 ]; then
@@ -790,9 +764,47 @@ if [ "$MODE" = "source" ]; then
     log_info "Binary installed successfully."
 
     CURRENT_SHA="$(git -C "$GROK_BUILD_SRC" rev-parse HEAD 2>/dev/null || echo "unknown")"
-    CURRENT_PATCHSET="$(compute_patchset_id)"
-    printf "SHA=%s\nPATCHSET=%s\nVERSION=%s\nMODE=source\n" "$CURRENT_SHA" "$CURRENT_PATCHSET" "$CURRENT_SHA" > "$GROKGOD_HOME/.source-version"
-    log_info "Stamped version to $GROKGOD_HOME/.source-version (SHA=$CURRENT_SHA, PATCHSET=$CURRENT_PATCHSET)"
+    printf "SHA=%s\nPATCHSET=%s\nVERSION=%s\nMODE=source\n" "$CURRENT_SHA" "$NOW_PATCHSET" "$CURRENT_SHA" > "$GROKGOD_HOME/.source-version"
+    log_info "Stamped version to $GROKGOD_HOME/.source-version (SHA=$CURRENT_SHA, PATCHSET=$NOW_PATCHSET)"
+  fi
+
+  # Sync runtime files from a grokgod checkout into GROKGOD_HOME/src.
+  # PATH `grok update` execs $GROKGOD_HOME/src/install.sh; skip self-copy
+  # (macOS `cp src src` exits 1: "are identical (not copied)").
+  if [ -f "$SCRIPT_DIR/src/shim/grok-shim.sh" ] && [ -d "$SCRIPT_DIR/patches" ] \
+      && [ "$SCRIPT_DIR" != "$GROKGOD_HOME/src" ]; then
+    mkdir -p "$GROKGOD_HOME/src"
+    cp "$SCRIPT_DIR/install.sh" "$GROKGOD_HOME/src/install.sh"
+
+    mkdir -p "$GROKGOD_HOME/src/patches"
+    for pf in "$SCRIPT_DIR"/patches/*.patch; do
+      if [ -f "$pf" ]; then
+        cp "$pf" "$GROKGOD_HOME/src/patches/"
+      fi
+    done
+    if [ -f "$SCRIPT_DIR/patches/README.md" ]; then
+      cp "$SCRIPT_DIR/patches/README.md" "$GROKGOD_HOME/src/patches/README.md"
+    fi
+
+    mkdir -p "$GROKGOD_HOME/src/src" "$GROKGOD_HOME/src/src/shim"
+    for sf in "$SCRIPT_DIR"/src/*.sh; do
+      if [ -f "$sf" ]; then
+        cp "$sf" "$GROKGOD_HOME/src/src/"
+      fi
+    done
+    chmod +x "$GROKGOD_HOME/src/src"/*.sh 2>/dev/null || true
+    if [ -f "$SCRIPT_DIR/src/shim/grok-shim.sh" ]; then
+      cp "$SCRIPT_DIR/src/shim/grok-shim.sh" "$GROKGOD_HOME/src/src/shim/grok-shim.sh"
+      chmod +x "$GROKGOD_HOME/src/src/shim/grok-shim.sh"
+    fi
+
+    mkdir -p "$GROKGOD_HOME/src/examples"
+    for ef in "$SCRIPT_DIR"/examples/*.toml; do
+      if [ -f "$ef" ]; then
+        cp "$ef" "$GROKGOD_HOME/src/examples/"
+      fi
+    done
+    log_info "Synced runtime files to $GROKGOD_HOME/src"
   fi
 
   if [ -f "$SCRIPT_DIR/src/shim/grok-shim.sh" ]; then

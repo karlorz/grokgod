@@ -46,9 +46,10 @@ handles reverse/re-apply on update.
 ## 3. Live state sanity (every session, 10 seconds)
 
 ```sh
-grok --version                          # expect: grok 1.0.5 (d71f6e0c)
-                                        # full SHA in ~/.grokgod/.source-version:
-                                        #   d71f6e0c1f5acc5469e503e192fe14824e6f8c90
+grok --version                          # expect: grok 1.0.6 (<origin/main short SHA>)
+                                        # full SHA in ~/.grokgod/.source-version matches
+                                        # git -C ~/Desktop/code/grok-build rev-parse origin/main
+                                        # (authorship pin in patches/README.md is not the update target)
 grokgod status | head -6                # shim ownership + source-version
 ls -la ~/.local/bin/grok ~/.local/bin/grok.orig
 ```

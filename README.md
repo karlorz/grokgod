@@ -51,22 +51,25 @@ and future per-job pins.
 
 ```sh
 sh install.sh                                                # release mode: download prebuilt binary + shims
-sh install.sh --from-source                                  # source mode: fetch + apply patches + rebuild
-sh install.sh --no-upgrade                                   # re-apply / restore launchers, skip download/build
+sh install.sh --from-source                                  # source mode: fetch latest origin/main + apply patches + rebuild
+sh install.sh --from-source --version <sha>                  # source mode: checkout specific tag/SHA + apply patches + rebuild
+sh install.sh --no-upgrade                                   # re-apply / restore launchers, skip fetch/checkout/build
 sh install.sh --force                                        # rebuild / re-download even when already current
 sh install.sh --uninstall                                    # restore grok.orig
-grok update                                                  # check latest; no-op "Already up to date" when current
-                                                             # (release: compares release tag; source: SHA+patchset)
+grok update                                                  # check latest upstream origin/main; re-apply patches + rebuild; no-op "Already up to date" when current
+                                                             # (release: compares release tag; source: resolved origin/main SHA+patchset)
 grok status                                                  # shim ownership + .source-version
 grokgod cache report                                         # disk / target size + ~/.grok/sessions age buckets
 grokgod sessions prune                                       # dry-run old sessions; --yes --max-age 7d uses grok sessions delete
 grokgod pin check [--expect-default M] [--expect-no-overlay] [--expect-orca-pin M]  # fail-closed pin precheck assertion
 ```
 
-Source mode pins base `d71f6e0c1f5acc5469e503e192fe14824e6f8c90` (never silently tracks
-`origin/main`); `grok update --version <sha>` is the deliberate base-bump path.
+Source mode tracks upstream `origin/main` on bare `grok update` (fetching latest,
+re-applying persist patches, and rebuilding), mirroring ClawGod's `@latest`
+lifecycle. `--version <sha>` locks to a specific commit. `--no-upgrade` skips
+fetch and checkout to re-apply / restore launchers on the current tree.
 
-Pinned grok-build SHA: `d71f6e0c1f5acc5469e503e192fe14824e6f8c90`. Session-start
+Patch authorship base SHA: `d71f6e0c1f5acc5469e503e192fe14824e6f8c90` (`patches/README.md`). Session-start
 checks: [docs/RUNBOOK-session-start.md](docs/RUNBOOK-session-start.md) (auto-load
 via [AGENTS.md](AGENTS.md)). Persist inventory (keep vs phase-out):
 [docs/patch-inventory.md](docs/patch-inventory.md).
@@ -122,7 +125,8 @@ Issue catalog: `~/wiki/projects/grokgod/requirements/2026-08-18-grok-build-wiki-
 
 ## Status
 
-v1 live on this host (2026-08-18): `~/.local/bin/grok` and `$GROK_HOME/bin/grok` are the shim (Orca/agentCommand `grok` is covered because we own `$GROK_HOME/bin/grok` as well as `~/.local/bin/grok`);
-`~/.grokgod/bin/grok` is the patched binary (`grok 1.0.5 (d71f6e0c)`).
+v1 live on this host (2026-08-21): `~/.local/bin/grok` and `$GROK_HOME/bin/grok` are the shim (Orca/agentCommand `grok` is covered because we own `$GROK_HOME/bin/grok` as well as `~/.local/bin/grok`);
+`~/.grokgod/bin/grok` is the patched binary (`grok 1.0.6 (19d42e35)`).
+Bare `grok update` tracks grok-build `origin/main` and re-applies persist patches.
 Post-v1 overlay pin (`grokgod run`) is implemented; Saturday schedulers stay
 OFF unless you pick a path.
