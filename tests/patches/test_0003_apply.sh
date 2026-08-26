@@ -2,13 +2,20 @@
 set -eu
 
 # test_0003_apply.sh: Verify that patch 0003-session-persist-single.patch
-# exists and applies cleanly on top of 0001 and 0002 against base commit c2ad97f8.
+# exists and applies cleanly on top of 0001 and 0002 against PINNED_BASE_SHA.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PATCH_0001="$REPO_ROOT/patches/0001-normalize-plugin-skill-join.patch"
 PATCH_0002="$REPO_ROOT/patches/0002-plan-mode-extra-writable.patch"
 PATCH_0003="$REPO_ROOT/patches/0003-session-persist-single.patch"
+INSTALL_SCRIPT="$REPO_ROOT/install.sh"
+PIN_SHA="$(grep '^PINNED_BASE_SHA=' "$INSTALL_SCRIPT" | cut -d= -f2- | tr -d '"' | tr -d "'" || true)"
+if [ -z "$PIN_SHA" ]; then
+  echo "FAIL: PINNED_BASE_SHA missing in $INSTALL_SCRIPT" >&2
+  exit 1
+fi
+PIN_SHORT="$(printf '%s' "$PIN_SHA" | cut -c1-8)"
 
 REAL_GROK_BUILD="${REAL_GROK_BUILD:-/Users/karlchow/Desktop/code/grok-build}"
 if [ "${CI:-0}" = "1" ]; then
@@ -45,11 +52,10 @@ trap cleanup EXIT INT TERM
 
 # Setup GB_WORKTREE fixture
 if [ -d "$REAL_GROK_BUILD/.git" ]; then
-  echo "Creating test worktree from $REAL_GROK_BUILD at commit c2ad97f8..."
-  git -C "$REAL_GROK_BUILD" worktree add --detach "$GB_WORKTREE" c2ad97f8 >/dev/null 2>&1
+  echo "Creating test worktree from $REAL_GROK_BUILD at commit $PIN_SHORT..."
+  git -C "$REAL_GROK_BUILD" worktree add --detach "$GB_WORKTREE" "$PIN_SHA" >/dev/null 2>&1
 else
   echo "Building fixture git repository for CI..."
-  PIN_SHA="c2ad97f87aea4303b6000a2c22128bc91ee76c9b"
   RAW_BASE="https://raw.githubusercontent.com/xai-org/grok-build/${PIN_SHA}"
   PATCH_PATHS="$(
     grep -h '^diff --git ' "$REPO_ROOT"/patches/*.patch 2>/dev/null \
@@ -68,7 +74,7 @@ else
   git -C "$GB_WORKTREE" config user.name "CI"
   git -C "$GB_WORKTREE" config user.email "ci@example.com"
   git -C "$GB_WORKTREE" add .
-  git -C "$GB_WORKTREE" commit -m "initial c2ad97f8 fixture" >/dev/null 2>&1
+  git -C "$GB_WORKTREE" commit -m "initial $PIN_SHORT fixture" >/dev/null 2>&1
 fi
 
 # 3. Test sequential apply: 0001 -> 0002 -> 0003

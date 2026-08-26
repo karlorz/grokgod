@@ -18,6 +18,13 @@ if [ ! -f "$INSTALL_SCRIPT" ]; then
   exit 1
 fi
 
+PIN_SHA="$(grep '^PINNED_BASE_SHA=' "$INSTALL_SCRIPT" | cut -d= -f2- | tr -d '"' | tr -d "'" || true)"
+if [ -z "$PIN_SHA" ]; then
+  echo "FAIL: PINNED_BASE_SHA missing in $INSTALL_SCRIPT" >&2
+  exit 1
+fi
+PIN_SHORT="$(printf '%s' "$PIN_SHA" | cut -c1-8)"
+
 TMP_ROOT="$(mktemp -d)"
 GB_WORKTREE="$TMP_ROOT/gb_worktree"
 
@@ -32,13 +39,12 @@ trap cleanup EXIT INT TERM
 
 # Setup GB_WORKTREE fixture
 if [ -d "$REAL_GROK_BUILD/.git" ]; then
-  echo "Creating test worktree from $REAL_GROK_BUILD at commit c2ad97f8..."
-  git -C "$REAL_GROK_BUILD" worktree add --detach "$GB_WORKTREE" c2ad97f8 >/dev/null 2>&1
+  echo "Creating test worktree from $REAL_GROK_BUILD at commit $PIN_SHORT..."
+  git -C "$REAL_GROK_BUILD" worktree add --detach "$GB_WORKTREE" "$PIN_SHA" >/dev/null 2>&1
 else
   # CI or standalone fixture without local grok-build clone.
   # Fetch every path grokgod patches touch so `git apply --check` 0001+0002 works.
   echo "Building fixture git repository for CI..."
-  PIN_SHA="c2ad97f87aea4303b6000a2c22128bc91ee76c9b"
   RAW_BASE="https://raw.githubusercontent.com/xai-org/grok-build/${PIN_SHA}"
   PATCH_PATHS="$(
     grep -h '^diff --git ' "$REPO_ROOT"/patches/*.patch 2>/dev/null \
@@ -60,7 +66,7 @@ else
   git -C "$GB_WORKTREE" config user.name "CI"
   git -C "$GB_WORKTREE" config user.email "ci@example.com"
   git -C "$GB_WORKTREE" add .
-  git -C "$GB_WORKTREE" commit -m "initial c2ad97f8 fixture" >/dev/null 2>&1
+  git -C "$GB_WORKTREE" commit -m "initial $PIN_SHORT fixture" >/dev/null 2>&1
 fi
 
 echo "=== Running install.sh Test Suite ==="
@@ -103,7 +109,7 @@ EOF
 # Helper to reset gb_worktree to clean HEAD
 reset_worktree() {
   if [ -d "$REAL_GROK_BUILD/.git" ]; then
-    git -C "$GB_WORKTREE" reset --hard c2ad97f8 >/dev/null 2>&1
+    git -C "$GB_WORKTREE" reset --hard "$PIN_SHA" >/dev/null 2>&1
   else
     git -C "$GB_WORKTREE" reset --hard HEAD >/dev/null 2>&1
   fi
@@ -1415,7 +1421,7 @@ BIN_DIR="$FAKE_BIN_DIR" \
 CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
 sh "$INSTALL_SCRIPT" --from-source >/dev/null
 
-if grep -q "checkout c2ad97f87aea4303b6000a2c22128bc91ee76c9b" "$GIT_INVOKED_FILE"; then
+if grep -q "checkout $PIN_SHA" "$GIT_INVOKED_FILE"; then
   echo "FAIL: Test (q) - Git checked out PINNED_BASE_SHA instead of resolved origin/main!"; exit 1
 fi
 grep -q "checkout origin_main_resolved_sha_67890" "$GIT_INVOKED_FILE" || {
@@ -1450,7 +1456,7 @@ fi
 if [ "\$1" = "rev-parse" ]; then
   case "\$*" in
     *"origin/main"*)
-      echo "c2ad97f87aea4303b6000a2c22128bc91ee76c9b"
+      echo "$PIN_SHA"
       exit 0
       ;;
   esac
@@ -1458,7 +1464,7 @@ fi
 
 if [ "\$1" = "cat-file" ]; then
   case "\$*" in
-    *"c2ad97f87aea4303b6000a2c22128bc91ee76c9b"*)
+    *"$PIN_SHA"*)
       if [ -n "\$dir" ]; then
         /usr/bin/git -C "\$dir" "\$@" 2>/dev/null && exit 0 || exit 0
       else
@@ -1470,7 +1476,7 @@ fi
 
 if [ "\$1" = "checkout" ]; then
   case "\$*" in
-    *"c2ad97f87aea4303b6000a2c22128bc91ee76c9b"*)
+    *"$PIN_SHA"*)
       if [ -n "\$dir" ]; then
         /usr/bin/git -C "\$dir" "\$@" 2>/dev/null && exit 0 || exit 0
       else
@@ -1535,7 +1541,7 @@ fi
 if [ "\$1" = "rev-parse" ]; then
   case "\$*" in
     *"origin/main"*)
-      echo "c2ad97f87aea4303b6000a2c22128bc91ee76c9b"
+      echo "$PIN_SHA"
       exit 0
       ;;
   esac
@@ -1543,7 +1549,7 @@ fi
 
 if [ "\$1" = "cat-file" ]; then
   case "\$*" in
-    *"c2ad97f87aea4303b6000a2c22128bc91ee76c9b"*)
+    *"$PIN_SHA"*)
       if [ -n "\$dir" ]; then
         /usr/bin/git -C "\$dir" "\$@" 2>/dev/null && exit 0 || exit 0
       else
@@ -1555,7 +1561,7 @@ fi
 
 if [ "\$1" = "checkout" ]; then
   case "\$*" in
-    *"c2ad97f87aea4303b6000a2c22128bc91ee76c9b"*)
+    *"$PIN_SHA"*)
       if [ -n "\$dir" ]; then
         /usr/bin/git -C "\$dir" "\$@" 2>/dev/null && exit 0 || exit 0
       else
@@ -1581,7 +1587,7 @@ BIN_EOF
 chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
 
 PATCHSET_HASH="$(cat "$REPO_ROOT/patches"/*.patch | (shasum -a 256 2>/dev/null || sha256sum 2>/dev/null || cksum 2>/dev/null) | awk '{print $1}')"
-printf "SHA=c2ad97f87aea4303b6000a2c22128bc91ee76c9b\nPATCHSET=%s\nVERSION=c2ad97f87aea4303b6000a2c22128bc91ee76c9b\nMODE=source\n" "$PATCHSET_HASH" > "$FAKE_GROKGOD_HOME/.source-version"
+printf "SHA=$PIN_SHA\nPATCHSET=%s\nVERSION=$PIN_SHA\nMODE=source\n" "$PATCHSET_HASH" > "$FAKE_GROKGOD_HOME/.source-version"
 
 rm -f "$CARGO_INVOKED_FILE"
 
