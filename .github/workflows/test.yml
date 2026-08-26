@@ -32,6 +32,8 @@ jobs:
           sh tests/run/test_run.sh
           sh tests/run/test_pin.sh
           sh tests/run/test_orca_pin.sh
+          sh tests/sessions/test_sessions.sh
+          sh tests/patches/test_0003_apply.sh
 
       - name: Run Install Test Suite
         env:

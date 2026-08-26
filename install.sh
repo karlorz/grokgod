@@ -327,9 +327,24 @@ if [ "$DRY_RUN" -eq 1 ]; then
     fi
 
     if [ -n "$patch_list" ]; then
+      # If working tree is clean, test cumulative patching in a temporary detached worktree
+      dry_tmp=""
+      if [ -d "$GROK_BUILD_SRC/.git" ]; then
+        dry_tmp="$(mktemp -d /tmp/grokgod-dry-XXXXXX 2>/dev/null || true)"
+        if [ -n "$dry_tmp" ]; then
+          rmdir "$dry_tmp" 2>/dev/null || true
+          if ! git -C "$GROK_BUILD_SRC" worktree add --detach "$dry_tmp" HEAD >/dev/null 2>&1; then
+            rm -rf "$dry_tmp" 2>/dev/null || true
+            dry_tmp=""
+          fi
+        fi
+      fi
+
       for p in $patch_list; do
         log_dry "Would test and apply patch: $p"
-        if git -C "$GROK_BUILD_SRC" apply --check "$p" 2>/dev/null; then
+        if [ -n "$dry_tmp" ] && git -C "$dry_tmp" apply --check "$p" 2>/dev/null && git -C "$dry_tmp" apply "$p" 2>/dev/null; then
+          log_dry "  -> patch $(basename "$p") applies cleanly"
+        elif git -C "$GROK_BUILD_SRC" apply --check "$p" 2>/dev/null; then
           log_dry "  -> patch $(basename "$p") applies cleanly"
         elif git -C "$GROK_BUILD_SRC" apply -R --check "$p" 2>/dev/null; then
           log_dry "  -> patch $(basename "$p") is already applied (reversibly clean)"
@@ -337,6 +352,10 @@ if [ "$DRY_RUN" -eq 1 ]; then
           log_warn "  -> patch $(basename "$p") dry-run check failed against current working tree"
         fi
       done
+
+      if [ -n "$dry_tmp" ]; then
+        git -C "$dry_tmp" worktree remove --force "$dry_tmp" >/dev/null 2>&1 || git -C "$GROK_BUILD_SRC" worktree remove --force "$dry_tmp" >/dev/null 2>&1 || rm -rf "$dry_tmp" 2>/dev/null || true
+      fi
     else
       log_dry "No patches found; would build stock"
     fi
@@ -677,12 +696,24 @@ if [ "$MODE" = "source" ]; then
         done
       fi
 
-      if [ -n "$patch_files" ]; then
-        for p in $patch_files; do
+      # Build reversed patch list (LIFO) for clean unapplying
+      rev_patch_files=""
+      for p in $patch_files; do
+        rev_patch_files="$p $rev_patch_files"
+      done
+
+      if [ -n "$rev_patch_files" ]; then
+        for p in $rev_patch_files; do
           if ! git -C "$GROK_BUILD_SRC" apply -R --check "$p" 2>/dev/null; then
             can_reverse=0
             break
           fi
+          # Speculatively apply reverse to test subsequent patches
+          git -C "$GROK_BUILD_SRC" apply -R "$p" 2>/dev/null || true
+        done
+        # Restore working tree by re-applying forward before real reversal logic
+        for p in $patch_files; do
+          git -C "$GROK_BUILD_SRC" apply "$p" 2>/dev/null || true
         done
       else
         can_reverse=0
@@ -690,7 +721,7 @@ if [ "$MODE" = "source" ]; then
 
       if [ "$can_reverse" -eq 1 ]; then
         log_info "Previous grokgod patches detected in working tree; reversing them..."
-        for p in $patch_files; do
+        for p in $rev_patch_files; do
           git -C "$GROK_BUILD_SRC" apply -R "$p" || {
             log_err "Failed to reverse prior patch $p"
             exit 1
@@ -725,9 +756,6 @@ if [ "$MODE" = "source" ]; then
           log_err "Existing binary in $GROKGOD_HOME/bin/grok is untouched."
           exit 1
         fi
-      done
-
-      for p in $patch_files; do
         log_info "Applying patch: $(basename "$p")"
         if ! git -C "$GROK_BUILD_SRC" apply "$p"; then
           log_err "Failed to apply patch $(basename "$p"). Aborting (fail-closed)."
