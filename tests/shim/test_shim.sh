@@ -49,6 +49,7 @@ run_shim() {
   HOME="$TEST_HOME" \
   GROKGOD_HOME="$TEST_GROKGOD_HOME" \
   GROKGOD_SRC="$TEST_GROKGOD_SRC" \
+  GROK_BUILD_SRC="${TEST_GROK_BUILD_SRC:-$TMP_DIR/nonexistent_grok_build}" \
   TMP_DIR="$TMP_DIR" \
   sh "$SHIM_SRC" "$@"
 }
@@ -108,6 +109,7 @@ echo "$STATUS_OUT" | grep -q "target binary exists: yes" || { echo "FAIL: status
 echo "$STATUS_OUT" | grep -q "source-version: v1.0.0-test" || { echo "FAIL: status output missing source-version"; exit 1; }
 echo "$STATUS_OUT" | grep -q "~/.local/bin/grok is grokgod shim: yes" || { echo "FAIL: status output missing shim check"; exit 1; }
 echo "$STATUS_OUT" | grep -q "free disk:" || { echo "FAIL: status output missing free disk"; exit 1; }
+echo "$STATUS_OUT" | grep -q "source-drift: unknown" || { echo "FAIL: status output missing source-drift: unknown ($STATUS_OUT)"; exit 1; }
 echo "PASS: Test 3"
 
 # Test 4: Missing binary check
@@ -263,5 +265,120 @@ GOD_SESS_OUT="$(
 echo "$GOD_SESS_OUT" | grep -q "SESSIONS_WRAPPER:prune --help" || { echo "FAIL: grokgod sessions missed wrapper ($GOD_SESS_OUT)"; exit 1; }
 echo "$GOD_SESS_OUT" | grep -q "FAKE_BIN_CALLED" && { echo "FAIL: grokgod sessions hit grok binary ($GOD_SESS_OUT)"; exit 1; }
 echo "PASS: Test 8"
+
+# Test 9: Source drift status and --version / -V warning
+echo "Test 9: Source drift detection"
+FAKE_REPO="$TMP_DIR/fake_grok_build"
+mkdir -p "$FAKE_REPO"
+git init -q "$FAKE_REPO"
+git -C "$FAKE_REPO" config user.email "test@example.com"
+git -C "$FAKE_REPO" config user.name "Test User"
+git -C "$FAKE_REPO" config commit.gpgsign false
+
+mkdir -p "$FAKE_REPO/crates/codegen/xai-grok-pager-bin"
+cat << 'EOF' > "$FAKE_REPO/crates/codegen/xai-grok-pager-bin/Cargo.toml"
+[package]
+name = "xai-grok-pager-bin"
+version = "1.0.8"
+EOF
+git -C "$FAKE_REPO" add .
+git -C "$FAKE_REPO" commit -q -m "Commit 1 (1.0.8)"
+SHA1="$(git -C "$FAKE_REPO" rev-parse HEAD)"
+SHA1_SHORT="$(printf "%.8s" "$SHA1")"
+
+# Create a second commit with updated Cargo.toml version
+cat << 'EOF' > "$FAKE_REPO/crates/codegen/xai-grok-pager-bin/Cargo.toml"
+[package]
+name = "xai-grok-pager-bin"
+version = "1.0.10"
+EOF
+git -C "$FAKE_REPO" add .
+git -C "$FAKE_REPO" commit -q -m "Commit 2 (1.0.10)"
+SHA2="$(git -C "$FAKE_REPO" rev-parse HEAD)"
+SHA2_SHORT="$(printf "%.8s" "$SHA2")"
+
+# Set up fake origin/main ref
+git -C "$FAKE_REPO" update-ref refs/remotes/origin/main "$SHA2"
+
+# 9a: Upstream SHA equals stamp SHA -> current (<shortsha>)
+printf "SHA=%s\nPATCHSET=test\nVERSION=test\nMODE=source\n" "$SHA2" > "$TEST_GROKGOD_HOME/.source-version"
+OUT_CURRENT="$(TEST_GROK_BUILD_SRC="$FAKE_REPO" run_shim status)"
+echo "$OUT_CURRENT" | grep -q "source-drift: current ($SHA2_SHORT)" || {
+  echo "FAIL: Expected 'source-drift: current ($SHA2_SHORT)', got: $OUT_CURRENT"
+  exit 1
+}
+
+# Also verify --version has clean stderr when current
+OUT_VER_CURRENT="$(TEST_GROK_BUILD_SRC="$FAKE_REPO" run_shim --version 2>&1)"
+echo "$OUT_VER_CURRENT" | grep -q "FAKE_BIN_CALLED" || { echo "FAIL: --version did not call binary"; exit 1; }
+echo "$OUT_VER_CURRENT" | grep -q "source behind" && { echo "FAIL: --version should not warn when current"; exit 1; }
+
+# 9b: Installed stamp is ancestor of origin/main -> behind
+printf "SHA=%s\nPATCHSET=test\nVERSION=test\nMODE=source\n" "$SHA1" > "$TEST_GROKGOD_HOME/.source-version"
+OUT_BEHIND="$(TEST_GROK_BUILD_SRC="$FAKE_REPO" run_shim status)"
+echo "$OUT_BEHIND" | grep -q "source-drift: behind" || {
+  echo "FAIL: Expected 'source-drift: behind', got: $OUT_BEHIND"
+  exit 1
+}
+echo "$OUT_BEHIND" | grep -q "installed: 1.0.8 ($SHA1_SHORT)" || {
+  echo "FAIL: Expected installed: 1.0.8 ($SHA1_SHORT), got: $OUT_BEHIND"
+  exit 1
+}
+echo "$OUT_BEHIND" | grep -q "origin/main: 1.0.10 ($SHA2_SHORT)" || {
+  echo "FAIL: Expected origin/main: 1.0.10 ($SHA2_SHORT), got: $OUT_BEHIND"
+  exit 1
+}
+echo "$OUT_BEHIND" | grep -q "hint: grok update" || {
+  echo "FAIL: Expected hint: grok update, got: $OUT_BEHIND"
+  exit 1
+}
+
+# 9c: --version / -V warning when behind
+VER_ERR_FILE="$TMP_DIR/ver_err.txt"
+VER_OUT="$(TEST_GROK_BUILD_SRC="$FAKE_REPO" run_shim --version 2>"$VER_ERR_FILE")"
+echo "$VER_OUT" | grep -q "FAKE_BIN_CALLED" || { echo "FAIL: --version did not output binary stdout"; exit 1; }
+VER_ERR="$(cat "$VER_ERR_FILE")"
+echo "$VER_ERR" | grep -q "grokgod: source behind origin/main 1.0.10 ($SHA2_SHORT); run: grok update" || {
+  echo "FAIL: Expected warning on stderr, got: $VER_ERR"
+  exit 1
+}
+
+# Also test -V flag
+V_ERR_FILE="$TMP_DIR/v_err.txt"
+V_OUT="$(TEST_GROK_BUILD_SRC="$FAKE_REPO" run_shim -V 2>"$V_ERR_FILE")"
+echo "$V_OUT" | grep -q "FAKE_BIN_CALLED" || { echo "FAIL: -V did not output binary stdout"; exit 1; }
+V_ERR="$(cat "$V_ERR_FILE")"
+echo "$V_ERR" | grep -q "grokgod: source behind origin/main 1.0.10 ($SHA2_SHORT); run: grok update" || {
+  echo "FAIL: Expected warning on stderr for -V, got: $V_ERR"
+  exit 1
+}
+
+# 9d: Ahead
+git -C "$FAKE_REPO" update-ref refs/remotes/origin/main "$SHA1"
+printf "SHA=%s\nPATCHSET=test\nVERSION=test\nMODE=source\n" "$SHA2" > "$TEST_GROKGOD_HOME/.source-version"
+OUT_AHEAD="$(TEST_GROK_BUILD_SRC="$FAKE_REPO" run_shim status)"
+echo "$OUT_AHEAD" | grep -q "source-drift: ahead" || {
+  echo "FAIL: Expected 'source-drift: ahead', got: $OUT_AHEAD"
+  exit 1
+}
+echo "$OUT_AHEAD" | grep -q "hint:" && { echo "FAIL: Ahead should not have hint"; exit 1; }
+
+# 9e: Diverged
+git -C "$FAKE_REPO" checkout -q -b branch-diverge "$SHA1"
+cat << 'EOF' > "$FAKE_REPO/diverge.txt"
+diverged content
+EOF
+git -C "$FAKE_REPO" add diverge.txt
+git -C "$FAKE_REPO" commit -q -m "Diverged commit"
+SHA_DIV="$(git -C "$FAKE_REPO" rev-parse HEAD)"
+git -C "$FAKE_REPO" update-ref refs/remotes/origin/main "$SHA2"
+printf "SHA=%s\nPATCHSET=test\nVERSION=test\nMODE=source\n" "$SHA_DIV" > "$TEST_GROKGOD_HOME/.source-version"
+OUT_DIV="$(TEST_GROK_BUILD_SRC="$FAKE_REPO" run_shim status)"
+echo "$OUT_DIV" | grep -q "source-drift: diverged" || {
+  echo "FAIL: Expected 'source-drift: diverged', got: $OUT_DIV"
+  exit 1
+}
+
+echo "PASS: Test 9"
 
 echo "=== All tests passed successfully! ==="

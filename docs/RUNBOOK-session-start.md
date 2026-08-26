@@ -54,6 +54,8 @@ grokgod status | head -6                # shim ownership + source-version
 ls -la ~/.local/bin/grok ~/.local/bin/grok.orig
 ```
 
+`grok status` / `grokgod status` prints `source-drift` vs local `origin/main` (no fetch). `grok --version` stderr warns when behind.
+
 - `~/.local/bin/grok` should be OUR shim (1632+ bytes, contains "GROKGOD").
 - If it is a symlink to `~/.grok/bin/grok` again, the official installer
   reclaimed PATH: tell the user, offer `sh ~/Desktop/code/grokgod/install.sh`

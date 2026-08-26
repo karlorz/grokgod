@@ -66,7 +66,8 @@ _Avoid_: patcher, universal patcher, regex catalog
 **Stamp-only status**:
 `grok status` treats source patch 0001 as applied when `.source-version`
 carries PATCHSET and the target binary exists. It does not disassemble the
-Mach-O or run `git apply --check` against a grok-build checkout.
+Mach-O or run `git apply --check` against a grok-build checkout; drift is
+git-ref compare only.
 _Avoid_: binary prove, strings scan, apply --check in status
 
 **Overlay-pin status**:

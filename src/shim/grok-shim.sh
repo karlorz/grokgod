@@ -3,6 +3,7 @@ set -eu
 
 GROKGOD_HOME="${GROKGOD_HOME:-$HOME/.grokgod}"
 GROKGOD_BIN="$GROKGOD_HOME/bin/grok"
+GROK_BUILD_SRC="${GROK_BUILD_SRC:-$HOME/Desktop/code/grok-build}"
 
 # Fall back to ~/.grokgod/src or $HOME/Desktop/code/grokgod (dev host compat)
 if [ -n "${GROKGOD_SRC:-}" ]; then
@@ -14,6 +15,67 @@ elif [ -d "$HOME/Desktop/code/grokgod" ]; then
 else
   GROKGOD_SRC="$GROKGOD_HOME/src"
 fi
+
+get_cargo_version() {
+  git_ref="$1"
+  raw="$(git -C "$GROK_BUILD_SRC" show "${git_ref}:crates/codegen/xai-grok-pager-bin/Cargo.toml" 2>/dev/null || true)"
+  if [ -n "$raw" ]; then
+    printf "%s\n" "$raw" | sed -n 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
+  fi
+}
+
+# Evaluates source drift against local origin/main ref.
+# Sets DRIFT_STATUS, INSTALLED_SHA, UPSTREAM_SHA, INSTALLED_VER, UPSTREAM_VER,
+# INSTALLED_SHORT, UPSTREAM_SHORT.
+compute_source_drift() {
+  DRIFT_STATUS="unknown"
+  INSTALLED_SHA=""
+  UPSTREAM_SHA=""
+  INSTALLED_VER=""
+  UPSTREAM_VER=""
+  INSTALLED_SHORT=""
+  UPSTREAM_SHORT=""
+
+  if [ ! -f "$GROKGOD_HOME/.source-version" ]; then
+    return 0
+  fi
+  INSTALLED_SHA="$(grep '^SHA=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
+  if [ -z "$INSTALLED_SHA" ]; then
+    return 0
+  fi
+
+  if [ ! -d "$GROK_BUILD_SRC" ] || ! git -C "$GROK_BUILD_SRC" rev-parse --git-dir >/dev/null 2>&1; then
+    return 0
+  fi
+
+  UPSTREAM_SHA="$(git -C "$GROK_BUILD_SRC" rev-parse origin/main 2>/dev/null || true)"
+  if [ -z "$UPSTREAM_SHA" ]; then
+    return 0
+  fi
+
+  INSTALLED_SHORT="$(printf "%.8s" "$INSTALLED_SHA")"
+  UPSTREAM_SHORT="$(printf "%.8s" "$UPSTREAM_SHA")"
+
+  if [ "$INSTALLED_SHA" = "$UPSTREAM_SHA" ]; then
+    DRIFT_STATUS="current"
+    return 0
+  fi
+
+  if git -C "$GROK_BUILD_SRC" merge-base --is-ancestor "$INSTALLED_SHA" "$UPSTREAM_SHA" 2>/dev/null; then
+    DRIFT_STATUS="behind"
+    INSTALLED_VER="$(get_cargo_version "$INSTALLED_SHA")"
+    UPSTREAM_VER="$(get_cargo_version "$UPSTREAM_SHA")"
+    return 0
+  fi
+
+  if git -C "$GROK_BUILD_SRC" merge-base --is-ancestor "$UPSTREAM_SHA" "$INSTALLED_SHA" 2>/dev/null; then
+    DRIFT_STATUS="ahead"
+    return 0
+  fi
+
+  DRIFT_STATUS="diverged"
+  return 0
+}
 
 cmd="${1:-}"
 
@@ -90,6 +152,36 @@ case "$cmd" in
     else
       echo "  orca-pin: disabled"
     fi
+
+    compute_source_drift
+    case "$DRIFT_STATUS" in
+      current)
+        echo "source-drift: current ($INSTALLED_SHORT)"
+        ;;
+      behind)
+        echo "source-drift: behind"
+        if [ -n "$INSTALLED_VER" ]; then
+          echo "  installed: $INSTALLED_VER ($INSTALLED_SHORT)"
+        else
+          echo "  installed: ($INSTALLED_SHORT)"
+        fi
+        if [ -n "$UPSTREAM_VER" ]; then
+          echo "  origin/main: $UPSTREAM_VER ($UPSTREAM_SHORT)"
+        else
+          echo "  origin/main: ($UPSTREAM_SHORT)"
+        fi
+        echo "  hint: grok update"
+        ;;
+      ahead)
+        echo "source-drift: ahead"
+        ;;
+      diverged)
+        echo "source-drift: diverged"
+        ;;
+      *)
+        echo "source-drift: unknown"
+        ;;
+    esac
     exit 0
     ;;
   cache)
@@ -144,6 +236,24 @@ case "$cmd" in
       echo "hint: run 'grokgod update' to build/install" >&2
       exit 127
     fi
+
+    # Check for --version / -V to warn on stderr if source is behind origin/main
+    if [ "$#" -gt 0 ] && { [ "$1" = "--version" ] || [ "$1" = "-V" ]; }; then
+      compute_source_drift
+      set +e
+      "$GROKGOD_BIN" "$@"
+      bin_exit=$?
+      set -eu
+      if [ "$DRIFT_STATUS" = "behind" ]; then
+        if [ -n "$UPSTREAM_VER" ]; then
+          echo "grokgod: source behind origin/main $UPSTREAM_VER ($UPSTREAM_SHORT); run: grok update" >&2
+        else
+          echo "grokgod: source behind origin/main ($UPSTREAM_SHORT); run: grok update" >&2
+        fi
+      fi
+      exit "$bin_exit"
+    fi
+
     # Orca automation overlay: Orca launches automations as `grok -- <prompt>`.
     # Interactive Orca grok tags (bare `grok` / `-m` / `--resume`) keep
     # config.toml default. Do NOT overwrite a caller-set GROK_CONFIG_PATH.

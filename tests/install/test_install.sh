@@ -1724,4 +1724,13 @@ if [ -e "$FAKE_GROKGOD_HOME/pin/grok-overlay.toml" ]; then
 fi
 echo "PASS: Test (y) - Pin overlay dry-run safety"
 
+# ─────────────────────────────────────────────────────────
+# Test (z): Pinned-behind warning exists in install.sh
+# ─────────────────────────────────────────────────────────
+echo "Test (z): Pinned-behind warning exists in install.sh"
+grep -q "Installed build is pinned behind origin/main" "$INSTALL_SCRIPT" || {
+  echo "FAIL: Test (z) - install.sh missing pinned-behind warning string"; exit 1
+}
+echo "PASS: Test (z) - Pinned-behind warning string in install.sh"
+
 echo "=== All install.sh tests passed successfully! ==="

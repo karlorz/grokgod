@@ -794,6 +794,13 @@ if [ "$MODE" = "source" ]; then
     CURRENT_SHA="$(git -C "$GROK_BUILD_SRC" rev-parse HEAD 2>/dev/null || echo "unknown")"
     printf "SHA=%s\nPATCHSET=%s\nVERSION=%s\nMODE=source\n" "$CURRENT_SHA" "$NOW_PATCHSET" "$CURRENT_SHA" > "$GROKGOD_HOME/.source-version"
     log_info "Stamped version to $GROKGOD_HOME/.source-version (SHA=$CURRENT_SHA, PATCHSET=$NOW_PATCHSET)"
+
+    if [ -n "$VERSION_SHA" ]; then
+      UPSTREAM_ORIGIN_MAIN="$(git -C "$GROK_BUILD_SRC" rev-parse origin/main 2>/dev/null || true)"
+      if [ -n "$UPSTREAM_ORIGIN_MAIN" ] && [ "$CURRENT_SHA" != "$UPSTREAM_ORIGIN_MAIN" ]; then
+        log_warn "Installed build is pinned behind origin/main ($CURRENT_SHA vs $UPSTREAM_ORIGIN_MAIN). Run unpinned 'grok update' to catch up."
+      fi
+    fi
   fi
 
   # Sync runtime files from a grokgod checkout into GROKGOD_HOME/src.
