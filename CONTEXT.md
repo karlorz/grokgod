@@ -8,7 +8,7 @@ shared language for what grokgod keeps across `grok update`, not a spec.
 **Source patch**:
 A `git apply` diff under `patches/` against a pinned grok-build SHA. Re-applied
 on `grok update` / `grokgod update`. Current set: `0001-normalize-plugin-skill-join`,
-`0002-plan-mode-extra-writable`.
+`0002-plan-mode-extra-writable`, `0003-session-persist-single`.
 _Avoid_: Mach-O hex edit, plugin.json rewrite as the engine fix
 
 **Session plan file**:

@@ -2,7 +2,7 @@
 set -eu
 
 # test_0003_apply.sh: Verify that patch 0003-session-persist-single.patch
-# exists and applies cleanly on top of 0001 and 0002 against base commit d71f6e0c.
+# exists and applies cleanly on top of 0001 and 0002 against base commit c2ad97f8.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -45,11 +45,11 @@ trap cleanup EXIT INT TERM
 
 # Setup GB_WORKTREE fixture
 if [ -d "$REAL_GROK_BUILD/.git" ]; then
-  echo "Creating test worktree from $REAL_GROK_BUILD at commit d71f6e0c..."
-  git -C "$REAL_GROK_BUILD" worktree add --detach "$GB_WORKTREE" d71f6e0c >/dev/null 2>&1
+  echo "Creating test worktree from $REAL_GROK_BUILD at commit c2ad97f8..."
+  git -C "$REAL_GROK_BUILD" worktree add --detach "$GB_WORKTREE" c2ad97f8 >/dev/null 2>&1
 else
   echo "Building fixture git repository for CI..."
-  PIN_SHA="d71f6e0c1f5acc5469e503e192fe14824e6f8c90"
+  PIN_SHA="c2ad97f87aea4303b6000a2c22128bc91ee76c9b"
   RAW_BASE="https://raw.githubusercontent.com/xai-org/grok-build/${PIN_SHA}"
   PATCH_PATHS="$(
     grep -h '^diff --git ' "$REPO_ROOT"/patches/*.patch 2>/dev/null \
@@ -68,7 +68,7 @@ else
   git -C "$GB_WORKTREE" config user.name "CI"
   git -C "$GB_WORKTREE" config user.email "ci@example.com"
   git -C "$GB_WORKTREE" add .
-  git -C "$GB_WORKTREE" commit -m "initial d71f6e0c fixture" >/dev/null 2>&1
+  git -C "$GB_WORKTREE" commit -m "initial c2ad97f8 fixture" >/dev/null 2>&1
 fi
 
 # 3. Test sequential apply: 0001 -> 0002 -> 0003

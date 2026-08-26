@@ -60,9 +60,9 @@ jobs:
 
           for p in "${patch_files[@]}"; do
             pname="$(basename "$p")"
-            echo "==> Testing patch: $pname"
+            echo "==> Testing and applying patch sequentially: $pname"
 
-            if apply_err="$(git -C grok-build apply --check "$GITHUB_WORKSPACE/$p" 2>&1)"; then
+            if apply_err="$(git -C grok-build apply --check "$GITHUB_WORKSPACE/$p" 2>&1)" && git -C grok-build apply "$GITHUB_WORKSPACE/$p" 2>&1; then
               echo "  ✓ $pname applies cleanly"
             else
               echo "  ✗ $pname failed to apply"
@@ -94,6 +94,7 @@ jobs:
                 echo '```'
                 echo
               } >> /tmp/compat-details/details.md
+              break
             fi
           done
 

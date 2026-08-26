@@ -1,5 +1,5 @@
 diff --git a/crates/codegen/xai-grok-config-types/src/lib.rs b/crates/codegen/xai-grok-config-types/src/lib.rs
-index 8e0d8da9..cf01a8be 100644
+index 299376ae..d5f9539e 100644
 --- a/crates/codegen/xai-grok-config-types/src/lib.rs
 +++ b/crates/codegen/xai-grok-config-types/src/lib.rs
 @@ -28,6 +28,47 @@ pub struct CampaignOverride {
@@ -51,10 +51,10 @@ index 8e0d8da9..cf01a8be 100644
  /// `[doom_loop_recovery]` TOML table and the remote settings
  /// `doom_loop_recovery` JSON object, so the two stay 1:1. All fields are
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
-index 2a2ab049..1081eca5 100644
+index fd2f71b7..bb3c8ca3 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
-@@ -1295,6 +1295,9 @@ pub struct Config {
+@@ -1300,6 +1300,9 @@ pub struct Config {
      /// object. See [`crate::util::config::DoomLoopRecoverySettings`].
      #[serde(default)]
      pub doom_loop_recovery: crate::util::config::DoomLoopRecoverySettings,
@@ -64,7 +64,7 @@ index 2a2ab049..1081eca5 100644
      /// `[worktree]` section (currently `[worktree.auto_gc]` only).
      #[serde(default)]
      pub worktree: WorktreeConfigSection,
-@@ -1744,6 +1747,7 @@ impl Default for Config {
+@@ -1753,6 +1756,7 @@ impl Default for Config {
              goal: GoalConfig::default(),
              workflows: WorkflowsConfig::default(),
              doom_loop_recovery: crate::util::config::DoomLoopRecoverySettings::default(),
@@ -72,7 +72,7 @@ index 2a2ab049..1081eca5 100644
              worktree: WorktreeConfigSection::default(),
              auto_mode: AutoModeConfig::default(),
              feature_values: BTreeMap::new(),
-@@ -2568,6 +2572,15 @@ impl Config {
+@@ -2603,6 +2607,15 @@ impl Config {
                  ),
          })
      }
@@ -87,12 +87,12 @@ index 2a2ab049..1081eca5 100644
 +    }
      /// Automatic worktree GC policy. Precedence: env kill/dry-run >
      /// `[worktree.auto_gc]` TOML > remote `worktree_auto_gc` > defaults.
-     /// Platform age-expiry (dead-only where no process-CWD scan exists) is
+     /// Platform age-expiry (`process_cwd_scan_available`: linux+macos) is enforced
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
-index e6e5d2ad..40374f53 100644
+index 914a96a9..faceb56c 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
-@@ -205,10 +205,21 @@ impl SessionActor {
+@@ -223,10 +223,21 @@ impl SessionActor {
              if let Some(client) = self.rebuild_spec.managed_gateway_tool_client.clone() {
                  bridge.update_resource(client).await;
              }
@@ -142,10 +142,10 @@ index d98e26e1..d1fc3220 100644
          self.agent
              .borrow()
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-index 6a310cd8..6ac9f3ab 100644
+index 187c099a..08f1749e 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-@@ -1503,6 +1503,13 @@ pub(crate) async fn spawn_session_actor(
+@@ -1575,6 +1575,13 @@ pub(crate) async fn spawn_session_actor(
          }
      };
      let doom_loop_recovery = effective_config.resolve_doom_loop_recovery();
@@ -159,7 +159,7 @@ index 6a310cd8..6ac9f3ab 100644
      let resolved_tool_overrides: std::sync::Arc<
          arc_swap::ArcSwapOption<xai_grok_sampling_types::ToolOverrides>,
      > = std::sync::Arc::new(arc_swap::ArcSwapOption::empty());
-@@ -1815,13 +1822,27 @@ pub(crate) async fn spawn_session_actor(
+@@ -1893,13 +1900,27 @@ pub(crate) async fn spawn_session_actor(
              .await;
      }
      {
@@ -189,7 +189,7 @@ index 6a310cd8..6ac9f3ab 100644
      session.inject_deny_read_globs().await;
      if session.permissions.is_auto_mode() {
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
-index 966c4bd1..f024f8c8 100644
+index 2004559a..5bb7e401 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
 @@ -234,6 +234,12 @@ pub(super) enum PlanEditGate {
@@ -205,11 +205,9 @@ index 966c4bd1..f024f8c8 100644
  pub(super) fn plan_mode_edit_gate(
      tracker: &crate::session::plan_mode::PlanModeTracker,
      tool_input: &ToolInput,
-@@ -242,10 +248,16 @@ pub(super) fn plan_mode_edit_gate(
-     if !tracker.is_active() {
+@@ -246,8 +252,15 @@ pub(super) fn plan_mode_edit_gate(
          return PlanEditGate::Allow;
      }
--    let _ = tool_input;
      match access_kind {
 -        AccessKind::Edit(path) if !tracker.should_auto_approve_edit(Path::new(path)) => {
 -            PlanEditGate::RejectNonPlanFile
@@ -225,7 +223,7 @@ index 966c4bd1..f024f8c8 100644
          }
          _ => PlanEditGate::Allow,
      }
-@@ -3279,6 +3291,74 @@ mod plan_mode_edit_gate_tests {
+@@ -3308,6 +3321,74 @@ mod plan_mode_edit_gate_tests {
              "Pending means the model has no plan-mode instructions yet — don't gate"
          );
      }

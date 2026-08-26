@@ -13,7 +13,7 @@ inventory. Persist status is exposed via the `grok status` persist block
 | `0002` | `patches/0002-plan-mode-extra-writable.patch` | Plan-mode extra writable globs + implement-via-subagents (exit reminders + PlanReady/EmptyPlan after `a`) | Session plan.md is the only native writable path; PRD markdown (work items, `docs/superpowers/`) is rejected while Active; stock PlanReady said “start coding” |
 | `0003` | `patches/0003-session-persist-single.patch` | Single-turn session persistence toggle via `[session] persist_single` (default `false`) + overlay allowlist | Stock grok writes disk sessions on every headless run, causing unbounded session growth on automated jobs; `persist_single = false` skips headless persistence while interactive sessions always persist |
 
-Base SHA: see `patches/README.md` (`d71f6e0c`). Fail closed on `git apply --check`. Daily CI `.github/workflows/compat-daily.yml` runs `git apply --check` of `patches/*.patch` against latest `xai-org/grok-build` `origin/main`.
+Base SHA: see `patches/README.md` (`c2ad97f8`). Fail closed on `git apply --check`. Daily CI `.github/workflows/compat-daily.yml` runs `git apply --check` of `patches/*.patch` against latest `xai-org/grok-build` `origin/main`.
 
 ## Keep — wrapper, not a source patch
 
