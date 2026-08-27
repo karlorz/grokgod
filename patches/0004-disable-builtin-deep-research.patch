@@ -954,6 +954,43 @@ index 357ee0d9..6f223932 100644
          ask_user_question_enabled: false,
          parent_non_interactive: false,
          parent_cmd_tx: None,
+diff --git a/crates/codegen/xai-grok-shell/src/util/config/load.rs b/crates/codegen/xai-grok-shell/src/util/config/load.rs
+index 794c9daf..ffab5e92 100644
+--- a/crates/codegen/xai-grok-shell/src/util/config/load.rs
++++ b/crates/codegen/xai-grok-shell/src/util/config/load.rs
+@@ -104,6 +104,7 @@ pub fn load_config_from_toml(root: &TomlValue) -> Config {
+         permission,
+         diagnostics: section(table, "diagnostics"),
+         session: section(table, "session"),
++        workflows: section(table, "workflows"),
+         ask_user_question: table
+             .get("toolset")
+             .and_then(|t| t.get("ask_user_question"))
+diff --git a/crates/codegen/xai-grok-shell/src/util/config/mcp.rs b/crates/codegen/xai-grok-shell/src/util/config/mcp.rs
+index 64f67887..3ca7a53c 100644
+--- a/crates/codegen/xai-grok-shell/src/util/config/mcp.rs
++++ b/crates/codegen/xai-grok-shell/src/util/config/mcp.rs
+@@ -45,6 +45,8 @@ pub struct Config {
+     /// `[session]` section — round-tripped through `merge_section` so
+     /// pager setters can persist session fields (e.g. auto-compact threshold).
+     pub session: crate::agent::config::SessionConfig,
++    /// `[workflows]` — settings modal writes `[workflows.builtins]`.
++    pub workflows: crate::agent::config::WorkflowsConfig,
+     /// `[toolset.ask_user_question]` sub-table — the only `[toolset]` piece
+     /// the settings modal writes; the rest of `[toolset]` never round-trips
+     /// (it carries runtime-only structs whose defaults must not hit disk).
+diff --git a/crates/codegen/xai-grok-shell/src/util/config/persist.rs b/crates/codegen/xai-grok-shell/src/util/config/persist.rs
+index 6cfccdcd..2b952525 100644
+--- a/crates/codegen/xai-grok-shell/src/util/config/persist.rs
++++ b/crates/codegen/xai-grok-shell/src/util/config/persist.rs
+@@ -35,6 +35,7 @@ async fn save_config_locked(config: &Config) -> Result<()> {
+     merge_section(table, "ui", &config.ui);
+     merge_section(table, "harness", &config.harness);
+     merge_section(table, "session", &config.session);
++    merge_section(table, "workflows", &config.workflows);
+     merge_ask_user_question_section(table, &config.ask_user_question);
+     if config.privacy == super::mcp::PrivacyConfig::default() {
+         table.remove("privacy");
 diff --git a/crates/codegen/xai-grok-shell/src/util/config/settings_writes.rs b/crates/codegen/xai-grok-shell/src/util/config/settings_writes.rs
 index 4e76e9c1..0a238e30 100644
 --- a/crates/codegen/xai-grok-shell/src/util/config/settings_writes.rs
