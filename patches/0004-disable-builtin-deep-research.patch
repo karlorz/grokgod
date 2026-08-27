@@ -1,0 +1,972 @@
+diff --git a/crates/codegen/xai-grok-config/src/config_override.rs b/crates/codegen/xai-grok-config/src/config_override.rs
+index 6eebb51f..623c442e 100644
+--- a/crates/codegen/xai-grok-config/src/config_override.rs
++++ b/crates/codegen/xai-grok-config/src/config_override.rs
+@@ -134,6 +134,7 @@ pub const OVERLAY_ALLOW_PATHS: &[&[&str]] = &[
+     &["shell_environment_policy", "exclude"],
+     &["shell_environment_policy", "include_only"],
+     &["session", "persist_single"],
++    &["workflows", "builtins", "deep-research"],
+ ];
+ 
+ /// Confine `overlay` to [`OVERLAY_ALLOW_PATHS`], dropping every other key and any
+@@ -253,6 +254,7 @@ mod tests {
+             "[models]\ndefault_reasoning_effort = \"high\"\n\
+              [features]\ntelemetry = false\n\
+              [session]\npersist_single = true\n\
++             [workflows.builtins]\ndeep-research = false\n\
+              [shell_environment_policy]\ninherit = \"core\"\nexclude = [\"SECRET_*\"]\n\
+              set = { LD_PRELOAD = \"/tmp/evil.so\" }\n\
+              [toolset.bash]\nlogin_shell_capture = false\ncmd_prefix = \"evil;\"\n\
+@@ -268,6 +270,7 @@ mod tests {
+             "[models]\ndefault_reasoning_effort = \"high\"\n\
+              [features]\ntelemetry = false\n\
+              [session]\npersist_single = true\n\
++             [workflows.builtins]\ndeep-research = false\n\
+              [shell_environment_policy]\ninherit = \"core\"\nexclude = [\"SECRET_*\"]\n\
+              [toolset.bash]\nlogin_shell_capture = false\n\
+              [toolset.web_search]\nallowed_domains = [\"docs.x.ai\"]\n",
+diff --git a/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md b/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
+index 00ea7f10..e9a80b6b 100644
+--- a/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
++++ b/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
+@@ -359,6 +359,9 @@ Background workflows — the `workflow` tool, named `.grok/workflows/*.rhai` scr
+ ```toml
+ [workflows]
+ enabled = false                       # disable background workflows (or GROK_WORKFLOWS=0)
++
++[workflows.builtins]
++deep-research = false                 # hide compiled-in /deep-research (default true)
+ ```
+ 
+ Project workflows are discovered from `<repo-root>/.grok/workflows/`; user workflows from `~/.grok/workflows/`. Discovery and invocation key off the script's `meta.name`, so keep each filename aligned with its `meta.name`. Built-ins win over project names, and project names win over user names, so keep names unique across scopes.
+diff --git a/crates/codegen/xai-grok-pager/src/app/actions.rs b/crates/codegen/xai-grok-pager/src/app/actions.rs
+index d29ab37a..1789581a 100644
+--- a/crates/codegen/xai-grok-pager/src/app/actions.rs
++++ b/crates/codegen/xai-grok-pager/src/app/actions.rs
+@@ -496,6 +496,9 @@ pub enum Action {
+     /// Toggle the ask_user_question timeout. SHELL-owned; persisted to
+     /// `[toolset.ask_user_question].timeout_enabled`. Applies to new sessions.
+     SetAskUserQuestionTimeoutEnabled(bool),
++    /// Toggle compiled-in `/deep-research`. SHELL-owned; persisted to
++    /// `[workflows.builtins] deep-research`. Restart-required.
++    SetWorkflowBuiltinDeepResearch(bool),
+     /// SHELL-owned `keep_text_selection` (`flash` | `hold`); cache + persist.
+     SetKeepTextSelection(crate::appearance::TextSelection),
+     /// Set the mouse-wheel scroll speed multiplier (1-100). Pager-owned
+diff --git a/crates/codegen/xai-grok-pager/src/app/app_view.rs b/crates/codegen/xai-grok-pager/src/app/app_view.rs
+index 6b2bd919..6b204000 100644
+--- a/crates/codegen/xai-grok-pager/src/app/app_view.rs
++++ b/crates/codegen/xai-grok-pager/src/app/app_view.rs
+@@ -1208,6 +1208,8 @@ pub struct AppView {
+     /// from the effective TOML merge like `show_tips`. `None` = unset in TOML
+     /// (default `true`); toggles write the user layer.
+     pub ask_user_question_timeout_enabled: Option<bool>,
++    /// `[workflows.builtins] deep-research` mirror. `None` = unset (default on).
++    pub workflow_builtin_deep_research: Option<bool>,
+     /// Whether ZDR users are allowed to use the product.
+     /// Server-controlled via RemoteSettings (remote settings). Default `false` (blocked) during beta.
+     pub zdr_access_enabled: bool,
+@@ -1718,6 +1720,7 @@ impl AppView {
+             show_tips: None,
+             auto_update: None,
+             ask_user_question_timeout_enabled: None,
++            workflow_builtin_deep_research: None,
+             zdr_access_enabled: false,
+             usage_billing_redirect_url: None,
+             access_gate_shown_logged: false,
+diff --git a/crates/codegen/xai-grok-pager/src/app/app_view_tests.rs b/crates/codegen/xai-grok-pager/src/app/app_view_tests.rs
+index f5b4a4fe..260083c3 100644
+--- a/crates/codegen/xai-grok-pager/src/app/app_view_tests.rs
++++ b/crates/codegen/xai-grok-pager/src/app/app_view_tests.rs
+@@ -192,6 +192,7 @@ pub(crate) fn test_app() -> AppView {
+         show_tips: None,
+         auto_update: None,
+         ask_user_question_timeout_enabled: None,
++        workflow_builtin_deep_research: None,
+         zdr_access_enabled: false,
+         usage_billing_redirect_url: None,
+         access_gate_shown_logged: false,
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs
+index b4c3445d..a43a399d 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs
+@@ -1412,6 +1412,7 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
+     let respect_manual_folds_from_app = app.appearance.scrollback.scroll.respect_manual_folds;
+     let auto_mode_gate_from_app = app.auto_mode_gate;
+     let ask_user_question_timeout_enabled_from_app = app.ask_user_question_timeout_enabled;
++    let workflow_builtin_deep_research_from_app = app.workflow_builtin_deep_research;
+     let voice_stt_language_from_app = app.voice_config.language.clone();
+     // Dashboard commands run before any session exists, so the startup seed is
+     // the only answer available here.
+@@ -1526,6 +1527,7 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
+                 respect_manual_folds: respect_manual_folds_from_app,
+                 auto_mode_gate: auto_mode_gate_from_app,
+                 ask_user_question_timeout_enabled: ask_user_question_timeout_enabled_from_app,
++                workflow_builtin_deep_research: workflow_builtin_deep_research_from_app,
+                 voice_stt_language: voice_stt_language_from_app,
+                 scheduler_background_loops: scheduler_background_loops_seed,
+             },
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
+index 8760255e..4bd2e0d1 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
+@@ -462,6 +462,7 @@ pub(super) fn dispatch_send_prompt_inner(
+     let respect_manual_folds_from_app = app.appearance.scrollback.scroll.respect_manual_folds;
+     let auto_mode_gate_from_app = app.auto_mode_gate;
+     let ask_user_question_timeout_enabled_from_app = app.ask_user_question_timeout_enabled;
++    let workflow_builtin_deep_research_from_app = app.workflow_builtin_deep_research;
+     // Set when a plain prompt is queued while a turn is running (local path);
+     // shown after the agent borrow ends so we can re-enter via the tip helper.
+     let mut tip_send_now_after_queue = false;
+@@ -572,6 +573,7 @@ pub(super) fn dispatch_send_prompt_inner(
+                     respect_manual_folds: respect_manual_folds_from_app,
+                     auto_mode_gate: auto_mode_gate_from_app,
+                     ask_user_question_timeout_enabled: ask_user_question_timeout_enabled_from_app,
++                    workflow_builtin_deep_research: workflow_builtin_deep_research_from_app,
+                     voice_stt_language: voice_stt_language_from_app,
+                     // This session's own value (what its fires will actually
+                     // do), seed only until the session response lands.
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs
+index 39ad7642..38ce86fa 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs
+@@ -86,7 +86,7 @@ use super::settings::setters::{
+     set_remember_tool_approvals, set_render_mermaid, set_respect_manual_folds, set_screen_mode,
+     set_scroll_lines, set_scroll_mode, set_scroll_speed, set_show_thinking_blocks, set_show_tips,
+     set_simple_mode, set_theme, set_timeline, set_timestamps, set_vim_mode, set_voice_capture_mode,
+-    set_voice_keybind_enabled, set_voice_stt_language,
++    set_voice_keybind_enabled, set_voice_stt_language, set_workflow_builtin_deep_research,
+ };
+ use super::settings::ui::{
+     dispatch_confirm_reset_setting, dispatch_open_command_palette, dispatch_open_howto_guides,
+@@ -1089,6 +1089,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
+         Action::SetAskUserQuestionTimeoutEnabled(v) => {
+             set_ask_user_question_timeout_enabled(app, v)
+         }
++        Action::SetWorkflowBuiltinDeepResearch(v) => set_workflow_builtin_deep_research(app, v),
+         Action::SetKeepTextSelection(v) => set_keep_text_selection(app, v),
+         Action::SetScrollSpeed(v) => set_scroll_speed(app, v),
+         Action::SetScrollMode(v) => set_scroll_mode(app, v),
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
+index 02a0b964..63dadf6a 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
+@@ -402,6 +402,40 @@ pub(in crate::app::dispatch) fn set_ask_user_question_timeout_enabled(
+     }]
+ }
+ 
++pub(super) fn set_workflow_builtin_deep_research_inner(app: &mut AppView, new: bool) {
++    app.workflow_builtin_deep_research = Some(new);
++}
++
++/// SHELL-owned setter for `[workflows.builtins] deep-research`; persists via
++/// `Effect::PersistSetting`. Applies to new sessions (restart-required).
++pub(in crate::app::dispatch) fn set_workflow_builtin_deep_research(
++    app: &mut AppView,
++    new: bool,
++) -> Vec<Effect> {
++    let prev_state = app.workflow_builtin_deep_research;
++    let prev_effective = prev_state.unwrap_or(true);
++    if prev_effective == new && prev_state.is_some() {
++        return vec![];
++    }
++    set_workflow_builtin_deep_research_inner(app, new);
++    refresh_open_settings_modals(app);
++    tracing::info!(
++        target: "settings",
++        key = "workflows.builtins.deep-research",
++        value = new,
++        "setting changed",
++    );
++    app.show_toast(&format!(
++        "{} (restart to apply)",
++        save_success_toast("Built-in deep-research workflow", new),
++    ));
++    vec![Effect::PersistSetting {
++        key: "workflows.builtins.deep-research",
++        value: crate::settings::SettingValue::Bool(new),
++        rollback_value: crate::settings::SettingValue::Bool(prev_effective),
++    }]
++}
++
+ pub(super) fn set_show_thinking_blocks_inner(app: &mut AppView, new: bool) {
+     crate::appearance::cache::set_show_thinking_blocks(new);
+     // Thinking visibility reshapes verb-group runs (shown thoughts claim
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/settings/ui.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/settings/ui.rs
+index 987b9080..0b0dfe54 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/settings/ui.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/settings/ui.rs
+@@ -13,6 +13,7 @@ use super::setters::{
+     set_respect_manual_folds_inner, set_screen_mode_inner, set_scroll_lines_inner,
+     set_scroll_mode_inner, set_scroll_speed_inner, set_show_thinking_blocks_inner,
+     set_show_tips_inner, set_simple_mode_inner, set_theme_inner, set_timeline_inner,
++    set_workflow_builtin_deep_research_inner,
+     set_timestamps, set_timestamps_inner, set_vim_mode_inner, set_voice_capture_mode_inner,
+     set_voice_keybind_enabled_inner, set_voice_stt_language_inner,
+ };
+@@ -54,6 +55,7 @@ pub(crate) fn refresh_open_settings_modals(app: &mut AppView) {
+     let respect_manual_folds_from_app = app.appearance.scrollback.scroll.respect_manual_folds;
+     let auto_mode_gate_from_app = app.auto_mode_gate;
+     let ask_user_question_timeout_enabled_from_app = app.ask_user_question_timeout_enabled;
++    let workflow_builtin_deep_research_from_app = app.workflow_builtin_deep_research;
+     let voice_stt_language_from_app = app.voice_config.language.clone();
+     let scheduler_background_loops_seed = app.scheduler_background_loops_seed;
+     for agent in app.agents.values_mut() {
+@@ -93,6 +95,7 @@ pub(crate) fn refresh_open_settings_modals(app: &mut AppView) {
+                 respect_manual_folds: respect_manual_folds_from_app,
+                 auto_mode_gate: auto_mode_gate_from_app,
+                 ask_user_question_timeout_enabled: ask_user_question_timeout_enabled_from_app,
++                workflow_builtin_deep_research: workflow_builtin_deep_research_from_app,
+                 voice_stt_language: voice_stt_language_from_app.clone(),
+                 scheduler_background_loops: agent
+                     .scheduler_background_loops
+@@ -195,6 +198,7 @@ pub(in crate::app::dispatch) fn dispatch_open_settings(
+     let respect_manual_folds_from_app = app.appearance.scrollback.scroll.respect_manual_folds;
+     let auto_mode_gate_from_app = app.auto_mode_gate;
+     let ask_user_question_timeout_enabled_from_app = app.ask_user_question_timeout_enabled;
++    let workflow_builtin_deep_research_from_app = app.workflow_builtin_deep_research;
+     let voice_stt_language_from_app = app.voice_config.language.clone();
+     let scheduler_background_loops_seed = app.scheduler_background_loops_seed;
+ 
+@@ -243,6 +247,7 @@ pub(in crate::app::dispatch) fn dispatch_open_settings(
+         respect_manual_folds: respect_manual_folds_from_app,
+         auto_mode_gate: auto_mode_gate_from_app,
+         ask_user_question_timeout_enabled: ask_user_question_timeout_enabled_from_app,
++        workflow_builtin_deep_research: workflow_builtin_deep_research_from_app,
+         voice_stt_language: voice_stt_language_from_app,
+         scheduler_background_loops: agent
+             .scheduler_background_loops
+@@ -741,6 +746,7 @@ pub(crate) fn build_pager_snapshot(app: &AppView) -> crate::settings::PagerLocal
+         respect_manual_folds: app.appearance.scrollback.scroll.respect_manual_folds,
+         auto_mode_gate: app.auto_mode_gate,
+         ask_user_question_timeout_enabled: app.ask_user_question_timeout_enabled,
++        workflow_builtin_deep_research: app.workflow_builtin_deep_research,
+         voice_stt_language: app.voice_config.language.clone(),
+         scheduler_background_loops: agent_scheduler_background_loops(app),
+     }
+@@ -800,6 +806,9 @@ pub(in crate::app::dispatch) fn action_for_reset(
+         ("toolset.ask_user_question.timeout_enabled", SettingValue::Bool(b)) => {
+             Some(Action::SetAskUserQuestionTimeoutEnabled(*b))
+         }
++        ("workflows.builtins.deep-research", SettingValue::Bool(b)) => {
++            Some(Action::SetWorkflowBuiltinDeepResearch(*b))
++        }
+         ("keep_text_selection", SettingValue::Enum(s)) => {
+             crate::appearance::TextSelection::from_canonical(s).map(Action::SetKeepTextSelection)
+         }
+@@ -1161,6 +1170,13 @@ pub(in crate::app::dispatch) fn apply_setting_rollback(
+                 set_ask_user_question_timeout_enabled_inner(app, *b);
+             }
+         }
++        ("workflows.builtins.deep-research", SettingValue::Bool(b)) => {
++            if Some(*b) == pr13_effective_default("workflows.builtins.deep-research") {
++                app.workflow_builtin_deep_research = None;
++            } else {
++                set_workflow_builtin_deep_research_inner(app, *b);
++            }
++        }
+         ("show_thinking_blocks", SettingValue::Bool(b)) => set_show_thinking_blocks_inner(app, *b),
+         ("group_tool_verbs", SettingValue::Bool(b)) => set_group_tool_verbs_inner(app, *b),
+         ("collapsed_edit_blocks", SettingValue::Bool(b)) => {
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
+index 228dc205..eca312fe 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
+@@ -185,6 +185,7 @@ fn test_app() -> AppView {
+         show_tips: None,
+         auto_update: None,
+         ask_user_question_timeout_enabled: None,
++        workflow_builtin_deep_research: None,
+         zdr_access_enabled: false,
+         usage_billing_redirect_url: None,
+         access_gate_shown_logged: false,
+diff --git a/crates/codegen/xai-grok-pager/src/app/effects/helpers.rs b/crates/codegen/xai-grok-pager/src/app/effects/helpers.rs
+index c25a8dfe..36ef1a5b 100644
+--- a/crates/codegen/xai-grok-pager/src/app/effects/helpers.rs
++++ b/crates/codegen/xai-grok-pager/src/app/effects/helpers.rs
+@@ -1331,6 +1331,18 @@ pub(crate) async fn persist_setting(
+                 .await
+                 .map_err(|e| e.to_string())
+         }
++        "workflows.builtins.deep-research" => {
++            let SettingValue::Bool(b) = value else {
++                return Err(kind_mismatch(
++                    "workflows.builtins.deep-research",
++                    "Bool",
++                    &value,
++                ));
++            };
++            xai_grok_shell::util::config::set_workflow_builtin_deep_research(b)
++                .await
++                .map_err(|e| e.to_string())
++        }
+         "show_thinking_blocks" => {
+             let SettingValue::Bool(b) = value else {
+                 return Err(kind_mismatch("show_thinking_blocks", "Bool", &value));
+diff --git a/crates/codegen/xai-grok-pager/src/app/event_loop.rs b/crates/codegen/xai-grok-pager/src/app/event_loop.rs
+index 47c40c58..294c7afb 100644
+--- a/crates/codegen/xai-grok-pager/src/app/event_loop.rs
++++ b/crates/codegen/xai-grok-pager/src/app/event_loop.rs
+@@ -1758,6 +1758,7 @@ pub(crate) async fn run(
+     app.show_tips = config_session_bools.show_tips;
+     app.auto_update = config_session_bools.auto_update;
+     app.ask_user_question_timeout_enabled = config_session_bools.ask_user_question_timeout_enabled;
++    app.workflow_builtin_deep_research = config_session_bools.workflow_builtin_deep_research;
+     // Prime thread-local caches so first render doesn't hit disk.
+     crate::appearance::cache::prime(&app.current_ui);
+     // Apply the remote soft default for text selection (flash | hold | word_select) when the
+@@ -3436,6 +3437,7 @@ struct InitialConfigSessionBools {
+     show_tips: Option<bool>,
+     auto_update: Option<bool>,
+     ask_user_question_timeout_enabled: Option<bool>,
++    workflow_builtin_deep_research: Option<bool>,
+ }
+ 
+ fn load_initial_config_session_bools() -> InitialConfigSessionBools {
+@@ -3451,6 +3453,11 @@ fn load_initial_config_session_bools() -> InitialConfigSessionBools {
+             .and_then(|t| t.get("ask_user_question"))
+             .and_then(|a| a.get("timeout_enabled"))
+             .and_then(|v| v.as_bool()),
++        workflow_builtin_deep_research: root
++            .get("workflows")
++            .and_then(|t| t.get("builtins"))
++            .and_then(|b| b.get("deep-research"))
++            .and_then(|v| v.as_bool()),
+     }
+ }
+ 
+diff --git a/crates/codegen/xai-grok-pager/src/settings/defs.rs b/crates/codegen/xai-grok-pager/src/settings/defs.rs
+index 02d724e0..4a03c9af 100644
+--- a/crates/codegen/xai-grok-pager/src/settings/defs.rs
++++ b/crates/codegen/xai-grok-pager/src/settings/defs.rs
+@@ -1298,6 +1298,28 @@ pub fn default_settings() -> Vec<SettingMeta> {
+             restart_required: true,
+             hidden_in_minimal: false,
+         },
++        // SHELL-owned `[workflows.builtins] deep-research`. Default ON (stock
++        // compiled-in workflow). Off hides /deep-research so a same-named
++        // plugin skill can own the bare slash command. Restart-required.
++        SettingMeta {
++            key: "workflows.builtins.deep-research",
++            category: SettingCategory::Agent,
++            owner: SettingOwner::Shell,
++            label: "Built-in deep-research workflow",
++            description: "When off, hide Grok's compiled-in /deep-research workflow so a plugin \
++                          skill of the same name can own the slash command. Other workflows stay \
++                          available. Restart required.",
++            keywords: &[
++                "workflow",
++                "deep-research",
++                "builtin",
++                "research",
++                "slash",
++            ],
++            kind: SettingKind::Bool { default: true },
++            restart_required: true,
++            hidden_in_minimal: false,
++        },
+         // PAGER-owned, ACP-mediated. Reads from
+         // `PagerLocalSnapshot.plan_mode_active`. Default "off" matches
+         // `AgentView::new`'s `plan_mode_active = false`.
+diff --git a/crates/codegen/xai-grok-pager/src/settings/registry.rs b/crates/codegen/xai-grok-pager/src/settings/registry.rs
+index eb37fff5..2117d12d 100644
+--- a/crates/codegen/xai-grok-pager/src/settings/registry.rs
++++ b/crates/codegen/xai-grok-pager/src/settings/registry.rs
+@@ -296,6 +296,8 @@ pub struct PagerLocalSnapshot {
+     /// `[toolset.ask_user_question].timeout_enabled` mirror (effective TOML
+     /// merge, like `show_tips`). `None` = unset in TOML → default `true`.
+     pub ask_user_question_timeout_enabled: Option<bool>,
++    /// `[workflows.builtins] deep-research` mirror. `None` = unset → default `true`.
++    pub workflow_builtin_deep_research: Option<bool>,
+     /// Live `voice_config.language` at snapshot time. Lets the modal show the
+     /// language actually in effect when `[ui].voice_stt_language` is unset but
+     /// an explicit `[voice].language` applies.
+@@ -328,6 +330,7 @@ impl Default for PagerLocalSnapshot {
+             respect_manual_folds: crate::appearance::ScrollConfig::default().respect_manual_folds,
+             auto_mode_gate: false,
+             ask_user_question_timeout_enabled: None,
++            workflow_builtin_deep_research: None,
+             voice_stt_language: xai_grok_voice::STT_LANGUAGE_DEFAULT.to_string(),
+             // Matches `resolve_scheduler_background_loops`'s default.
+             scheduler_background_loops: true,
+@@ -671,6 +674,9 @@ pub fn current_value_for(
+                 .ask_user_question_timeout_enabled
+                 .unwrap_or(ask_user_question::DEFAULT_ASK_USER_QUESTION_TIMEOUT_ENABLED),
+         )),
++        "workflows.builtins.deep-research" => Some(SettingValue::Bool(
++            pager.workflow_builtin_deep_research.unwrap_or(true),
++        )),
+         // default_selected_permission: maps `[ui].default_selected_permission`
+         // onto one of the four registry canonicals. `None` / unrecognised on
+         // disk → `always_allow_all_sessions` (the effective default — the
+@@ -1005,6 +1011,12 @@ mod tests {
+                          shared resolver const in xai-grok-tools"
+                     );
+                 }
++                ("workflows.builtins.deep-research", SettingKind::Bool { default }) => {
++                    assert_eq!(
++                        *default, true,
++                        "workflows.builtins.deep-research default must be ON (stock builtin)"
++                    );
++                }
+                 // show_thinking_blocks: Option<bool>; None → true (client default).
+                 ("show_thinking_blocks", SettingKind::Bool { default }) => {
+                     assert_eq!(
+diff --git a/crates/codegen/xai-grok-pager/src/views/settings_modal/state.rs b/crates/codegen/xai-grok-pager/src/views/settings_modal/state.rs
+index b6c54c29..684915a7 100644
+--- a/crates/codegen/xai-grok-pager/src/views/settings_modal/state.rs
++++ b/crates/codegen/xai-grok-pager/src/views/settings_modal/state.rs
+@@ -897,6 +897,7 @@ pub(super) fn action_for_bool(key: SettingKey, new: bool) -> Option<Action> {
+         "toolset.ask_user_question.timeout_enabled" => {
+             Some(Action::SetAskUserQuestionTimeoutEnabled(new))
+         }
++        "workflows.builtins.deep-research" => Some(Action::SetWorkflowBuiltinDeepResearch(new)),
+         "show_thinking_blocks" => Some(Action::SetShowThinkingBlocks(new)),
+         "group_tool_verbs" => Some(Action::SetGroupToolVerbs(new)),
+         "collapsed_edit_blocks" => Some(Action::SetCollapsedEditBlocks(new)),
+diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
+index dcb5d8e0..b5fafa13 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/config.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
+@@ -2815,6 +2815,14 @@ impl Config {
+             .default(true)
+             .resolve()
+     }
++    /// Built-in deep-research workflow switch (`[workflows.builtins] deep-research`).
++    /// Default ON (`true`). Explicit `false` drops the compiled-in deep-research workflow.
++    pub(crate) fn resolve_workflow_builtin_deep_research(&self) -> Resolved<bool> {
++        BoolFlag::env_value(None)
++            .config(self.workflows.builtins.deep_research)
++            .default(true)
++            .resolve()
++    }
+     /// Classifier, planner, and summary all default to goal mode itself: when
+     /// `/goal` is on they are on unless config/env/remote says otherwise.
+     /// `goal_enabled` is the session's already-resolved master switch (the same
+@@ -4606,6 +4614,14 @@ pub struct GoalConfig {
+ pub struct WorkflowsConfig {
+     #[serde(skip_serializing_if = "Option::is_none")]
+     pub enabled: Option<bool>,
++    #[serde(default)]
++    pub builtins: WorkflowBuiltinsConfig,
++}
++#[derive(Clone, Debug, Default, Serialize, Deserialize)]
++#[serde(default)]
++pub struct WorkflowBuiltinsConfig {
++    #[serde(rename = "deep-research", default, skip_serializing_if = "Option::is_none")]
++    pub deep_research: Option<bool>,
+ }
+ /// `[auto_mode]` section: server-side configuration for Auto permission mode.
+ /// ONE struct serves both the local `[auto_mode]` TOML table and the remote
+diff --git a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
+index 7c0df0b9..3a1e98d8 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
+@@ -4251,6 +4251,46 @@ fn resolve_workflows_env_wins() {
+     );
+     unsafe { std::env::remove_var("GROK_WORKFLOWS") };
+ }
++#[test]
++#[serial]
++fn toml_deser_workflows_builtins_deep_research() {
++    let toml_str = r#"
++[workflows.builtins]
++deep-research = false
++"#;
++    let raw: toml::Value = toml::from_str(toml_str).unwrap();
++    let cfg = Config::new_from_toml_cfg(&raw).unwrap();
++    assert_eq!(cfg.workflows.builtins.deep_research, Some(false));
++    assert!(!cfg.resolve_workflow_builtin_deep_research().value);
++
++    let toml_empty = "";
++    let raw_empty: toml::Value = toml::from_str(toml_empty).unwrap();
++    let cfg_empty = Config::new_from_toml_cfg(&raw_empty).unwrap();
++    assert_eq!(cfg_empty.workflows.builtins.deep_research, None);
++    assert!(cfg_empty.resolve_workflow_builtin_deep_research().value);
++}
++
++#[test]
++#[serial]
++fn resolve_workflow_builtin_deep_research_default_on() {
++    let cfg = Config::default();
++    assert!(cfg.resolve_workflow_builtin_deep_research().value);
++    assert_eq!(
++        cfg.resolve_workflow_builtin_deep_research().source,
++        ConfigSource::Default
++    );
++}
++
++#[test]
++#[serial]
++fn resolve_workflow_builtin_deep_research_explicit_false() {
++    let mut cfg = Config::default();
++    cfg.workflows.builtins.deep_research = Some(false);
++    let r = cfg.resolve_workflow_builtin_deep_research();
++    assert!(!r.value);
++    assert_eq!(r.source, ConfigSource::Config);
++}
++
+ #[test]
+ #[serial]
+ fn resolve_image_gen_model_override_remote_settings_or_config() {
+diff --git a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs
+index 5909f485..6a45fd83 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs
+@@ -623,6 +623,7 @@ impl MvpAgent {
+         crate::session::slash_commands::CommandAvailability {
+             goal: self.cfg.borrow().resolve_goal().value,
+             workflows: self.cfg.borrow().resolve_workflows().value,
++            builtin_deep_research: self.cfg.borrow().resolve_workflow_builtin_deep_research().value,
+             ..crate::session::slash_commands::CommandAvailability::default()
+         }
+     }
+@@ -4600,6 +4601,8 @@ impl MvpAgent {
+             .is_feature_enabled(crate::agent::config::Feature::ActiveAgentMessages);
+         let goal_enabled = self.cfg.borrow().resolve_goal().value;
+         let background_workflows_enabled = self.cfg.borrow().resolve_workflows().value;
++        let builtin_deep_research_enabled =
++            self.cfg.borrow().resolve_workflow_builtin_deep_research().value;
+         let subagents_enabled = self.cfg.borrow().subagents_enabled;
+         let subagents_max_depth = self.cfg.borrow().subagents_max_depth;
+         let workflow_max_concurrent_agents = self
+@@ -4863,6 +4866,7 @@ impl MvpAgent {
+                     active_agent_messages_enabled,
+                     goal_enabled,
+                     background_workflows_enabled,
++                    builtin_deep_research_enabled,
+                     subagents_enabled,
+                     subagents_max_depth,
+                     workflow_max_concurrent_agents,
+diff --git a/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs b/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs
+index ff1eb95b..4936616b 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs
+@@ -1119,6 +1119,7 @@ pub(crate) async fn run_shell_child(
+         ctx.goal_enabled,
+         ctx.background_workflows_enabled,
+         true,
++        true,
+         ctx.subagents_max_depth,
+         ctx.workflow_max_concurrent_agents,
+         ctx.media_gen_batch_limits,
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session.rs b/crates/codegen/xai-grok-shell/src/session/acp_session.rs
+index 3e827af7..a1752ca2 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session.rs
+@@ -919,6 +919,7 @@ pub(crate) struct SessionActor {
+     /// Whether goal mode (`/goal`) is enabled for this session (feature flag).
+     pub(crate) goal_enabled: bool,
+     pub(crate) background_workflows_enabled: bool,
++    pub(crate) builtin_deep_research_enabled: bool,
+     goal_harness_enabled: std::sync::atomic::AtomicBool,
+     goal_harness_availability_reconciled: std::sync::atomic::AtomicBool,
+     /// Goal mode orchestration tracker. Session-scoped state for the
+@@ -1399,6 +1400,7 @@ impl SessionActor {
+                 n == xai_grok_tools::implementations::grok_build::workflow::WORKFLOW_TOOL_NAME
+             }),
+             workflow_management: false,
++            builtin_deep_research: self.builtin_deep_research_enabled,
+         }
+     }
+     /// Names of every tool registered with the session's tool bridge.
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
+index a338f59b..aaea6a77 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
+@@ -265,6 +265,7 @@ pub(crate) async fn spawn_session_actor(
+     active_agent_messages_enabled: bool,
+     goal_enabled: bool,
+     background_workflows_enabled: bool,
++    builtin_deep_research_enabled: bool,
+     subagents_enabled: bool,
+     subagents_max_depth: u32,
+     workflow_max_concurrent_agents: usize,
+@@ -1416,7 +1417,11 @@ pub(crate) async fn spawn_session_actor(
+                     });
+                     continue;
+                 }
+-                let registry_snapshot = registry::WorkflowRegistry::scan(Some(&launch_cwd));
++                let mut registry_snapshot = registry::WorkflowRegistry::scan(Some(&launch_cwd));
++                if !builtin_deep_research_enabled {
++                    registry_snapshot =
++                        registry_snapshot.without_compiled_in(&["deep-research"]);
++                }
+                 use xai_grok_tools::implementations::grok_build::workflow::WorkflowSource;
+                 let resolved = match &input.source {
+                     WorkflowSource::Name { name } => registry_snapshot.resolve_by_name(name),
+@@ -1747,6 +1752,7 @@ pub(crate) async fn spawn_session_actor(
+         plan_mode: plan_mode.clone(),
+         goal_enabled,
+         background_workflows_enabled,
++        builtin_deep_research_enabled,
+         goal_harness_enabled: std::sync::atomic::AtomicBool::new(if background_workflows_enabled {
+             goal_enabled
+         } else {
+@@ -2334,6 +2340,7 @@ pub(crate) async fn spawn_session_on_thread(
+     active_agent_messages_enabled: bool,
+     goal_enabled: bool,
+     background_workflows_enabled: bool,
++    builtin_deep_research_enabled: bool,
+     subagents_enabled: bool,
+     subagents_max_depth: u32,
+     workflow_max_concurrent_agents: usize,
+@@ -2514,6 +2521,7 @@ pub(crate) async fn spawn_session_on_thread(
+                         active_agent_messages_enabled,
+                         goal_enabled,
+                         background_workflows_enabled,
++                        builtin_deep_research_enabled,
+                         subagents_enabled,
+                         subagents_max_depth,
+                         workflow_max_concurrent_agents,
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/workflow.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/workflow.rs
+index f921b3eb..5d1747e2 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/workflow.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/workflow.rs
+@@ -12,9 +12,15 @@ impl SessionActor {
+     ) {
+         #[cfg(test)]
+         crate::session::slash_authority::record_workflow_discovery_call();
+-        crate::session::workflow::registry::workflow_snapshot(Some(std::path::Path::new(
+-            self.session_info.cwd.as_str(),
+-        )))
++        let (mut registry, _) =
++            crate::session::workflow::registry::workflow_snapshot(Some(std::path::Path::new(
++                self.session_info.cwd.as_str(),
++            )));
++        if !self.builtin_deep_research_enabled {
++            registry = registry.without_compiled_in(&["deep-research"]);
++        }
++        let listings = registry.list();
++        (registry, listings)
+     }
+ 
+     /// Model-facing catalog of launchable workflows, or `None` when
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/cancel_running_task_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/cancel_running_task_tests.rs
+index fc7c58f9..7ac68ffb 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/cancel_running_task_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/cancel_running_task_tests.rs
+@@ -235,6 +235,7 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
+                 )),
+                 goal_enabled: false,
+                 background_workflows_enabled: false,
++                builtin_deep_research_enabled: false,
+                 goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
+                 goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
+                 goal_tracker: Arc::new(parking_lot::Mutex::new(
+@@ -729,6 +730,7 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
+                 )),
+                 goal_enabled: false,
+                 background_workflows_enabled: false,
++                builtin_deep_research_enabled: false,
+                 goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
+                 goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
+                 goal_tracker: Arc::new(parking_lot::Mutex::new(
+@@ -1039,6 +1041,7 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
+                 ),
+                 goal_enabled: false,
+                 background_workflows_enabled: false,
++                builtin_deep_research_enabled: false,
+                 goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
+                 goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(
+                     false,
+@@ -2593,6 +2596,7 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
+                 ),
+                 goal_enabled: false,
+                 background_workflows_enabled: false,
++                builtin_deep_research_enabled: false,
+                 goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
+                 goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(
+                     false,
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/idle_resume_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/idle_resume_tests.rs
+index 1eaad2f6..1609cb67 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/idle_resume_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/idle_resume_tests.rs
+@@ -261,6 +261,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
+                 )),
+                 goal_enabled: false,
+                 background_workflows_enabled: false,
++                builtin_deep_research_enabled: false,
+                 goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
+                 goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
+                 goal_tracker: Arc::new(parking_lot::Mutex::new(
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/inline_auto_compact_flow_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/inline_auto_compact_flow_tests.rs
+index 41e0018e..1fa98a65 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/inline_auto_compact_flow_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/inline_auto_compact_flow_tests.rs
+@@ -189,6 +189,7 @@ async fn create_test_actor(
+         )),
+         goal_enabled: false,
+         background_workflows_enabled: false,
++        builtin_deep_research_enabled: false,
+         goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
+         goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
+         goal_tracker: Arc::new(parking_lot::Mutex::new(
+@@ -669,6 +670,7 @@ async fn create_test_actor_with_memory(
+         )),
+         goal_enabled: false,
+         background_workflows_enabled: false,
++        builtin_deep_research_enabled: false,
+         goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
+         goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
+         goal_tracker: Arc::new(parking_lot::Mutex::new(
+@@ -1466,6 +1468,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
+                 )),
+                 goal_enabled: false,
+                 background_workflows_enabled: false,
++                builtin_deep_research_enabled: false,
+                 goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
+                 goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
+                 goal_tracker: Arc::new(parking_lot::Mutex::new(
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/memory_config_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/memory_config_tests.rs
+index 43a9f060..49d1746b 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/memory_config_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/memory_config_tests.rs
+@@ -260,6 +260,7 @@ async fn create_test_actor_with_memory(
+         )),
+         goal_enabled: false,
+         background_workflows_enabled: false,
++        builtin_deep_research_enabled: false,
+         goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
+         goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
+         goal_tracker: Arc::new(parking_lot::Mutex::new(
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/replay_buffer_send_update_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/replay_buffer_send_update_tests.rs
+index bd540442..c7088504 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/replay_buffer_send_update_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/replay_buffer_send_update_tests.rs
+@@ -194,6 +194,7 @@ pub(super) async fn make_replay_send_update_fixture() -> ReplaySendUpdateFixture
+         )),
+         goal_enabled: false,
+         background_workflows_enabled: false,
++        builtin_deep_research_enabled: false,
+         goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
+         goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
+         goal_tracker: Arc::new(parking_lot::Mutex::new(
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs
+index cb896bea..0b20064b 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs
+@@ -375,6 +375,7 @@ pub(crate) async fn create_test_actor_with_terminal(
+         )),
+         goal_enabled: false,
+         background_workflows_enabled: false,
++        builtin_deep_research_enabled: false,
+         goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
+         goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
+         goal_tracker: Arc::new(parking_lot::Mutex::new(
+diff --git a/crates/codegen/xai-grok-shell/src/session/compaction_inline_auto_compact_flow_tests.rs b/crates/codegen/xai-grok-shell/src/session/compaction_inline_auto_compact_flow_tests.rs
+index 1bb081ef..e4f38063 100644
+--- a/crates/codegen/xai-grok-shell/src/session/compaction_inline_auto_compact_flow_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/session/compaction_inline_auto_compact_flow_tests.rs
+@@ -190,6 +190,7 @@ async fn create_test_actor(
+         )),
+         goal_enabled: false,
+         background_workflows_enabled: false,
++        builtin_deep_research_enabled: false,
+         goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
+         goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
+         goal_tracker: Arc::new(parking_lot::Mutex::new(
+diff --git a/crates/codegen/xai-grok-shell/src/session/slash_commands.rs b/crates/codegen/xai-grok-shell/src/session/slash_commands.rs
+index 6cb3114e..9bdad618 100644
+--- a/crates/codegen/xai-grok-shell/src/session/slash_commands.rs
++++ b/crates/codegen/xai-grok-shell/src/session/slash_commands.rs
+@@ -407,7 +407,7 @@ const PROMPT_COMMANDS: &[BuiltinCommand] = &[BuiltinCommand {
+ /// In test code, prefer `all_enabled()` when the gating itself isn't
+ /// under test -- otherwise the test will silently lose coverage of any
+ /// gated builtin.
+-#[derive(Debug, Clone, Copy, Default)]
++#[derive(Debug, Clone, Copy)]
+ pub(crate) struct CommandAvailability {
+     pub feedback: bool,
+     /// Memory backend is enabled AND the active toolset includes the
+@@ -427,6 +427,30 @@ pub(crate) struct CommandAvailability {
+     pub goal: bool,
+     pub workflows: bool,
+     pub workflow_management: bool,
++    pub builtin_deep_research: bool,
++}
++
++impl Default for CommandAvailability {
++    fn default() -> Self {
++        Self {
++            feedback: false,
++            memory: false,
++            memory_configured: false,
++            scheduler: false,
++            hooks: false,
++            plugins: false,
++            goal: false,
++            workflows: false,
++            workflow_management: false,
++            builtin_deep_research: true,
++        }
++    }
++}
++fn advertise_builtin(cmd: &BuiltinCommand, availability: CommandAvailability) -> bool {
++    if cmd.name == "deep-research" && !availability.builtin_deep_research {
++        return false;
++    }
++    availability.allows(cmd.gate)
+ }
+ impl CommandAvailability {
+     /// `true` if commands gated on `gate` should be advertised this session.
+@@ -458,6 +482,7 @@ impl CommandAvailability {
+             goal: true,
+             workflows: true,
+             workflow_management: true,
++            builtin_deep_research: true,
+         }
+     }
+ }
+@@ -719,7 +744,7 @@ impl<'a> EffectiveCommandCatalog<'a> {
+         let builtins: Vec<_> = BUILTIN_COMMANDS
+             .iter()
+             .chain(PROMPT_COMMANDS.iter())
+-            .filter(|builtin| availability.allows(builtin.gate))
++            .filter(|builtin| advertise_builtin(builtin, availability))
+             .collect();
+         let effective_skills = EffectiveSkillCatalog::build(skills, &builtins);
+         let taken = &effective_skills.taken;
+@@ -873,7 +898,7 @@ pub(super) fn available_commands(
+ pub(crate) fn builtin_commands(availability: CommandAvailability) -> Vec<acp::AvailableCommand> {
+     BUILTIN_COMMANDS
+         .iter()
+-        .filter(|cmd| availability.allows(cmd.gate))
++        .filter(|cmd| advertise_builtin(cmd, availability))
+         .map(|cmd| {
+             acp::AvailableCommand::new(cmd.name.to_string(), cmd.description.to_string()).input(
+                 cmd.argument_hint.map(|hint| {
+@@ -1233,12 +1258,15 @@ pub(crate) async fn list_commands(
+         compat,
+     )
+     .await;
+-    let workflows = crate::session::workflow::registry::list_workflows(
+-        include_project_workflows
+-            .then_some(cwd)
+-            .flatten()
+-            .map(std::path::Path::new),
+-    );
++    let session_cwd = include_project_workflows
++        .then_some(cwd)
++        .flatten()
++        .map(std::path::Path::new);
++    let mut registry = crate::session::workflow::registry::WorkflowRegistry::scan(session_cwd);
++    if !availability.builtin_deep_research {
++        registry = registry.without_compiled_in(&["deep-research"]);
++    }
++    let workflows = registry.list();
+     Ok(ListCommandsResponse {
+         commands: available_commands(&skills, availability, &workflows),
+         tools: None,
+diff --git a/crates/codegen/xai-grok-shell/src/session/slash_commands_tests.rs b/crates/codegen/xai-grok-shell/src/session/slash_commands_tests.rs
+index 3b2b6734..4a71c58c 100644
+--- a/crates/codegen/xai-grok-shell/src/session/slash_commands_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/session/slash_commands_tests.rs
+@@ -1734,6 +1734,39 @@ fn listing(name: &str) -> crate::session::workflow::registry::WorkflowListing {
+     }
+ }
+ 
++#[test]
++fn builtin_deep_research_disabled_allows_unique_skill_to_own_bare_name() {
++    let skill = make_plugin_skill("deep-research", "deep-research");
++    let availability_off = CommandAvailability {
++        builtin_deep_research: false,
++        ..CommandAvailability::all_enabled()
++    };
++    let commands = available_commands(&[skill.clone()], availability_off, &[]);
++    let dr_cmds: Vec<_> = commands
++        .iter()
++        .filter(|c| c.name == "deep-research")
++        .collect();
++    assert_eq!(dr_cmds.len(), 1);
++    let cmd = dr_cmds[0];
++    let meta = cmd.meta.as_ref().expect("skill metadata");
++    assert_eq!(meta.get("bareName").and_then(|v| v.as_str()), Some("deep-research"));
++
++    let availability_on = CommandAvailability {
++        builtin_deep_research: true,
++        ..CommandAvailability::all_enabled()
++    };
++    let commands_on = available_commands(&[skill], availability_on, &[]);
++    let bare_cmds: Vec<_> = commands_on
++        .iter()
++        .filter(|c| c.name == "deep-research")
++        .collect();
++    assert_eq!(bare_cmds.len(), 1);
++    assert_eq!(
++        bare_cmds[0].description,
++        "Research with bounded parallel agents, cross-check evidence, and write a cited report"
++    );
++}
++
+ #[test]
+ fn same_named_builtin_projects_workflow_metadata_without_replacing_command() {
+     let workflow = crate::session::workflow::registry::WorkflowListing {
+diff --git a/crates/codegen/xai-grok-shell/src/session/workflow/registry.rs b/crates/codegen/xai-grok-shell/src/session/workflow/registry.rs
+index fae7d559..84b688a9 100644
+--- a/crates/codegen/xai-grok-shell/src/session/workflow/registry.rs
++++ b/crates/codegen/xai-grok-shell/src/session/workflow/registry.rs
+@@ -155,6 +155,15 @@ impl WorkflowRegistry {
+         }
+     }
+ 
++    pub(crate) fn without_compiled_in(mut self, names: &[&str]) -> Self {
++        self.entries.retain(|entry| {
++            let is_target = names.iter().any(|&n| n == entry.meta.name);
++            let is_compiled = entry.source_label == "builtin" || matches!(entry.source, WorkflowSource::Builtin);
++            !(is_target && is_compiled)
++        });
++        self
++    }
++
+     pub(crate) fn resolve_by_name(&self, name: &str) -> Result<ResolvedWorkflow, ResolveError> {
+         validate_workflow_name(name)?;
+         Ok(resolved_entry(self.resolve_entry(name)?))
+@@ -681,6 +690,18 @@ mod tests {
+         format!("let meta = #{{ name: \"{name}\", description: \"d\" }};\ncomplete(\"ok\");")
+     }
+ 
++    #[test]
++    fn without_compiled_in_drops_builtin_deep_research_and_resolve_fails() {
++        let registry = WorkflowRegistry::scan(None);
++        assert!(registry.resolve_by_name("deep-research").is_ok());
++        let filtered = registry.without_compiled_in(&["deep-research"]);
++        assert!(matches!(
++            filtered.resolve_by_name("deep-research"),
++            Err(ResolveError::UnknownName(name)) if name == "deep-research"
++        ));
++        assert!(!filtered.list().iter().any(|entry| entry.name == "deep-research"));
++    }
++
+     #[test]
+     fn inline_resolution_validates_name_and_size() {
+         let ok = resolve_inline(script("valid-name"));
+diff --git a/crates/codegen/xai-grok-shell/src/test_support/lsp_runtime.rs b/crates/codegen/xai-grok-shell/src/test_support/lsp_runtime.rs
+index 357ee0d9..6f223932 100644
+--- a/crates/codegen/xai-grok-shell/src/test_support/lsp_runtime.rs
++++ b/crates/codegen/xai-grok-shell/src/test_support/lsp_runtime.rs
+@@ -83,6 +83,7 @@ pub(crate) fn ctx_with_toggle(toggle: HashMap<String, bool>) -> SubagentSpawnCon
+         write_file_enabled: true,
+         goal_enabled: false,
+         background_workflows_enabled: false,
++        builtin_deep_research_enabled: false,
+         ask_user_question_enabled: false,
+         parent_non_interactive: false,
+         parent_cmd_tx: None,
+diff --git a/crates/codegen/xai-grok-shell/src/util/config/settings_writes.rs b/crates/codegen/xai-grok-shell/src/util/config/settings_writes.rs
+index 4e76e9c1..0a238e30 100644
+--- a/crates/codegen/xai-grok-shell/src/util/config/settings_writes.rs
++++ b/crates/codegen/xai-grok-shell/src/util/config/settings_writes.rs
+@@ -322,6 +322,11 @@ pub async fn set_ask_user_question_timeout_enabled(value: bool) -> Result<()> {
+     update_config(|cfg| cfg.ask_user_question.timeout_enabled = Some(value)).await
+ }
+ 
++/// Persist `[workflows.builtins] deep-research` via `update_config`.
++pub async fn set_workflow_builtin_deep_research(value: bool) -> Result<()> {
++    update_config(|cfg| cfg.workflows.builtins.deep_research = Some(value)).await
++}
++
+ /// Persist `[ui].group_tool_verbs` via `update_config`.
+ pub async fn set_group_tool_verbs(value: bool) -> Result<()> {
+     update_config(|cfg| cfg.ui.group_tool_verbs = Some(value)).await

@@ -8,7 +8,7 @@ GROKGOD_REPO="${GROKGOD_REPO:-https://github.com/karlorz/grokgod}"
 GROKGOD_VERSION="${GROKGOD_VERSION:-}"
 
 # Base commit that source patches were authored against (mirrors patches/README.md)
-PINNED_BASE_SHA=c2ad97f87aea4303b6000a2c22128bc91ee76c9b
+PINNED_BASE_SHA=9684fa3cdbf2995e30ea8b9b637f1db008f144fc
 
 GROKGOD_HOME="${GROKGOD_HOME:-$HOME/.grokgod}"
 GROK_HOME="${GROK_HOME:-$HOME/.grok}"
@@ -998,6 +998,45 @@ maybe_merge_plan_mode_config() {
 }
 
 maybe_merge_plan_mode_config
+
+# Merge [workflows.builtins] deep-research = false into ~/.grok/config.toml
+# when the key is missing so the operator plugin can own /deep-research.
+maybe_merge_workflows_builtins_config() {
+  cfg="$GROK_HOME/config.toml"
+  if grep -q '^[[:space:]]*deep-research[[:space:]]*=' "$cfg" 2>/dev/null; then
+    log_info "workflows.builtins deep-research already set in $cfg"
+    return 0
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log_dry "Would merge [workflows.builtins] deep-research = false into $cfg"
+    return 0
+  fi
+  mkdir -p "$GROK_HOME"
+  if [ -f "$cfg" ] && grep -q '^[[:space:]]*\[workflows\.builtins\]' "$cfg"; then
+    tmp="$cfg.grokgod-workflows-builtins.tmp"
+    awk '
+      BEGIN { added=0 }
+      /^[[:space:]]*\[workflows\.builtins\]/ && added==0 {
+        print
+        print "deep-research = false"
+        added=1
+        next
+      }
+      { print }
+    ' "$cfg" > "$tmp" && mv "$tmp" "$cfg"
+    log_info "Merged deep-research = false into existing [workflows.builtins] in $cfg"
+    return 0
+  fi
+  {
+    if [ -f "$cfg" ] && [ -s "$cfg" ]; then
+      printf '\n'
+    fi
+    printf '[workflows.builtins]\ndeep-research = false\n'
+  } >> "$cfg"
+  log_info "Wrote [workflows.builtins] deep-research = false to $cfg"
+}
+
+maybe_merge_workflows_builtins_config
 
 # ─────────────────────────────────────────────────────────
 # POST-BUILD DISK WARN

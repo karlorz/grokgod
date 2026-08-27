@@ -41,6 +41,10 @@ Mach-O hex.
   true). Skills may write matching PRD markdown while plan mode is Active.
   After `a`, PlanReady tells the model to spawn second-tier implementers
   (not “start coding”). Canonical session `plan.md` is unchanged.
+- `0004` — `[workflows.builtins] deep-research` (default on). Set `false` in
+  config or `/settings` to hide the compiled-in workflow so plugin
+  `deep-research:deep-research` can own `/deep-research`. Install merges
+  `false` when the key is missing.
 
 Local headed grokgod real-session tests use `grok -m flash-max` (see
 [AGENTS.md](AGENTS.md)). The Saturday Weekly pin is the global `~/.grok/config.toml`

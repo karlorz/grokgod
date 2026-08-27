@@ -1,0 +1,7 @@
+# Merge into ~/.grok/config.toml (or rely on grokgod install).
+# Compiled default is true (stock builtin stays). grokgod install writes
+# false when the key is missing so plugin deep-research:deep-research
+# can own /deep-research.
+
+[workflows.builtins]
+deep-research = false

@@ -216,6 +216,7 @@ echo "$STATUS_PERSIST_OUT" | grep -q "^persist:" || { echo "FAIL: status output 
 echo "$STATUS_PERSIST_OUT" | grep -q "  0001-normalize-plugin-skill-join: applied" || { echo "FAIL: status output missing applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
 echo "$STATUS_PERSIST_OUT" | grep -q "  0002-plan-mode-extra-writable: applied" || { echo "FAIL: status output missing 0002 applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
 echo "$STATUS_PERSIST_OUT" | grep -q "  0003-session-persist-single: applied" || { echo "FAIL: status output missing 0003 applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
+echo "$STATUS_PERSIST_OUT" | grep -q "  0004-disable-builtin-deep-research: applied" || { echo "FAIL: status output missing 0004 applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
 echo "$STATUS_PERSIST_OUT" | grep -q "  overlay-pin: wrapper" || { echo "FAIL: status output missing overlay-pin wrapper ($STATUS_PERSIST_OUT)"; exit 1; }
 echo "$STATUS_PERSIST_OUT" | grep -q "  weekly-pin: global-default" || { echo "FAIL: status output missing weekly-pin ($STATUS_PERSIST_OUT)"; exit 1; }
 
@@ -226,6 +227,7 @@ echo "$STATUS_MISSING_OUT" | grep -q "^persist:" || { echo "FAIL: status output 
 echo "$STATUS_MISSING_OUT" | grep -q "  0001-normalize-plugin-skill-join: missing" || { echo "FAIL: status output missing patch missing state ($STATUS_MISSING_OUT)"; exit 1; }
 echo "$STATUS_MISSING_OUT" | grep -q "  0002-plan-mode-extra-writable: missing" || { echo "FAIL: status output missing 0002 missing state ($STATUS_MISSING_OUT)"; exit 1; }
 echo "$STATUS_MISSING_OUT" | grep -q "  0003-session-persist-single: missing" || { echo "FAIL: status output missing 0003 missing state ($STATUS_MISSING_OUT)"; exit 1; }
+echo "$STATUS_MISSING_OUT" | grep -q "  0004-disable-builtin-deep-research: missing" || { echo "FAIL: status output missing 0004 missing state ($STATUS_MISSING_OUT)"; exit 1; }
 echo "$STATUS_MISSING_OUT" | grep -q "  overlay-pin: missing" || { echo "FAIL: status output missing overlay-pin missing state ($STATUS_MISSING_OUT)"; exit 1; }
 echo "$STATUS_MISSING_OUT" | grep -q "  weekly-pin: global-default" || { echo "FAIL: status output missing weekly-pin ($STATUS_MISSING_OUT)"; exit 1; }
 echo "PASS: Test 7"

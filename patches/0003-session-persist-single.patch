@@ -1,5 +1,5 @@
 diff --git a/crates/codegen/xai-grok-config-types/src/lib.rs b/crates/codegen/xai-grok-config-types/src/lib.rs
-index d5f9539e..68c7dd6b 100644
+index 2cf290f9..a3a59a92 100644
 --- a/crates/codegen/xai-grok-config-types/src/lib.rs
 +++ b/crates/codegen/xai-grok-config-types/src/lib.rs
 @@ -69,6 +69,29 @@ impl PlanModeSettings {
@@ -61,7 +61,7 @@ index d09607d7..6eebb51f 100644
               [toolset.bash]\nlogin_shell_capture = false\n\
               [toolset.web_search]\nallowed_domains = [\"docs.x.ai\"]\n",
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
-index bb3c8ca3..9f683647 100644
+index f28d3696..dcb5d8e0 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
 @@ -1715,6 +1715,10 @@ pub struct SessionConfig {
@@ -87,10 +87,10 @@ index bb3c8ca3..9f683647 100644
      /// `[worktree.auto_gc]` TOML > remote `worktree_auto_gc` > defaults.
      /// Platform age-expiry (`process_cwd_scan_available`: linux+macos) is enforced
 diff --git a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/session_setup.rs b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/session_setup.rs
-index 5eaeb0fe..40e91316 100644
+index ff1a4deb..6b49080f 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/session_setup.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/session_setup.rs
-@@ -451,7 +451,14 @@ impl MvpAgent {
+@@ -474,7 +474,14 @@ impl MvpAgent {
                  .unwrap_or_else(|| self.models_manager.current_model_id()),
          };
          let session_model_id = model_id.clone();
@@ -139,10 +139,10 @@ index faceb56c..f619ca3c 100644
              tracing::info!(
                  session_id = %self.session_info.id.0,
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/prompt_build.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/prompt_build.rs
-index 6e9fca2b..7e112d27 100644
+index 87ac821b..c6edf9bf 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/prompt_build.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/prompt_build.rs
-@@ -938,15 +938,24 @@ impl SessionActor {
+@@ -943,15 +943,24 @@ impl SessionActor {
      ) -> Result<String, acp::Error> {
          let prior = self.chat_state_handle.get_conversation().await;
          let outline = crate::session::image_describe::build_conversation_outline(&prior);
@@ -177,10 +177,10 @@ index 6e9fca2b..7e112d27 100644
              .map_err(|e| {
              acp::Error::internal_error()
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/session_setup.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/session_setup.rs
-index 402f4c78..e828af1e 100644
+index f66bec98..22d595b2 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/session_setup.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/session_setup.rs
-@@ -35,7 +35,9 @@ impl SessionActor {
+@@ -36,7 +36,9 @@ impl SessionActor {
      pub(super) async fn initialize(&self, system_prompt: String) {
          let bridge = self.agent.borrow().tool_bridge().clone();
          bridge.on_skill_discovery_clear().await;
@@ -191,7 +191,7 @@ index 402f4c78..e828af1e 100644
          let system_message = ConversationItem::system(system_prompt);
          let mut messages = vec![system_message];
          if let Some(effects) = self.inject_baseline_skill_reminder(&mut messages).await
-@@ -45,7 +47,9 @@ impl SessionActor {
+@@ -46,7 +48,9 @@ impl SessionActor {
          }
          self.chat_state_handle
              .replace_conversation(messages.clone());
@@ -203,11 +203,11 @@ index 402f4c78..e828af1e 100644
      /// Ensure the conversation carries the correct baseline skill (and
      /// workflow) `<system-reminder>`: exactly one for an agent that has
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-index 08f1749e..c39260fd 100644
+index 55489034..a338f59b 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-@@ -1116,9 +1116,11 @@ pub(crate) async fn spawn_session_actor(
-     }
+@@ -1141,9 +1141,11 @@ pub(crate) async fn spawn_session_actor(
+     drop(tool_setup_span);
      crate::waterfall::mark(&wf_sid, crate::waterfall::stage::SB_AGENT_BUILT);
      let system_prompt = agent.system_prompt().to_string();
 -    let mut prompt_context = agent.prompt_context().clone();
@@ -221,7 +221,7 @@ index 08f1749e..c39260fd 100644
      let is_subagent_spawn = startup_hints.is_subagent;
      let session_non_interactive = startup_hints.non_interactive;
      install_system_prompt(
-@@ -1152,10 +1154,12 @@ pub(crate) async fn spawn_session_actor(
+@@ -1177,10 +1179,12 @@ pub(crate) async fn spawn_session_actor(
              permissions.set_project_instructions(Some(body));
          }
      }
@@ -238,7 +238,7 @@ index 08f1749e..c39260fd 100644
      }
      let initial_prefix_carries_fallback_date = resumed_prefix_carries_fallback_date(
          agent
-@@ -1164,7 +1168,9 @@ pub(crate) async fn spawn_session_actor(
+@@ -1189,7 +1193,9 @@ pub(crate) async fn spawn_session_actor(
              .surfaces_local_date(),
          &conversation,
      );
@@ -249,7 +249,7 @@ index 08f1749e..c39260fd 100644
      chat_state_handle.replace_conversation(conversation);
      let feedback_client = feedback_proxy_url.map(|base_url| {
          let mut client =
-@@ -1612,6 +1618,7 @@ pub(crate) async fn spawn_session_actor(
+@@ -1619,6 +1625,7 @@ pub(crate) async fn spawn_session_actor(
              gateway_enabled: gateway_enabled.clone(),
              persistence_tx: persistence.tx.clone(),
              disk_full: persistence.subscribe_disk_full(),
@@ -258,34 +258,106 @@ index 08f1749e..c39260fd 100644
          permissions,
          tool_context,
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/turn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/turn.rs
-index e3de1099..ee094a79 100644
+index fe490c62..f3c84bb2 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/turn.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/turn.rs
-@@ -775,6 +775,19 @@ impl SessionActor {
-         } else if self.is_cursor_harness() {
-             self.transcribe_user_images(user_message, &user_images)
-                 .await?
-+        } else if self.notifications.is_persistence_noop() {
-+            let tmp_assets = tempfile::tempdir().map_err(|e| {
-+                acp::Error::internal_error().data(format!("failed to create temp dir for images: {e}"))
-+            })?;
-+            crate::session::image_describe::persist_and_prepend_image_files(
-+                tmp_assets.path(),
-+                &user_images,
-+                &user_message,
-+            )
-+            .map_err(|e| {
-+                acp::Error::internal_error()
-+                    .data(format!("failed to save user images to assets dir: {e}"))
-+            })?
-         } else {
-             let session_dir = crate::session::persistence::ensure_owner_only_session_dir(
-                 &crate::session::info::Info {
+@@ -910,6 +910,19 @@ impl SessionActor {
+             } else if self.is_cursor_harness() {
+                 self.transcribe_user_images(user_message, &user_images)
+                     .await?
++            } else if self.notifications.is_persistence_noop() {
++                let tmp_assets = tempfile::tempdir().map_err(|e| {
++                    acp::Error::internal_error().data(format!("failed to create temp dir for images: {e}"))
++                })?;
++                crate::session::image_describe::persist_and_prepend_image_files(
++                    tmp_assets.path(),
++                    &user_images,
++                    &user_message,
++                )
++                .map_err(|e| {
++                    acp::Error::internal_error()
++                        .data(format!("failed to save user images to assets dir: {e}"))
++                })?
+             } else {
+                 let session_dir = crate::session::persistence::ensure_owner_only_session_dir(
+                     &crate::session::info::Info {
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/cancel_running_task_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/cancel_running_task_tests.rs
+index cd422c23..fc7c58f9 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/cancel_running_task_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/cancel_running_task_tests.rs
+@@ -924,6 +924,7 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
+                     ),
+                     persistence_tx,
+                     disk_full: crate::session::notifications::idle_disk_full_rx(),
++                    is_persistence_noop: false,
+                 },
+                 permissions: PermissionHandle::allow_all(),
+                 tool_context,
+@@ -2477,6 +2478,7 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
+                     ),
+                     persistence_tx,
+                     disk_full: crate::session::notifications::idle_disk_full_rx(),
++                    is_persistence_noop: false,
+                 },
+                 permissions: PermissionHandle::allow_all(),
+                 tool_context,
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/idle_resume_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/idle_resume_tests.rs
+index 466aea9d..1eaad2f6 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/idle_resume_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/idle_resume_tests.rs
+@@ -160,6 +160,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
+                     gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                     persistence_tx,
+                     disk_full: crate::session::notifications::idle_disk_full_rx(),
++                    is_persistence_noop: false,
+                 },
+                 permissions: xai_grok_workspace::permission::PermissionHandle::allow_all(),
+                 tool_context,
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/inline_auto_compact_flow_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/inline_auto_compact_flow_tests.rs
+index 165af3a4..41e0018e 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/inline_auto_compact_flow_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/inline_auto_compact_flow_tests.rs
+@@ -87,6 +87,7 @@ async fn create_test_actor(
+             gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+             persistence_tx,
+             disk_full: crate::session::notifications::idle_disk_full_rx(),
++            is_persistence_noop: false,
+         },
+         permissions: PermissionHandle::allow_all(),
+         tool_context,
+@@ -556,6 +557,7 @@ async fn create_test_actor_with_memory(
+             gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+             persistence_tx,
+             disk_full: crate::session::notifications::idle_disk_full_rx(),
++            is_persistence_noop: false,
+         },
+         permissions: PermissionHandle::allow_all(),
+         tool_context,
+@@ -1360,6 +1362,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
+                     gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                     persistence_tx,
+                     disk_full: crate::session::notifications::idle_disk_full_rx(),
++                    is_persistence_noop: false,
+                 },
+                 permissions: xai_grok_workspace::permission::PermissionHandle::allow_all(),
+                 tool_context,
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/memory_config_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/memory_config_tests.rs
-index 207168e5..e6c830f3 100644
+index 5a5bffac..43a9f060 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/memory_config_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/memory_config_tests.rs
-@@ -150,6 +150,7 @@ async fn create_test_actor_with_memory(
+@@ -151,6 +151,7 @@ async fn create_test_actor_with_memory(
+             gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+             persistence_tx,
+             disk_full: crate::session::notifications::idle_disk_full_rx(),
++            is_persistence_noop: false,
+         },
+         permissions: PermissionHandle::allow_all(),
+         tool_context,
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/replay_buffer_send_update_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/replay_buffer_send_update_tests.rs
+index 9cb08e37..bd540442 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/replay_buffer_send_update_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/replay_buffer_send_update_tests.rs
+@@ -91,6 +91,7 @@ pub(super) async fn make_replay_send_update_fixture() -> ReplaySendUpdateFixture
              gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
              persistence_tx,
              disk_full: crate::session::notifications::idle_disk_full_rx(),
@@ -294,10 +366,10 @@ index 207168e5..e6c830f3 100644
          permissions: PermissionHandle::allow_all(),
          tool_context,
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs
-index e9af9c9d..3d743f40 100644
+index 1583716b..cb896bea 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs
-@@ -271,6 +271,7 @@ pub(crate) async fn create_test_actor_with_terminal(
+@@ -276,6 +276,7 @@ pub(crate) async fn create_test_actor_with_terminal(
              gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
              persistence_tx,
              disk_full: crate::session::notifications::idle_disk_full_rx(),
@@ -306,10 +378,10 @@ index e9af9c9d..3d743f40 100644
          permissions: xai_grok_workspace::permission::PermissionHandle::allow_all(),
          tool_context,
 diff --git a/crates/codegen/xai-grok-shell/src/session/compaction_inline_auto_compact_flow_tests.rs b/crates/codegen/xai-grok-shell/src/session/compaction_inline_auto_compact_flow_tests.rs
-index 84a4f593..c353912b 100644
+index 2aa69382..1bb081ef 100644
 --- a/crates/codegen/xai-grok-shell/src/session/compaction_inline_auto_compact_flow_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/compaction_inline_auto_compact_flow_tests.rs
-@@ -90,6 +90,7 @@ async fn create_test_actor(
+@@ -92,6 +92,7 @@ async fn create_test_actor(
              gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
              persistence_tx,
              disk_full: crate::session::notifications::idle_disk_full_rx(),

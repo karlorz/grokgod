@@ -8,8 +8,15 @@ shared language for what grokgod keeps across `grok update`, not a spec.
 **Source patch**:
 A `git apply` diff under `patches/` against a pinned grok-build SHA. Re-applied
 on `grok update` / `grokgod update`. Current set: `0001-normalize-plugin-skill-join`,
-`0002-plan-mode-extra-writable`, `0003-session-persist-single`.
+`0002-plan-mode-extra-writable`, `0003-session-persist-single`, `0004-disable-builtin-deep-research`.
 _Avoid_: Mach-O hex edit, plugin.json rewrite as the engine fix
+
+**Built-in deep-research workflow**:
+Compiled-in grok-build workflow and `/deep-research` slash command. grokgod
+`0004` adds `[workflows.builtins] deep-research` (default on). `false` hides
+the builtin so plugin skill `deep-research:deep-research` can own the bare
+slash name. Not `[workflows] enabled = false` (that kills every workflow).
+_Avoid_: renaming the plugin; disabling all workflows to unstick the name
 
 **Session plan file**:
 Grok plan-mode exclusive live file at `~/.grok/sessions/<cwd>/<id>/plan.md`.
