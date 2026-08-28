@@ -1,0 +1,549 @@
+diff --git a/crates/codegen/xai-grok-agent/src/config.rs b/crates/codegen/xai-grok-agent/src/config.rs
+index f23177f6..60071ad8 100644
+--- a/crates/codegen/xai-grok-agent/src/config.rs
++++ b/crates/codegen/xai-grok-agent/src/config.rs
+@@ -1297,6 +1297,20 @@ fn default_output_byte_limit() -> usize {
+ fn default_true() -> bool {
+     true
+ }
++/// Model-level tool restrictions configured under `[model."<id>".tools]`.
++#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, Deserialize)]
++pub struct ModelToolsConfig {
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub deny: Vec<String>,
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub allow: Vec<String>,
++}
++
++fn is_always_on_meta_tool(id: &str) -> bool {
++    let short = short_tool_name(id);
++    short == search_tool::SEARCH_TOOL_NAME || short == use_tool::USE_TOOL_NAME
++}
++
+ /// Strip a tool id's `Namespace:` prefix, yielding its short name.
+ pub(crate) fn short_tool_name(id: &str) -> &str {
+     id.rsplit(':').next().unwrap_or(id)
+@@ -1404,9 +1418,37 @@ impl AgentDefinition {
+     }
+ }
+ impl AgentDefinition {
++    /// Merge model-level `tools` deny/allow lists into the session-clamp state.
++    /// Deny lists union with existing denials; allow lists intersect.
++    pub fn merge_model_tools(&mut self, tools: &ModelToolsConfig) {
++        if !tools.deny.is_empty() {
++            let mut existing = self.session_tools_denylist.take().unwrap_or_default();
++            for d in &tools.deny {
++                if !existing.iter().any(|e| e == d) {
++                    existing.push(d.clone());
++                }
++            }
++            self.session_tools_denylist = Some(existing);
++        }
++        if !tools.allow.is_empty() {
++            let model_allow = &tools.allow;
++            self.session_tools_allowlist = match self.session_tools_allowlist.take() {
++                Some(existing) => {
++                    let intersected: Vec<String> = existing
++                        .into_iter()
++                        .filter(|e| is_always_on_meta_tool(e) || tool_id_matches(model_allow, e))
++                        .collect();
++                    Some(intersected)
++                }
++                None => Some(model_allow.clone()),
++            };
++        }
++    }
++
+     /// Whether `id` passes the session-operator clamp: denylist wins, then an
+-    /// unset allowlist allows all.
+-    pub(crate) fn session_tools_allowed(&self, id: &str) -> bool {
++    /// unset allowlist allows all. Always-on meta-tools (search_tool, use_tool)
++    /// survive allowlist mode, but deny wins over everything.
++    pub fn session_tools_allowed(&self, id: &str) -> bool {
+         if self
+             .session_tools_denylist
+             .as_deref()
+@@ -1414,6 +1456,9 @@ impl AgentDefinition {
+         {
+             return false;
+         }
++        if is_always_on_meta_tool(id) {
++            return true;
++        }
+         self.session_tools_allowlist
+             .as_deref()
+             .is_none_or(|a| tool_id_matches(a, id))
+@@ -1422,7 +1467,7 @@ impl AgentDefinition {
+     /// `disallowed_tools`/`tools` and the session clamp. Hosted tools aren't in
+     /// `tool_config`, so they're gated by name here — and strictly (no
+     /// compat-name mapping or unresolved-entry fallback like the function path).
+-    pub(crate) fn hosted_tool_allowed(&self, id: &str) -> bool {
++    pub fn hosted_tool_allowed(&self, id: &str) -> bool {
+         if tool_id_matches(&self.disallowed_tools, id) {
+             return false;
+         }
+diff --git a/crates/codegen/xai-grok-agent/src/lib.rs b/crates/codegen/xai-grok-agent/src/lib.rs
+index 013ea9e4..16c88b48 100644
+--- a/crates/codegen/xai-grok-agent/src/lib.rs
++++ b/crates/codegen/xai-grok-agent/src/lib.rs
+@@ -21,6 +21,7 @@ pub use agent::Agent;
+ pub use builder::AgentBuilder;
+ pub use compaction::CompactionPolicy;
+ pub use config::AgentDefinition;
++pub use config::ModelToolsConfig;
+ pub use config::preset_names;
+ pub use config::toolset_for_preset;
+ pub use config::workspace_grok_build_toolset;
+diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
+index b5fafa13..285d05c6 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/config.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
+@@ -3892,6 +3892,7 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
+                 supports_reasoning_effort: m.supports_reasoning_effort,
+                 reasoning_efforts: m.reasoning_efforts,
+                 supports_backend_search: m.supports_backend_search,
++                tools: None,
+                 compactions_remaining: m.compactions_remaining,
+                 compaction_at_tokens: m.compaction_at_tokens,
+                 show_model_fingerprint: m.show_model_fingerprint,
+@@ -4004,6 +4005,9 @@ pub struct ModelEntryConfig {
+     pub supported_in_api: bool,
+     #[serde(default, skip_serializing_if = "is_false")]
+     pub supports_backend_search: bool,
++    /// Per-model tools deny/allow lists (`[model."<id>".tools]`).
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub tools: Option<xai_grok_agent::ModelToolsConfig>,
+     /// Per-model config for the `x-compactions-remaining` header; `None` disables it.
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub compactions_remaining: Option<CompactionsRemaining>,
+@@ -4087,6 +4091,7 @@ pub struct ConfigModelOverride {
+     pub supports_reasoning_effort: Option<bool>,
+     pub reasoning_efforts: Vec<ReasoningEffortOption>,
+     pub supports_backend_search: Option<bool>,
++    pub tools: Option<xai_grok_agent::ModelToolsConfig>,
+     /// Aliases must be registered in `config_model_override_parse::ALIASES`;
+     /// serde rejects a table that contains both spellings otherwise.
+     #[serde(alias = "send_compactions_remaining")]
+@@ -4182,6 +4187,9 @@ impl ConfigModelOverride {
+         if let Some(v) = self.supports_backend_search {
+             entry.info.supports_backend_search = v;
+         }
++        if self.tools.is_some() {
++            entry.info.tools.clone_from(&self.tools);
++        }
+         if self.compactions_remaining.is_some() {
+             entry.info.compactions_remaining = self.compactions_remaining;
+         }
+@@ -4279,6 +4287,9 @@ pub struct ModelInfo {
+     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+     pub reasoning_efforts: Vec<ReasoningEffortOption>,
+     pub supports_backend_search: bool,
++    /// Per-model tools deny/allow lists (`[model."<id>".tools]`).
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub tools: Option<xai_grok_agent::ModelToolsConfig>,
+     /// Per-model config for the `x-compactions-remaining` header; `None` disables it.
+     pub compactions_remaining: Option<CompactionsRemaining>,
+     /// Per-model config for the `x-compaction-at` header; `None` disables it.
+@@ -4327,6 +4338,7 @@ impl ModelInfo {
+             supports_reasoning_effort: false,
+             reasoning_efforts: Vec::new(),
+             supports_backend_search: false,
++            tools: None,
+             compactions_remaining: None,
+             compaction_at_tokens: None,
+             show_model_fingerprint: false,
+@@ -4366,6 +4378,7 @@ impl ModelInfo {
+             supports_reasoning_effort: entry.supports_reasoning_effort,
+             reasoning_efforts: entry.reasoning_efforts.clone(),
+             supports_backend_search: entry.supports_backend_search,
++            tools: entry.tools.clone(),
+             compactions_remaining: entry.compactions_remaining,
+             compaction_at_tokens: entry.compaction_at_tokens,
+             show_model_fingerprint: entry.show_model_fingerprint,
+@@ -5143,6 +5156,7 @@ pub(crate) fn resolve_aux_model_sampling_config(
+                 supports_reasoning_effort: false,
+                 reasoning_efforts: Vec::new(),
+                 supports_backend_search: false,
++                tools: None,
+                 compactions_remaining: None,
+                 compaction_at_tokens: None,
+                 show_model_fingerprint: false,
+@@ -5381,6 +5395,7 @@ fn resolve_hidden_default_web_search_sampling_config(
+             supports_reasoning_effort: false,
+             reasoning_efforts: Vec::new(),
+             supports_backend_search: false,
++            tools: None,
+             compactions_remaining: None,
+             compaction_at_tokens: None,
+             show_model_fingerprint: false,
+diff --git a/crates/codegen/xai-grok-shell/src/agent/config_model_override_parse.rs b/crates/codegen/xai-grok-shell/src/agent/config_model_override_parse.rs
+index 6ba241c2..c3b941ae 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/config_model_override_parse.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/config_model_override_parse.rs
+@@ -724,6 +724,10 @@ mod tests {
+                 default: true,
+             }],
+             supports_backend_search: Some(false),
++            tools: Some(xai_grok_agent::ModelToolsConfig {
++                deny: vec!["web_search".into(), "web_fetch".into()],
++                allow: vec!["read_file".into(), "grep".into()],
++            }),
+             compactions_remaining: Some(CompactionsRemaining::Fixed(1)),
+             compaction_at_tokens: Some(CompactionAtTokens::Fixed(100_000)),
+             show_model_fingerprint: Some(true),
+diff --git a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
+index 3a1e98d8..ff3a652a 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
+@@ -1064,6 +1064,7 @@ fn test_model_entry(
+             supports_reasoning_effort: false,
+             reasoning_efforts: Vec::new(),
+             supports_backend_search: false,
++            tools: None,
+             compactions_remaining: None,
+             compaction_at_tokens: None,
+             show_model_fingerprint: false,
+@@ -2139,6 +2140,7 @@ fn model_info_from_config_propagates_use_concise() {
+         supports_reasoning_effort: false,
+         reasoning_efforts: Vec::new(),
+         supports_backend_search: false,
++        tools: None,
+         compactions_remaining: None,
+         compaction_at_tokens: None,
+         show_model_fingerprint: false,
+@@ -2300,6 +2302,7 @@ fn model_info_from_config_propagates_agent_type() {
+         supports_reasoning_effort: false,
+         reasoning_efforts: Vec::new(),
+         supports_backend_search: false,
++        tools: None,
+         compactions_remaining: None,
+         compaction_at_tokens: None,
+         show_model_fingerprint: false,
+@@ -2753,6 +2756,7 @@ fn inference_idle_timeout_propagates_to_model_info() {
+         supports_reasoning_effort: false,
+         reasoning_efforts: Vec::new(),
+         supports_backend_search: false,
++        tools: None,
+         compactions_remaining: None,
+         compaction_at_tokens: None,
+         show_model_fingerprint: false,
+@@ -6776,6 +6780,7 @@ fn prefetch_model_entry(slug: &str, context_window: u64, api_backend: ApiBackend
+             supports_reasoning_effort: false,
+             reasoning_efforts: Vec::new(),
+             supports_backend_search: false,
++            tools: None,
+             compactions_remaining: None,
+             compaction_at_tokens: None,
+             show_model_fingerprint: false,
+@@ -7579,3 +7584,184 @@ fn a_status_line_the_parser_could_not_read_in_full_reaches_grok_inspect() {
+     );
+     assert_eq!(cfg.ui.theme.as_deref(), Some("kanagawa"));
+ }
++
++#[test]
++fn model_tools_deny_allow_deserializes_onto_model_entry() {
++    let dm = crate::models::default_model();
++    let (_, models) = resolve_models_from_toml(
++        &format!(
++            r#"
++            [model."{dm}".tools]
++            deny = ["web_search", "web_fetch"]
++            allow = ["read_file", "grep"]
++            "#
++        ),
++        None,
++    );
++    let model = models.get(dm).expect("default model should exist");
++    let tools = model
++        .info
++        .tools
++        .as_ref()
++        .expect("tools config should exist");
++    assert_eq!(
++        tools.deny,
++        vec!["web_search".to_string(), "web_fetch".to_string()]
++    );
++    assert_eq!(
++        tools.allow,
++        vec!["read_file".to_string(), "grep".to_string()]
++    );
++}
++
++#[tokio::test]
++async fn model_tools_deny_removes_web_search_and_fetch_from_built_agent() {
++    use std::sync::Arc;
++    use xai_grok_agent::builder::AgentBuilder;
++    use xai_grok_agent::config::ModelToolsConfig;
++    use xai_grok_tools::computer::local::LocalTerminalBackend;
++    use xai_grok_tools::notification::ToolNotificationHandle;
++
++    let mut def = xai_grok_agent::config::AgentDefinition::default_grok_build();
++    let model_tools = ModelToolsConfig {
++        deny: vec!["web_search".into(), "web_fetch".into()],
++        allow: vec![],
++    };
++    def.merge_model_tools(&model_tools);
++
++    let agent = AgentBuilder::new(
++        std::env::temp_dir(),
++        Arc::new(LocalTerminalBackend::new()),
++        ToolNotificationHandle::noop(),
++    )
++    .from_definition(def)
++    .build()
++    .await
++    .unwrap();
++
++    let names: Vec<_> = agent
++        .tool_definitions()
++        .await
++        .iter()
++        .map(|d| d.function.name.clone())
++        .collect();
++
++    assert!(!names.contains(&"web_search".to_string()));
++    assert!(!names.contains(&"web_fetch".to_string()));
++    assert!(names.contains(&"read_file".to_string()));
++}
++
++#[test]
++fn model_tools_deny_x_search_suppresses_hosted_x_search() {
++    use xai_grok_agent::config::ModelToolsConfig;
++
++    let mut def = xai_grok_agent::config::AgentDefinition::general_purpose();
++    assert!(def.hosted_tool_allowed("x_search"));
++    assert!(def.hosted_tool_allowed("web_search"));
++
++    let model_tools = ModelToolsConfig {
++        deny: vec!["x_search".into()],
++        allow: vec![],
++    };
++    def.merge_model_tools(&model_tools);
++
++    assert!(!def.hosted_tool_allowed("x_search"));
++    assert!(def.hosted_tool_allowed("web_search"));
++}
++
++#[test]
++fn model_tools_allow_mode_retains_listed_builtins_and_meta_tools() {
++    use xai_grok_agent::config::ModelToolsConfig;
++
++    let mut def = xai_grok_agent::config::AgentDefinition::general_purpose();
++    let model_tools = ModelToolsConfig {
++        deny: vec![],
++        allow: vec!["read_file".into(), "grep".into()],
++    };
++    def.merge_model_tools(&model_tools);
++
++    assert!(def.session_tools_allowed("read_file"));
++    assert!(def.session_tools_allowed("grep"));
++    assert!(!def.session_tools_allowed("write"));
++    assert!(!def.session_tools_allowed("run_terminal_cmd"));
++    // Meta tools are always allowed in allowlist mode
++    assert!(def.session_tools_allowed("search_tool"));
++    assert!(def.session_tools_allowed("use_tool"));
++}
++
++#[test]
++fn model_tools_deny_wins_when_both_deny_and_allow_present() {
++    use xai_grok_agent::config::ModelToolsConfig;
++
++    let mut def = xai_grok_agent::config::AgentDefinition::general_purpose();
++    let model_tools = ModelToolsConfig {
++        deny: vec!["read_file".into(), "search_tool".into()],
++        allow: vec!["read_file".into(), "grep".into()],
++    };
++    def.merge_model_tools(&model_tools);
++
++    // read_file is in both -> deny wins
++    assert!(!def.session_tools_allowed("read_file"));
++    // grep is only in allow -> allowed
++    assert!(def.session_tools_allowed("grep"));
++    // write is in neither -> not allowed due to allowlist mode
++    assert!(!def.session_tools_allowed("write"));
++    // search_tool explicitly denied -> deny wins even over meta-tool bypass
++    assert!(!def.session_tools_allowed("search_tool"));
++}
++
++#[test]
++fn model_tools_global_switches_still_dominate_union_semantics() {
++    use xai_grok_agent::config::ModelToolsConfig;
++
++    let mut def = xai_grok_agent::config::AgentDefinition::general_purpose();
++    // Agent / global disallowed_tools
++    def.disallowed_tools = vec!["web_search".into()];
++
++    let model_tools = ModelToolsConfig {
++        deny: vec!["grep".into()],
++        allow: vec![],
++    };
++    def.merge_model_tools(&model_tools);
++
++    assert!(!def.hosted_tool_allowed("web_search"));
++    assert!(!def.session_tools_allowed("grep"));
++    assert!(def.session_tools_allowed("read_file"));
++}
++
++#[test]
++fn subagent_model_resolution_gets_its_own_model_tools_lists() {
++    let (_, models) = resolve_models_from_toml(
++        r#"
++        [model."parent-model".tools]
++        deny = ["web_search"]
++
++        [model."child-model".tools]
++        deny = ["grep"]
++        "#,
++        None,
++    );
++
++    let parent_model = models
++        .get("parent-model")
++        .expect("parent model should exist");
++    let child_model = models.get("child-model").expect("child model should exist");
++
++    let mut parent_def = xai_grok_agent::config::AgentDefinition::general_purpose();
++    if let Some(tools) = &parent_model.info.tools {
++        parent_def.merge_model_tools(tools);
++    }
++
++    let mut child_def = xai_grok_agent::config::AgentDefinition::general_purpose();
++    if let Some(tools) = &child_model.info.tools {
++        child_def.merge_model_tools(tools);
++    }
++
++    // Parent has web_search denied, grep allowed
++    assert!(!parent_def.session_tools_allowed("web_search"));
++    assert!(parent_def.session_tools_allowed("grep"));
++
++    // Child has grep denied, web_search allowed
++    assert!(child_def.session_tools_allowed("web_search"));
++    assert!(!child_def.session_tools_allowed("grep"));
++}
+diff --git a/crates/codegen/xai-grok-shell/src/agent/handlers/model_switch.rs b/crates/codegen/xai-grok-shell/src/agent/handlers/model_switch.rs
+index 2c36bc9c..08ac1a5c 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/handlers/model_switch.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/handlers/model_switch.rs
+@@ -111,7 +111,12 @@ pub(crate) async fn apply(
+                 agent.plugin_registry_handle.snapshot().as_deref(),
+             );
+             match resolved {
+-                Some(def) => {
++                Some(mut def) => {
++                    if let Some(model_tools) =
++                        agent.models_manager.model_tools_config(model_id.0.as_ref())
++                    {
++                        def.merge_model_tools(&model_tools);
++                    }
+                     tracing::info!(
+                         session_id = %session_id.0,
+                         model_id = %model_id.0,
+diff --git a/crates/codegen/xai-grok-shell/src/agent/models.rs b/crates/codegen/xai-grok-shell/src/agent/models.rs
+index 5904e264..232601d4 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/models.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/models.rs
+@@ -588,6 +588,14 @@ impl ModelsManager {
+             .unwrap_or(false)
+     }
+ 
++    pub(crate) fn model_tools_config(
++        &self,
++        model_id: &str,
++    ) -> Option<xai_grok_agent::ModelToolsConfig> {
++        self.with_catalog_entry(model_id, |e| e.info().tools.clone())
++            .flatten()
++    }
++
+     pub(crate) fn model_compactions_remaining(
+         &self,
+         model_id: &str,
+diff --git a/crates/codegen/xai-grok-shell/src/agent/models/tests.rs b/crates/codegen/xai-grok-shell/src/agent/models/tests.rs
+index b1576349..8470dc50 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/models/tests.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/models/tests.rs
+@@ -2052,6 +2052,7 @@ fn make_entry_config_with_id(
+         supports_reasoning_effort: false,
+         reasoning_efforts: Vec::new(),
+         supports_backend_search: false,
++        tools: None,
+         compactions_remaining: None,
+         compaction_at_tokens: None,
+         show_model_fingerprint: false,
+diff --git a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs
+index 6e6523de..6b8d08e0 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs
+@@ -4476,6 +4476,9 @@ impl MvpAgent {
+                 sampling_config,
+                 origin_client.clone(),
+             );
++        if let Some(model_tools) = self.models_manager.model_tools_config(&session_model_id.0) {
++            agent_definition.merge_model_tools(&model_tools);
++        }
+         self.models_manager
+             .apply_supported_effort(
+                 &mut sampling_config,
+diff --git a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests.rs b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests.rs
+index f10b4ecf..b43f03b4 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests.rs
+@@ -2744,6 +2744,7 @@ fn find_model_by_id_prefers_key_then_falls_back_to_slug() {
+             supports_reasoning_effort: false,
+             reasoning_efforts: Vec::new(),
+             supports_backend_search: false,
++            tools: None,
+             compactions_remaining: None,
+             compaction_at_tokens: None,
+             show_model_fingerprint: false,
+diff --git a/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs b/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs
+index 4936616b..303c5baf 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs
+@@ -474,6 +474,12 @@ pub(crate) async fn run_shell_child(
+             }
+         }
+     }
++    if let Some(model_tools) = ctx
++        .models_manager
++        .model_tools_config(effective_model_id.0.as_ref())
++    {
++        definition.merge_model_tools(&model_tools);
++    }
+     let subagent_id = request.id.clone();
+     let child_session_id = acp::SessionId::new(subagent_id.clone());
+     let override_cwd = select_override_cwd(resume_source.as_ref(), request.cwd.as_deref());
+diff --git a/crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs b/crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs
+index dab0d662..440dade3 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs
+@@ -1798,6 +1798,7 @@ fn test_model_entry(model_id: &str) -> crate::agent::config::ModelEntry {
+             supports_reasoning_effort: false,
+             reasoning_efforts: Vec::new(),
+             supports_backend_search: false,
++            tools: None,
+             compactions_remaining: None,
+             compaction_at_tokens: None,
+             show_model_fingerprint: false,
+diff --git a/crates/codegen/xai-grok-shell/src/remote/client.rs b/crates/codegen/xai-grok-shell/src/remote/client.rs
+index e56e8711..6340ae05 100644
+--- a/crates/codegen/xai-grok-shell/src/remote/client.rs
++++ b/crates/codegen/xai-grok-shell/src/remote/client.rs
+@@ -945,6 +945,18 @@ pub(crate) fn parse_remote_model_value(
+             .or_else(|| meta.and_then(|m| m.get("supportsBackendSearch")))
+             .and_then(|v| v.as_bool())
+             .unwrap_or(false),
++        tools: get_object(obj, "tools")
++            .or_else(|| meta.and_then(|m| get_object(m, "tools")))
++            .and_then(|v| match xai_grok_agent::ModelToolsConfig::deserialize(v) {
++                Ok(cfg) => Some(cfg),
++                Err(e) => {
++                    tracing::warn!(
++                        error = %e,
++                        "Failed to deserialize tools block from remote model; falling back to none"
++                    );
++                    None
++                }
++            }),
+         compactions_remaining: obj
+             .get("compactionsRemaining")
+             .or_else(|| obj.get("compactions_remaining"))
