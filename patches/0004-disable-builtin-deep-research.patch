@@ -235,7 +235,7 @@ index 8760255e..4bd2e0d1 100644
                      // This session's own value (what its fires will actually
                      // do), seed only until the session response lands.
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs
-index 39ad7642..38ce86fa 100644
+index 39ad7642..6294544f 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs
 @@ -86,7 +86,7 @@ use super::settings::setters::{
@@ -247,7 +247,16 @@ index 39ad7642..38ce86fa 100644
  };
  use super::settings::ui::{
      dispatch_confirm_reset_setting, dispatch_open_command_palette, dispatch_open_howto_guides,
-@@ -1089,6 +1089,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
+@@ -757,6 +757,8 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
+             }]
+         }
+         Action::ReloadSkills => {
++            app.workflow_builtin_deep_research =
++                Some(crate::app::effects::workflow_builtin_deep_research_from_disk());
+             let ActiveView::Agent(id) = app.active_view else {
+                 return vec![];
+             };
+@@ -1089,6 +1091,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
          Action::SetAskUserQuestionTimeoutEnabled(v) => {
              set_ask_user_question_timeout_enabled(app, v)
          }
@@ -405,6 +414,21 @@ index 228dc205..eca312fe 100644
          zdr_access_enabled: false,
          usage_billing_redirect_url: None,
          access_gate_shown_logged: false,
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/session/modal.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/session/modal.rs
+index 3f6e0faf..85a04865 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/session/modal.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/session/modal.rs
+@@ -77,6 +77,10 @@ fn reload_skills_marks_both_lists_loading_and_refetches() {
+     let modal = app.agents[&id].extensions_modal.as_ref().unwrap();
+     assert!(matches!(modal.skills_data, TabDataState::Loading));
+     assert!(matches!(modal.workflows_data, TabDataState::Loading));
++    assert!(
++        app.workflow_builtin_deep_research.is_some(),
++        "reload must sync workflow_builtin_deep_research from disk into app state"
++    );
+     assert!(
+         effects
+             .iter()
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
 index f82c8f68..c00fd677 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
@@ -540,7 +564,7 @@ index 67c9d531..98e64209 100644
      tool: xai_grok_foreign_sessions::ForeignSessionTool,
  ) -> xai_grok_foreign_sessions::RecentForeignSession {
 diff --git a/crates/codegen/xai-grok-pager/src/app/effects/helpers.rs b/crates/codegen/xai-grok-pager/src/app/effects/helpers.rs
-index c25a8dfe..36ef1a5b 100644
+index c25a8dfe..cf6fc530 100644
 --- a/crates/codegen/xai-grok-pager/src/app/effects/helpers.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/effects/helpers.rs
 @@ -1331,6 +1331,18 @@ pub(crate) async fn persist_setting(
@@ -562,11 +586,79 @@ index c25a8dfe..36ef1a5b 100644
          "show_thinking_blocks" => {
              let SettingValue::Bool(b) = value else {
                  return Err(kind_mismatch("show_thinking_blocks", "Bool", &value));
+@@ -1635,8 +1647,24 @@ pub(super) fn persist_hint(
+             TaskResult::CancelComplete
+         });
+ }
++/// Built-in deep-research workflow switch (`[workflows.builtins] deep-research`).
++/// Default ON (`true`).
++pub(crate) fn workflow_builtin_deep_research_from_disk() -> bool {
++    let Ok(root) = xai_grok_shell::config::load_effective_config() else {
++        return true;
++    };
++    workflow_builtin_deep_research_from_value(&root)
++}
++
++pub(crate) fn workflow_builtin_deep_research_from_value(root: &toml::Value) -> bool {
++    root.get("workflows")
++        .and_then(|t| t.get("builtins"))
++        .and_then(|b| b.get("deep-research"))
++        .and_then(|v| v.as_bool())
++        .unwrap_or(true)
++}
++
+ /// Map a billing config into a [`CreditBalance`].
+-///
+ /// Prefers the newer credits-config fields (`credit_usage_percent`,
+ /// `current_period`) and falls back to the deprecated
+ /// `monthly_limit`/`used`/`billing_period_end`. Shared by `Effect::FetchBilling`
+@@ -1780,3 +1808,33 @@ pub(super) fn unregister_active_session_best_effort_in(
+         Err(e) => tracing::warn!(?e, "Failed to unregister active session"),
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn test_workflow_builtin_deep_research_from_value() {
++        let toml_empty: toml::Value = toml::from_str("").unwrap();
++        assert!(workflow_builtin_deep_research_from_value(&toml_empty));
++
++        let toml_true: toml::Value = toml::from_str(
++            r#"
++            [workflows.builtins]
++            deep-research = true
++            "#,
++        )
++        .unwrap();
++        assert!(workflow_builtin_deep_research_from_value(&toml_true));
++
++        let toml_false: toml::Value = toml::from_str(
++            r#"
++            [workflows.builtins]
++            deep-research = false
++            "#,
++        )
++        .unwrap();
++        assert!(!workflow_builtin_deep_research_from_value(&toml_false));
++    }
++}
++
 diff --git a/crates/codegen/xai-grok-pager/src/app/effects/mod.rs b/crates/codegen/xai-grok-pager/src/app/effects/mod.rs
-index f7047945..ef30240b 100644
+index f7047945..42cc91da 100644
 --- a/crates/codegen/xai-grok-pager/src/app/effects/mod.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/effects/mod.rs
-@@ -2213,10 +2213,23 @@ pub(crate) fn execute(
+@@ -17,6 +17,7 @@ pub(super) use helpers::{
+ pub(crate) use helpers::{
+     EffectMeta, RestoreProgressMsg, SessionFlags, is_disk_full_error,
+     persist_permission_mode_and_notify, persist_setting, sanitize_user_error,
++    workflow_builtin_deep_research_from_disk, workflow_builtin_deep_research_from_value,
+ };
+ #[cfg(feature = "local-workspace")]
+ pub(crate) use helpers::reject_non_fs_only_advertised_tools;
+@@ -2213,10 +2214,23 @@ pub(crate) fn execute(
                  );
          }
          Effect::PersistSetting { key, value, rollback_value } => {
@@ -590,6 +682,79 @@ index f7047945..ef30240b 100644
                              TaskResult::SettingPersisted {
                                  key,
                                  value,
+@@ -2801,6 +2815,15 @@ pub(crate) fn execute(
+                             )
+                         }
+                     };
++                    let enabled = workflow_builtin_deep_research_from_disk();
++                    let update_params = serde_json::json!({ "enabled": enabled });
++                    if let Ok(raw) = serde_json::value::to_raw_value(&update_params) {
++                        let update_req = acp::ExtRequest::new(
++                            "x.ai/workflows/set-builtin-deep-research",
++                            raw.into(),
++                        );
++                        let _ = acp_send(update_req, &tx).await;
++                    }
+                     TaskResult::WorkflowsListLoaded {
+                         agent_id,
+                         session_id,
+diff --git a/crates/codegen/xai-grok-pager/src/app/effects/tests.rs b/crates/codegen/xai-grok-pager/src/app/effects/tests.rs
+index 28411b1d..997345bc 100644
+--- a/crates/codegen/xai-grok-pager/src/app/effects/tests.rs
++++ b/crates/codegen/xai-grok-pager/src/app/effects/tests.rs
+@@ -1787,22 +1787,29 @@ async fn fetch_session_list_sends_kind_facet_filter() {
+ async fn fetch_workflows_list_sends_session_id() {
+     use std::sync::{Arc, Mutex};
+     use xai_acp_lib::AcpAgentMessage;
+-    let captured: Arc<Mutex<Vec<serde_json::Value>>> = Arc::default();
++    let captured: Arc<Mutex<Vec<(String, serde_json::Value)>>> = Arc::default();
+     let captured_for_task = captured.clone();
+     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+     tokio::spawn(async move {
+         while let Some(msg) = rx.recv().await {
+             if let AcpAgentMessage::ExtMethod(args) = msg {
+-                assert_eq!(args.request.method.as_ref(), "x.ai/workflows/list");
++                let method = args.request.method.as_ref().to_string();
+                 let params: serde_json::Value = serde_json::from_str(
+                         args.request.params.get(),
+                     )
+                     .expect("params JSON");
+-                captured_for_task.lock().unwrap().push(params);
+-                let body = serde_json::json!({ "result": { "workflows": [] } });
+-                let raw = serde_json::value::RawValue::from_string(body.to_string())
+-                    .expect("serialize workflows response");
+-                let _ = args.response_tx.send(Ok(acp::ExtResponse::new(Arc::from(raw))));
++                captured_for_task.lock().unwrap().push((method.clone(), params));
++                if method == "x.ai/workflows/list" {
++                    let body = serde_json::json!({ "result": { "workflows": [] } });
++                    let raw = serde_json::value::RawValue::from_string(body.to_string())
++                        .expect("serialize workflows response");
++                    let _ = args.response_tx.send(Ok(acp::ExtResponse::new(Arc::from(raw))));
++                } else if method == "x.ai/workflows/set-builtin-deep-research" {
++                    let body = serde_json::json!({ "ok": true, "updated": 1 });
++                    let raw = serde_json::value::RawValue::from_string(body.to_string())
++                        .expect("serialize set-builtin response");
++                    let _ = args.response_tx.send(Ok(acp::ExtResponse::new(Arc::from(raw))));
++                }
+             }
+         }
+     });
+@@ -1833,9 +1840,12 @@ async fn fetch_workflows_list_sends_session_id() {
+         other => panic!("expected WorkflowsListLoaded, got {other:?}"),
+     }
+     let captured = captured.lock().unwrap();
+-    assert_eq!(captured.len(), 1);
+-    assert_eq!(captured[0]["sessionId"], "test-session");
+-    assert!(captured[0].get("cwd").is_none());
++    assert_eq!(captured.len(), 2);
++    assert_eq!(captured[0].0, "x.ai/workflows/list");
++    assert_eq!(captured[0].1["sessionId"], "test-session");
++    assert!(captured[0].1.get("cwd").is_none());
++    assert_eq!(captured[1].0, "x.ai/workflows/set-builtin-deep-research");
++    assert!(captured[1].1.get("enabled").is_some());
+ }
+ /// The debounce arm must echo `query` and `seq` exactly. Awaits the real
+ /// 250 ms debounce (tokio's paused clock needs `test-util`, not enabled
 diff --git a/crates/codegen/xai-grok-pager/src/app/event_loop.rs b/crates/codegen/xai-grok-pager/src/app/event_loop.rs
 index 47c40c58..294c7afb 100644
 --- a/crates/codegen/xai-grok-pager/src/app/event_loop.rs
