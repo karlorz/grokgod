@@ -9,8 +9,15 @@ shared language for what grokgod keeps across `grok update`, not a spec.
 A `git apply` diff under `patches/` against a pinned grok-build SHA. Re-applied
 on `grok update` / `grokgod update`. Current set: `0001-normalize-plugin-skill-join`,
 `0002-plan-mode-extra-writable`, `0003-session-persist-single`, `0004-disable-builtin-deep-research`,
-`0005-model-tools-deny-allow`, `0006-web-search-call-tolerant-parse`.
+`0005-model-tools-deny-allow`, `0006-web-search-call-tolerant-parse`, `0007-hosted-web-search-splice-decouple`.
 _Avoid_: Mach-O hex edit, plugin.json rewrite as the engine fix
+
+**Auth-decoupled hosted splice**:
+Decoupling of the server-side `HostedTool::WebSearch` splice from the client-side `WebSearchConfig`
+credential gate in grokgod `0007`. Prevents logout state from stripping server-side hosted web search
+from BYOK Responses API backends (which execute search server-side without xAI OAuth credentials).
+Preserves the explicit `disable_web_search` kill-switch and 0005 per-model `deny = ["web_search"]`.
+_Avoid_: fabricating fake credentials for the client tool, routing search through unrelated model configs, dropping global kill-switch
 
 **Tolerant search-call parse**:
 Tolerant SSE stream deserialization in grokgod `0006` for Responses API backends.
