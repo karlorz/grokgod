@@ -1,0 +1,230 @@
+diff --git a/crates/codegen/xai-grok-agent/src/builder.rs b/crates/codegen/xai-grok-agent/src/builder.rs
+index ca63c785..337935c2 100644
+--- a/crates/codegen/xai-grok-agent/src/builder.rs
++++ b/crates/codegen/xai-grok-agent/src/builder.rs
+@@ -87,6 +87,9 @@ pub struct AgentBuilder {
+     state_path: Option<PathBuf>,
+     memory_backend: Option<Arc<dyn xai_grok_tools::types::memory_backend::MemoryBackend>>,
+     web_search_config: xai_grok_tools::implementations::web_search::WebSearchConfig,
++    /// When true, hosted web_search is suppressed even when backend_search is true.
++    /// Used by the explicit disable_web_search kill-switch.
++    hosted_web_search_disabled: bool,
+     /// When true, web search and X search are sent as native server-side
+     /// tools for execution by the agentic sampler, instead of being
+     /// registered as local Function tools.
+@@ -232,6 +235,7 @@ impl AgentBuilder {
+             state_path: None,
+             memory_backend: None,
+             web_search_config: Default::default(),
++            hosted_web_search_disabled: false,
+             backend_search: false,
+             web_fetch_config: Default::default(),
+             lsp: None,
+@@ -444,6 +448,15 @@ impl AgentBuilder {
+         self.web_search_config = config;
+         self
+     }
++    /// Set whether hosted web search is suppressed on the server-side splice.
++    ///
++    /// When true, the native `web_search` tool is not spliced into `hosted_tools`,
++    /// even if backend search is enabled and the model allows it. Used by the
++    /// explicit `disable_web_search` kill-switch.
++    pub fn with_hosted_web_search_disabled(mut self, disabled: bool) -> Self {
++        self.hosted_web_search_disabled = disabled;
++        self
++    }
+     /// When true, web search and X search are sent as native server-side
+     /// tools for execution by the agentic sampler, instead of being
+     /// registered as local Function tools. Per-model gating is applied
+@@ -1066,7 +1079,6 @@ impl AgentBuilder {
+             });
+         }
+         let use_backend_search = self.backend_search;
+-        let web_search_enabled = self.web_search_config.is_enabled();
+         let tool_bridge = ToolBridge::finalize_builder(
+             tool_bridge_builder,
+             tool_config,
+@@ -1235,7 +1247,7 @@ impl AgentBuilder {
+         }
+         let mut hosted_tools = Vec::new();
+         if use_backend_search {
+-            if web_search_enabled && definition.hosted_tool_allowed("web_search") {
++            if !self.hosted_web_search_disabled && definition.hosted_tool_allowed("web_search") {
+                 hosted_tools.push(xai_grok_sampling_types::HostedTool::WebSearch { options: None });
+             }
+             if definition.hosted_tool_allowed("x_search") {
+@@ -2649,9 +2661,10 @@ mod tests {
+             "no full-toolset fallback — Edit must be excluded; got: {names:?}"
+         );
+     }
+-    async fn build_with_web_search(
++    async fn build_with_web_search_and_kill_switch(
+         web_search_enabled: bool,
+         backend_search_enabled: bool,
++        hosted_web_search_disabled: bool,
+         disallowed_tools: &[&str],
+         tool_overrides: Option<xai_grok_sampling_types::ToolOverrides>,
+     ) -> crate::agent::Agent {
+@@ -2681,11 +2694,27 @@ mod tests {
+         )
+         .from_definition(def)
+         .with_web_search_config(web_search_config)
++        .with_hosted_web_search_disabled(hosted_web_search_disabled)
+         .with_backend_search(backend_search_enabled)
+         .build()
+         .await
+         .expect("agent should build for backend-search test case")
+     }
++    async fn build_with_web_search(
++        web_search_enabled: bool,
++        backend_search_enabled: bool,
++        disallowed_tools: &[&str],
++        tool_overrides: Option<xai_grok_sampling_types::ToolOverrides>,
++    ) -> crate::agent::Agent {
++        build_with_web_search_and_kill_switch(
++            web_search_enabled,
++            backend_search_enabled,
++            false,
++            disallowed_tools,
++            tool_overrides,
++        )
++        .await
++    }
+     #[tokio::test]
+     async fn disallowed_web_search_strips_function_and_hosted_tools() {
+         let agent = build_with_web_search(true, true, &["web_search"], None).await;
+@@ -2732,17 +2761,18 @@ mod tests {
+             "expected XSearch hosted tool, got: {hosted:?}"
+         );
+     }
+-    /// XSearch is added unconditionally when backend search is on;
+-    /// WebSearch requires the web-search config.
++    /// Logout scenario (0007): with backend search enabled and web_search_config Disabled,
++    /// hosted WebSearch is still spliced because the backend serves it, while the function-tool
++    /// WebSearchTool remains absent (no credential).
+     #[tokio::test]
+-    async fn hosted_tools_only_xsearch_when_web_search_disabled() {
++    async fn hosted_tools_include_web_search_when_web_search_config_disabled_logout_scenario() {
+         let agent = build_with_web_search(false, true, &[], None).await;
+         let hosted = agent.hosted_tools();
+         assert!(
+-            !hosted
++            hosted
+                 .iter()
+                 .any(|t| matches!(t, xai_grok_sampling_types::HostedTool::WebSearch { .. })),
+-            "WebSearch must NOT appear when web_search is disabled, got: {hosted:?}"
++            "WebSearch MUST appear even when web_search_config is disabled (logout scenario), got: {hosted:?}"
+         );
+         assert!(
+             hosted
+@@ -2751,6 +2781,60 @@ mod tests {
+             "expected XSearch hosted tool, got: {hosted:?}"
+         );
+     }
++    /// Explicit kill switch (0007): when hosted_web_search_disabled is true,
++    /// WebSearch is suppressed but XSearch remains present when allowed.
++    #[tokio::test]
++    async fn hosted_tools_kill_switch_suppresses_web_search_preserves_xsearch() {
++        let agent = build_with_web_search_and_kill_switch(false, true, true, &[], None).await;
++        let hosted = agent.hosted_tools();
++        assert!(
++            !hosted
++                .iter()
++                .any(|t| matches!(t, xai_grok_sampling_types::HostedTool::WebSearch { .. })),
++            "WebSearch must NOT appear when hosted_web_search_disabled is true, got: {hosted:?}"
++        );
++        assert!(
++            hosted
++                .iter()
++                .any(|t| matches!(t, xai_grok_sampling_types::HostedTool::XSearch { .. })),
++            "expected XSearch hosted tool to remain, got: {hosted:?}"
++        );
++    }
++    /// 0005 interaction: model deny=["web_search"] strips hosted WebSearch
++    /// even when kill switch is unset.
++    #[tokio::test]
++    async fn model_deny_web_search_still_wins_over_decoupled_splice() {
++        let agent =
++            build_with_web_search_and_kill_switch(false, true, false, &["web_search"], None).await;
++        let hosted = agent.hosted_tools();
++        assert!(
++            !hosted
++                .iter()
++                .any(|t| matches!(t, xai_grok_sampling_types::HostedTool::WebSearch { .. })),
++            "WebSearch must NOT appear when disallowed by model tools, got: {hosted:?}"
++        );
++        assert!(
++            hosted
++                .iter()
++                .any(|t| matches!(t, xai_grok_sampling_types::HostedTool::XSearch { .. })),
++            "XSearch must remain when only web_search is disallowed, got: {hosted:?}"
++        );
++    }
++    /// Function-tool regression: WebSearchConfig::Disabled leaves WebSearchTool
++    /// absent from tool_config.tools.
++    #[tokio::test]
++    async fn function_tool_web_search_absent_when_config_disabled() {
++        let agent = build_with_web_search(false, false, &[], None).await;
++        let has_web_search_fn = agent
++            .tool_definitions()
++            .await
++            .iter()
++            .any(|td| short_tool_name(&td.function.name) == "web_search");
++        assert!(
++            !has_web_search_fn,
++            "function web_search tool must NOT be registered when WebSearchConfig is Disabled"
++        );
++    }
+     /// Backend search off: gate bool false and no hosted tools, regardless
+     /// of web-search config.
+     #[tokio::test]
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
+index 80a3fb32..df33d322 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
+@@ -974,6 +974,7 @@ pub(crate) async fn spawn_session_actor(
+             .map(|s| s.workspace_memory_file().to_string_lossy().into_owned()),
+         memory_backend: memory_backend_for_spec,
+         web_search_config: web_search_config.clone(),
++        hosted_web_search_disabled: disable_web_search,
+         web_search_domains,
+         backend_search: backend_tools_enabled,
+         web_fetch_config: web_fetch_config.clone(),
+diff --git a/crates/codegen/xai-grok-shell/src/session/agent_rebuild.rs b/crates/codegen/xai-grok-shell/src/session/agent_rebuild.rs
+index dcff3685..06500f5b 100644
+--- a/crates/codegen/xai-grok-shell/src/session/agent_rebuild.rs
++++ b/crates/codegen/xai-grok-shell/src/session/agent_rebuild.rs
+@@ -92,6 +92,9 @@ pub(crate) struct AgentRebuildSpec {
+     pub memory_workspace_path: Option<String>,
+     pub memory_backend: Option<Arc<dyn MemoryBackend>>,
+     pub web_search_config: WebSearchConfig,
++    /// When true, hosted web_search is suppressed even when backend_search is true.
++    /// Threaded from the CLI/config `disable_web_search` kill-switch.
++    pub hosted_web_search_disabled: bool,
+     /// `[toolset.web_search]` domain policy, resolved once at spawn and applied
+     /// to both search paths (the hosted `tool_overrides` merge and the
+     /// client-side `WebSearchConfig`) so they never diverge.
+@@ -210,6 +213,7 @@ impl AgentRebuildSpec {
+             memory_workspace_path,
+             memory_backend,
+             web_search_config,
++            hosted_web_search_disabled,
+             web_search_domains,
+             backend_search,
+             web_fetch_config,
+@@ -285,6 +289,7 @@ impl AgentRebuildSpec {
+         .with_session_env(session_env.clone())
+         .with_state_path(bridge_state_path.clone())
+         .with_web_search_config(web_search_config.clone())
++        .with_hosted_web_search_disabled(*hosted_web_search_disabled)
+         .with_backend_search(*backend_search)
+         .with_image_gen_config(image_gen_config.clone())
+         .with_video_gen_config(video_gen_config.clone())
+@@ -460,6 +465,7 @@ pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
+         memory_workspace_path: None,
+         memory_backend: None,
+         web_search_config: WebSearchConfig::default(),
++        hosted_web_search_disabled: false,
+         web_search_domains: None,
+         backend_search: false,
+         web_fetch_config: WebFetchConfig::Disabled,
