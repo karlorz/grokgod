@@ -34,8 +34,10 @@ echo "PASS: Patch 0004 file exists and is non-empty"
 grep -q "crates/codegen/xai-grok-shell/src/agent/config.rs" "$PATCH_0004" || { echo "FAIL: Missing agent config diff in 0004"; exit 1; }
 grep -q "crates/codegen/xai-grok-shell/src/session/slash_commands.rs" "$PATCH_0004" || { echo "FAIL: Missing slash_commands diff in 0004"; exit 1; }
 grep -q "crates/codegen/xai-grok-shell/src/session/workflow/registry.rs" "$PATCH_0004" || { echo "FAIL: Missing registry diff in 0004"; exit 1; }
-grep -q "crates/codegen/xai-grok-pager/src/settings/defs.rs" "$PATCH_0004" || { echo "FAIL: Missing settings defs diff in 0004"; exit 1; }
+grep -q "crates/codegen/xai-grok-pager/src/views/extensions_modal.rs" "$PATCH_0004" || { echo "FAIL: Missing /plugin extensions_modal diff in 0004"; exit 1; }
 grep -q "ToggleSelectedBuiltinWorkflow" "$PATCH_0004" || { echo "FAIL: Missing /plugin Workflows Space toggle in 0004"; exit 1; }
+grep -q "x.ai/workflows/set-builtin-deep-research" "$PATCH_0004" || { echo "FAIL: Missing live slash ACP in 0004"; exit 1; }
+grep -q 'label: "Built-in deep-research workflow"' "$PATCH_0004" && { echo "FAIL: 0004 must not add a /settings catalog row"; exit 1; }
 grep -q "workflows.builtins" "$PATCH_0004" || { echo "FAIL: Missing workflows.builtins in 0004"; exit 1; }
 echo "PASS: Patch 0004 touches expected files"
 
