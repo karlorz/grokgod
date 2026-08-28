@@ -146,6 +146,8 @@ case "$cmd" in
     echo "  0002-plan-mode-extra-writable: $patch_status"
     echo "  0003-session-persist-single: $patch_status"
     echo "  0004-disable-builtin-deep-research: $patch_status"
+    echo "  0005-model-tools-deny-allow: $patch_status"
+    echo "  0006-web-search-call-tolerant-parse: $patch_status"
     echo "  overlay-pin: $overlay_status"
     echo "  weekly-pin: global-default"
     if [ -f "$GROKGOD_HOME/pin/orca-pin.toml" ]; then

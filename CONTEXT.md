@@ -8,8 +8,25 @@ shared language for what grokgod keeps across `grok update`, not a spec.
 **Source patch**:
 A `git apply` diff under `patches/` against a pinned grok-build SHA. Re-applied
 on `grok update` / `grokgod update`. Current set: `0001-normalize-plugin-skill-join`,
-`0002-plan-mode-extra-writable`, `0003-session-persist-single`, `0004-disable-builtin-deep-research`.
+`0002-plan-mode-extra-writable`, `0003-session-persist-single`, `0004-disable-builtin-deep-research`,
+`0005-model-tools-deny-allow`, `0006-web-search-call-tolerant-parse`.
 _Avoid_: Mach-O hex edit, plugin.json rewrite as the engine fix
+
+**Tolerant search-call parse**:
+Tolerant SSE stream deserialization in grokgod `0006` for Responses API backends.
+Catches deserialize errors from upstream gateways that omit the `action` field on
+in-progress `web_search_call` / `x_search_call` items, injects a minimal default `Search`
+action, and drops unparseable unknown item variants with a warning instead of killing
+the turn. Enables `supports_backend_search = true` on hosted GPT codex entries.
+_Avoid_: gateway-side hard-dependencies, dropping all unknown SSE events silently, forking async-openai
+
+**Per-model tool gating**:
+`[model."<id>".tools]` with `deny` and `allow` lists in grokgod `0005`. Strips
+named tools before requests reach endpoints on both client function tools and
+the hosted splice (`x_search`, hosted `web_search`). Deny wins over allow.
+Lets BYOK gateways drop `web_search`/`web_fetch` per model entry without global
+off-switches or `web_search = "no-such-model"` fake catalogs.
+_Avoid_: global fake-catalog-miss trick, per-agent disallowedTools for gateway gating
 
 **Built-in deep-research workflow**:
 Compiled-in grok-build workflow and `/deep-research` slash command. grokgod
