@@ -35,6 +35,7 @@ grep -q "crates/codegen/xai-grok-shell/src/agent/config.rs" "$PATCH_0004" || { e
 grep -q "crates/codegen/xai-grok-shell/src/session/slash_commands.rs" "$PATCH_0004" || { echo "FAIL: Missing slash_commands diff in 0004"; exit 1; }
 grep -q "crates/codegen/xai-grok-shell/src/session/workflow/registry.rs" "$PATCH_0004" || { echo "FAIL: Missing registry diff in 0004"; exit 1; }
 grep -q "crates/codegen/xai-grok-pager/src/settings/defs.rs" "$PATCH_0004" || { echo "FAIL: Missing settings defs diff in 0004"; exit 1; }
+grep -q "ToggleSelectedBuiltinWorkflow" "$PATCH_0004" || { echo "FAIL: Missing /plugin Workflows Space toggle in 0004"; exit 1; }
 grep -q "workflows.builtins" "$PATCH_0004" || { echo "FAIL: Missing workflows.builtins in 0004"; exit 1; }
 echo "PASS: Patch 0004 touches expected files"
 

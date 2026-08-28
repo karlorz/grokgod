@@ -9,8 +9,9 @@ command.
 0004 adds `[workflows.builtins] deep-research` (compiled default **true**).
 Explicit `false` drops the builtin from the registry, slash catalog, and
 name-resolve path. `/settings` → Agent → Built-in deep-research workflow
-persists the same key. grokgod install merges `false` when the key is
-absent.
+and `/plugin` → Workflows Space persist the same key. The `/plugin` row
+stays listed when off so Space can re-enable it. grokgod install merges
+`false` when the key is absent.
 
 Rejected: `[workflows] enabled = false`; renaming the plugin; upstream PR
 (xai-org issues-off).

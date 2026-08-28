@@ -27,10 +27,10 @@ index 6eebb51f..623c442e 100644
               [toolset.bash]\nlogin_shell_capture = false\n\
               [toolset.web_search]\nallowed_domains = [\"docs.x.ai\"]\n",
 diff --git a/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md b/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
-index 00ea7f10..e9a80b6b 100644
+index 00ea7f10..5f9ad58e 100644
 --- a/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
 +++ b/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
-@@ -359,6 +359,9 @@ Background workflows — the `workflow` tool, named `.grok/workflows/*.rhai` scr
+@@ -359,8 +359,13 @@ Background workflows — the `workflow` tool, named `.grok/workflows/*.rhai` scr
  ```toml
  [workflows]
  enabled = false                       # disable background workflows (or GROK_WORKFLOWS=0)
@@ -39,7 +39,11 @@ index 00ea7f10..e9a80b6b 100644
 +deep-research = false                 # hide compiled-in /deep-research (default true)
  ```
  
++The same key is the `/plugin` → Workflows Space toggle for compiled-in `deep-research`. That row stays listed when off so you can turn it back on. User and project workflows stay browse-only. Slash ownership applies after restart.
++
  Project workflows are discovered from `<repo-root>/.grok/workflows/`; user workflows from `~/.grok/workflows/`. Discovery and invocation key off the script's `meta.name`, so keep each filename aligned with its `meta.name`. Built-ins win over project names, and project names win over user names, so keep names unique across scopes.
+ 
+ Each launch gets a session-unique display handle such as `deep-research-2`. That handle is what you see in the `/workflow runs` dashboard and pass to `/workflow pause`, `resume`, or `stop` — the internal run IDs never surface in commands. A numbered handle isn't a reusable definition name, so the dashboard disables **save** until you pick a new unique `meta.name` and save the edited script yourself. See [Slash Commands](04-slash-commands.md) for examples.
 diff --git a/crates/codegen/xai-grok-pager/src/app/actions.rs b/crates/codegen/xai-grok-pager/src/app/actions.rs
 index d29ab37a..1789581a 100644
 --- a/crates/codegen/xai-grok-pager/src/app/actions.rs
@@ -54,6 +58,109 @@ index d29ab37a..1789581a 100644
      /// SHELL-owned `keep_text_selection` (`flash` | `hold`); cache + persist.
      SetKeepTextSelection(crate::appearance::TextSelection),
      /// Set the mouse-wheel scroll speed multiplier (1-100). Pager-owned
+diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/modals.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/modals.rs
+index 4f1bb6ce..a4892192 100644
+--- a/crates/codegen/xai-grok-pager/src/app/agent_view/modals.rs
++++ b/crates/codegen/xai-grok-pager/src/app/agent_view/modals.rs
+@@ -233,6 +233,7 @@ impl AgentView {
+                 | ButtonAction::ToggleSelectedHook
+                 | ButtonAction::ToggleSelectedSkill
+                 | ButtonAction::ToggleSelectedMcpServer
++                | ButtonAction::ToggleSelectedBuiltinWorkflow
+         )
+         .then(|| state.selected_item_enabled().map(|on| !on))
+         .flatten();
+@@ -250,6 +251,17 @@ impl AgentView {
+                     (None, None)
+                 }
+             }
++            ButtonAction::ToggleSelectedBuiltinWorkflow => {
++                if let TabDataState::Loaded(ref workflows) = state.workflows_data
++                    && let Some(idx) = state.selected_data_index()
++                    && let Some(wf) = workflows.get(idx)
++                    && crate::views::extensions_modal::workflow_is_togglable(wf)
++                {
++                    (Some(wf.name.clone()), next_enabled)
++                } else {
++                    (None, None)
++                }
++            }
+             ButtonAction::ToggleSelectedHook | ButtonAction::RemoveSelectedHook => {
+                 if let TabDataState::Loaded(ref data) = state.hooks_data
+                     && let Some(idx) = state.selected_data_index()
+@@ -1721,6 +1733,22 @@ impl AgentView {
+                 }
+                 InputOutcome::Changed
+             }
++            ButtonAction::ToggleSelectedBuiltinWorkflow => {
++                if let Some(ref mut state) = self.extensions_modal {
++                    use crate::views::extensions_modal::{workflow_is_togglable, TabDataState};
++                    if let TabDataState::Loaded(ref workflows) = state.workflows_data
++                        && let Some(idx) = state.selected_data_index()
++                        && let Some(wf) = workflows.get(idx)
++                        && workflow_is_togglable(wf)
++                    {
++                        let new = !wf.enabled;
++                        state.pending_action = Some("toggling...".into());
++                        state.pending_entry_index = Some(state.picker_state.selected);
++                        return InputOutcome::Action(Action::SetWorkflowBuiltinDeepResearch(new));
++                    }
++                }
++                InputOutcome::Changed
++            }
+             ButtonAction::UninstallSelectedPlugin => {
+                 if let Some(ref state) = self.extensions_modal
+                     && let crate::views::extensions_modal::TabDataState::Loaded(ref data) =
+@@ -2381,6 +2409,49 @@ mod extensions_action_target_tests {
+         assert_eq!(enabled, Some(true));
+     }
+ 
++    #[test]
++    fn workflows_toggle_resolves_builtin_name_and_ignores_user_workflow() {
++        use crate::views::extensions_modal::WorkflowInfo;
++        let mut modal = ExtensionsModalState::new(ExtensionsTab::Workflows);
++        modal.workflows_data = TabDataState::Loaded(vec![
++            WorkflowInfo {
++                name: "deep-research".into(),
++                description: "Deep research".into(),
++                when_to_use: None,
++                source: "builtin".into(),
++                path: None,
++                enabled: false,
++            },
++            WorkflowInfo {
++                name: "user-workflow".into(),
++                description: "User workflow".into(),
++                when_to_use: None,
++                source: "user".into(),
++                path: None,
++                enabled: true,
++            },
++        ]);
++        // Row 0 is deep-research (data_index Some(0)), row 1 is user workflow (browse-only, data_index None)
++        modal.entry_data_indices = vec![Some(0), None];
++        modal.entry_group_keys = vec![None, None];
++        modal.picker_state.selected = 0;
++
++        let (target, enabled) = AgentView::extensions_action_target(
++            &modal,
++            &ButtonAction::ToggleSelectedBuiltinWorkflow,
++        );
++        assert_eq!(target.as_deref(), Some("deep-research"));
++        assert_eq!(enabled, Some(true));
++
++        modal.picker_state.selected = 1;
++        let (target, enabled) = AgentView::extensions_action_target(
++            &modal,
++            &ButtonAction::ToggleSelectedBuiltinWorkflow,
++        );
++        assert_eq!(target, None);
++        assert_eq!(enabled, None);
++    }
++
+     #[test]
+     fn mcp_toggle_auth_remove_resolve_server_name() {
+         let mut modal = ExtensionsModalState::new(ExtensionsTab::McpServers);
 diff --git a/crates/codegen/xai-grok-pager/src/app/app_view.rs b/crates/codegen/xai-grok-pager/src/app/app_view.rs
 index 6b2bd919..6b204000 100644
 --- a/crates/codegen/xai-grok-pager/src/app/app_view.rs
@@ -149,10 +256,10 @@ index 39ad7642..38ce86fa 100644
          Action::SetScrollSpeed(v) => set_scroll_speed(app, v),
          Action::SetScrollMode(v) => set_scroll_mode(app, v),
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
-index 02a0b964..63dadf6a 100644
+index 02a0b964..f3d9cfed 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
-@@ -402,6 +402,40 @@ pub(in crate::app::dispatch) fn set_ask_user_question_timeout_enabled(
+@@ -402,6 +402,55 @@ pub(in crate::app::dispatch) fn set_ask_user_question_timeout_enabled(
      }]
  }
  
@@ -173,6 +280,21 @@ index 02a0b964..63dadf6a 100644
 +    }
 +    set_workflow_builtin_deep_research_inner(app, new);
 +    refresh_open_settings_modals(app);
++    for agent in app.agents.values_mut() {
++        if let Some(ref mut modal) = agent.extensions_modal {
++            if let crate::views::extensions_modal::TabDataState::Loaded(ref mut workflows) =
++                modal.workflows_data
++            {
++                for wf in workflows.iter_mut() {
++                    if crate::views::extensions_modal::workflow_is_togglable(wf) {
++                        wf.enabled = new;
++                    }
++                }
++            }
++            modal.pending_action = None;
++            modal.pending_entry_index = None;
++        }
++    }
 +    tracing::info!(
 +        target: "settings",
 +        key = "workflows.builtins.deep-research",
@@ -269,6 +391,32 @@ index 987b9080..0b0dfe54 100644
          ("show_thinking_blocks", SettingValue::Bool(b)) => set_show_thinking_blocks_inner(app, *b),
          ("group_tool_verbs", SettingValue::Bool(b)) => set_group_tool_verbs_inner(app, *b),
          ("collapsed_edit_blocks", SettingValue::Bool(b)) => {
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/task_result.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/task_result.rs
+index 2af76a36..a99f3a72 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/task_result.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/task_result.rs
+@@ -1047,12 +1047,20 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
+             result,
+         } => {
+             use crate::views::extensions_modal::TabDataState;
++            let enabled = app.workflow_builtin_deep_research.unwrap_or(true);
+             if let Some(agent) = app.agents.get_mut(&agent_id)
+                 && agent.session.session_id.as_ref() == Some(&session_id)
+                 && let Some(ref mut modal) = agent.extensions_modal
+             {
+                 modal.workflows_data = match result {
+-                    Ok(workflows) => TabDataState::Loaded(workflows),
++                    Ok(mut workflows) => {
++                        for wf in &mut workflows {
++                            if crate::views::extensions_modal::workflow_is_togglable(wf) {
++                                wf.enabled = enabled;
++                            }
++                        }
++                        TabDataState::Loaded(workflows)
++                    }
+                     Err(e) => TabDataState::Error(e),
+                 };
+             }
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
 index 228dc205..eca312fe 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
@@ -281,6 +429,140 @@ index 228dc205..eca312fe 100644
          zdr_access_enabled: false,
          usage_billing_redirect_url: None,
          access_gate_shown_logged: false,
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
+index f82c8f68..c00fd677 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
+@@ -3739,3 +3739,61 @@ fn mouse_reporting_toggle_off_sticky_persists_after_transient_toast() {
+     );
+     reset_mouse_capture_enabled(true);
+ }
++
++#[test]
++fn set_workflow_builtin_deep_research_patches_open_extensions_modal() {
++    use crate::views::extensions_modal::{ExtensionsModalState, ExtensionsTab, TabDataState, WorkflowInfo};
++    let mut app = test_app_with_agent();
++    let id = AgentId(0);
++    let mut modal = ExtensionsModalState::new(ExtensionsTab::Workflows);
++    modal.workflows_data = TabDataState::Loaded(vec![
++        WorkflowInfo {
++            name: "deep-research".into(),
++            description: "Deep research".into(),
++            when_to_use: None,
++            source: "builtin".into(),
++            path: None,
++            enabled: true,
++        },
++        WorkflowInfo {
++            name: "user-wf".into(),
++            description: "User wf".into(),
++            when_to_use: None,
++            source: "user".into(),
++            path: None,
++            enabled: true,
++        },
++    ]);
++    modal.pending_action = Some("toggling...".into());
++    modal.pending_entry_index = Some(0);
++    app.agents.get_mut(&id).unwrap().extensions_modal = Some(modal);
++
++    let effects = dispatch(Action::SetWorkflowBuiltinDeepResearch(false), &mut app);
++    assert_eq!(effects.len(), 1);
++    match &effects[0] {
++        Effect::PersistSetting {
++            key,
++            value,
++            rollback_value,
++        } => {
++            assert_eq!(*key, "workflows.builtins.deep-research");
++            assert_eq!(*value, crate::settings::SettingValue::Bool(false));
++            assert_eq!(*rollback_value, crate::settings::SettingValue::Bool(true));
++        }
++        other => panic!("expected PersistSetting, got {other:?}"),
++    }
++
++    let agent = app.agents.get(&id).unwrap();
++    let modal = agent.extensions_modal.as_ref().unwrap();
++    assert!(modal.pending_action.is_none());
++    assert!(modal.pending_entry_index.is_none());
++    if let TabDataState::Loaded(ref workflows) = modal.workflows_data {
++        assert_eq!(workflows[0].name, "deep-research");
++        assert_eq!(workflows[0].enabled, false);
++        assert_eq!(workflows[1].name, "user-wf");
++        assert_eq!(workflows[1].enabled, true);
++    } else {
++        panic!("expected TabDataState::Loaded");
++    }
++}
++
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs
+index 67c9d531..98e64209 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs
+@@ -353,6 +353,63 @@ fn stale_workflows_result_does_not_repaint_replaced_session_modal() {
+     ));
+ }
+ 
++#[test]
++fn workflows_list_loaded_overlays_builtin_deep_research_enabled_state() {
++    use crate::views::extensions_modal::{TabDataState, WorkflowInfo};
++    let mut app = test_app_with_agent();
++    app.workflow_builtin_deep_research = Some(false);
++
++    let session_id = acp::SessionId::new("session-1");
++    let agent = app.agents.get_mut(&AgentId(0)).unwrap();
++    agent.session.session_id = Some(session_id.clone());
++    agent.extensions_modal = Some(crate::views::extensions_modal::ExtensionsModalState::new(
++        crate::views::extensions_modal::ExtensionsTab::Workflows,
++    ));
++
++    let _ = dispatch(
++        Action::TaskComplete(TaskResult::WorkflowsListLoaded {
++            agent_id: AgentId(0),
++            session_id,
++            result: Ok(vec![
++                WorkflowInfo {
++                    name: "deep-research".into(),
++                    description: "builtin".into(),
++                    when_to_use: None,
++                    source: "builtin".into(),
++                    path: None,
++                    enabled: true,
++                },
++                WorkflowInfo {
++                    name: "user-workflow".into(),
++                    description: "user".into(),
++                    when_to_use: None,
++                    source: "user".into(),
++                    path: None,
++                    enabled: true,
++                },
++            ]),
++        }),
++        &mut app,
++    );
++
++    let modal = app.agents[&AgentId(0)].extensions_modal.as_ref().unwrap();
++    if let TabDataState::Loaded(ref workflows) = modal.workflows_data {
++        assert_eq!(workflows.len(), 2);
++        assert_eq!(workflows[0].name, "deep-research");
++        assert_eq!(
++            workflows[0].enabled, false,
++            "builtin deep-research enabled state is overlaid from app config"
++        );
++        assert_eq!(workflows[1].name, "user-workflow");
++        assert_eq!(
++            workflows[1].enabled, true,
++            "user workflow enabled state remains untouched"
++        );
++    } else {
++        panic!("expected TabDataState::Loaded");
++    }
++}
++
+ fn foreign_resume_hint(
+     tool: xai_grok_foreign_sessions::ForeignSessionTool,
+ ) -> xai_grok_foreign_sessions::RecentForeignSession {
 diff --git a/crates/codegen/xai-grok-pager/src/app/effects/helpers.rs b/crates/codegen/xai-grok-pager/src/app/effects/helpers.rs
 index c25a8dfe..36ef1a5b 100644
 --- a/crates/codegen/xai-grok-pager/src/app/effects/helpers.rs
@@ -413,6 +695,333 @@ index eb37fff5..2117d12d 100644
                  // show_thinking_blocks: Option<bool>; None → true (client default).
                  ("show_thinking_blocks", SettingKind::Bool { default }) => {
                      assert_eq!(
+diff --git a/crates/codegen/xai-grok-pager/src/views/extensions_modal.rs b/crates/codegen/xai-grok-pager/src/views/extensions_modal.rs
+index 5c055840..b19856d7 100644
+--- a/crates/codegen/xai-grok-pager/src/views/extensions_modal.rs
++++ b/crates/codegen/xai-grok-pager/src/views/extensions_modal.rs
+@@ -624,6 +624,8 @@ pub enum ButtonAction {
+     ToggleSelectedPlugin,
+     /// Toggle enable/disable on the skill under the cursor.
+     ToggleSelectedSkill,
++    /// Toggle the compiled-in deep-research workflow under the cursor.
++    ToggleSelectedBuiltinWorkflow,
+     /// Toggle enable/disable on the MCP server under the cursor.
+     ToggleSelectedMcpServer,
+     /// Trigger MCP auth for the selected server.
+@@ -1145,7 +1147,7 @@ pub fn extensions_action_keys(tab: ExtensionsTab) -> Vec<(char, &'static str)> {
+             ('x', "remove source"),
+         ],
+         ExtensionsTab::Skills => vec![(' ', "toggle"), ('f', "filter"), ('r', "reload")],
+-        ExtensionsTab::Workflows => vec![('r', "reload")],
++        ExtensionsTab::Workflows => vec![(' ', "toggle"), ('r', "reload")],
+         ExtensionsTab::McpServers => MCP_SERVERS_ACTION_KEYS.to_vec(),
+     }
+ }
+@@ -1279,7 +1281,13 @@ fn selected_item_enabled_at(
+             _ => None,
+         },
+         ExtensionsTab::Marketplace => None,
+-        ExtensionsTab::Workflows => None,
++        ExtensionsTab::Workflows => {
++            let idx = data_index_at(entry_data_indices, selected)?;
++            match &state.workflows_data {
++                TabDataState::Loaded(workflows) => workflows.get(idx).map(|w| w.enabled),
++                _ => None,
++            }
++        }
+     }
+ }
+ 
+@@ -1372,6 +1380,7 @@ pub fn resolve_key(tab: ExtensionsTab, ch: char) -> Option<ButtonAction> {
+         (ExtensionsTab::Skills, 'r') => Some(ButtonAction::ReloadSkills),
+         (ExtensionsTab::Skills, 'f') => Some(ButtonAction::CycleFilter),
+         // Shares ReloadSkills: its router arm refetches skills and workflows.
++        (ExtensionsTab::Workflows, ' ') => Some(ButtonAction::ToggleSelectedBuiltinWorkflow),
+         (ExtensionsTab::Workflows, 'r') => Some(ButtonAction::ReloadSkills),
+         (ExtensionsTab::McpServers, 'a') => Some(ButtonAction::StartInput {
+             command_prefix: "mcp_add".into(),
+@@ -1679,6 +1688,19 @@ pub struct WorkflowInfo {
+     pub when_to_use: Option<String>,
+     pub source: String,
+     pub path: Option<String>,
++    /// Compiled-in workflows can be turned off in this picker. User/project
++    /// rows stay `true`. Missing JSON (older shells) deserializes as on.
++    #[serde(default = "workflow_info_enabled_default")]
++    pub enabled: bool,
++}
++
++fn workflow_info_enabled_default() -> bool {
++    true
++}
++
++/// Space-toggleable compiled-in workflow (grokgod `[workflows.builtins]`).
++pub(crate) fn workflow_is_togglable(wf: &WorkflowInfo) -> bool {
++    wf.source == "builtin" && wf.name == "deep-research"
+ }
+ 
+ /// State for the hooks/plugins modal popup.
+@@ -2757,11 +2779,15 @@ pub fn render_extensions_modal(
+                     entry_is_header.push(false);
+                     entry_dimmed.push(row.dimmed);
+                     entry_indent.push(0);
+-                    // Browse-only rows: no data indices, no group keys.
+-                    entry_data_indices.push(None);
++                    entry_data_indices.push(row.data_index);
+                     entry_group_keys.push(None);
+-                    entry_badge_text.push(String::new());
+-                    entry_badge_color.push(None);
++                    if row.disabled_badge {
++                        entry_badge_text.push("[disabled]".into());
++                        entry_badge_color.push(Some(theme.accent_error));
++                    } else {
++                        entry_badge_text.push(String::new());
++                        entry_badge_color.push(None);
++                    }
+                 }
+             }
+             ExtensionsTab::Plugins => {
+@@ -4179,7 +4205,7 @@ mod tests {
+                 ExtensionsTab::Skills,
+                 &[(' ', "toggle"), ('f', "filter"), ('r', "reload")],
+             ),
+-            (ExtensionsTab::Workflows, &[('r', "reload")]),
++            (ExtensionsTab::Workflows, &[(' ', "toggle"), ('r', "reload")]),
+             (
+                 ExtensionsTab::McpServers,
+                 &[
+@@ -4915,6 +4941,7 @@ mod tests {
+             when_to_use: Some("when CI is red".to_string()),
+             source: "builtin".to_string(),
+             path: None,
++            enabled: true,
+         }]);
+         let area = Rect::new(0, 0, 100, 40);
+         let mut buf = Buffer::empty(area);
+@@ -4939,7 +4966,7 @@ mod tests {
+         );
+         assert!(
+             state.entry_data_indices.iter().all(|d| d.is_none()),
+-            "workflow rows are browse-only"
++            "non-togglable workflow rows stay browse-only (data_index None)"
+         );
+         assert!(
+             state.entry_group_keys.iter().all(|k| k.is_none()),
+@@ -4947,6 +4974,46 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn workflows_tab_renders_builtin_deep_research_with_data_index_and_disabled_badge() {
++        let mut state = ExtensionsModalState::new(ExtensionsTab::Workflows);
++        state.workflows_data = TabDataState::Loaded(vec![
++            WorkflowInfo {
++                name: "deep-research".to_string(),
++                description: "Deep research workflow".to_string(),
++                when_to_use: None,
++                source: "builtin".to_string(),
++                path: None,
++                enabled: false,
++            },
++            WorkflowInfo {
++                name: "user-workflow".to_string(),
++                description: "A custom user workflow".to_string(),
++                when_to_use: None,
++                source: "user".to_string(),
++                path: None,
++                enabled: true,
++            },
++        ]);
++        let area = Rect::new(0, 0, 100, 40);
++        let mut buf = Buffer::empty(area);
++        render_extensions_modal(&mut buf, area, &mut state, None, false, 0);
++
++        assert_eq!(state.entry_labels_cache, ["deep-research", "user-workflow"]);
++        assert!(
++            state.entry_data_indices[0].is_some(),
++            "deep-research builtin row entry_data_indices is Some(_)"
++        );
++        assert!(
++            state.entry_data_indices[1].is_none(),
++            "user workflow row entry_data_indices is None"
++        );
++        assert!(
++            buffer_count(&buf, "[disabled]") >= 1,
++            "when enabled: false, buffer contains [disabled]"
++        );
++    }
++
+     #[test]
+     fn workflows_tab_shows_all_entries_without_unusable_name_badge() {
+         let mut state = ExtensionsModalState::new(ExtensionsTab::Workflows);
+@@ -4957,6 +5024,7 @@ mod tests {
+                 when_to_use: None,
+                 source: "project".into(),
+                 path: None,
++                enabled: true,
+             },
+             WorkflowInfo {
+                 name: "Not Launchable".into(),
+@@ -4964,6 +5032,7 @@ mod tests {
+                 when_to_use: None,
+                 source: "project".into(),
+                 path: None,
++                enabled: true,
+             },
+         ]);
+         let area = Rect::new(0, 0, 100, 40);
+@@ -6977,6 +7046,7 @@ mod tests {
+             when_to_use: None,
+             source: "builtin".into(),
+             path: None,
++            enabled: true,
+         }]);
+         let area = Rect::new(0, 0, 100, 40);
+         let mut buf = Buffer::empty(area);
+@@ -7156,6 +7226,7 @@ mod tests {
+                 when_to_use: None,
+                 source: "builtin".into(),
+                 path: None,
++                enabled: true,
+             },
+             WorkflowInfo {
+                 name: "alpha-wf".into(),
+@@ -7163,6 +7234,7 @@ mod tests {
+                 when_to_use: None,
+                 source: "builtin".into(),
+                 path: None,
++                enabled: true,
+             },
+         ]);
+         let area = Rect::new(0, 0, 100, 40);
+diff --git a/crates/codegen/xai-grok-pager/src/views/extensions_modal/workflows_picker_rows.rs b/crates/codegen/xai-grok-pager/src/views/extensions_modal/workflows_picker_rows.rs
+index 1ffb5c5a..071f7a32 100644
+--- a/crates/codegen/xai-grok-pager/src/views/extensions_modal/workflows_picker_rows.rs
++++ b/crates/codegen/xai-grok-pager/src/views/extensions_modal/workflows_picker_rows.rs
+@@ -1,13 +1,13 @@
+ //! Picker rows for the extensions modal's Workflows tab.
+ 
+-use super::{TabDataState, WorkflowInfo, cmp_str_ci, fuzzy_matches};
++use super::{TabDataState, WorkflowInfo, cmp_str_ci, fuzzy_matches, workflow_is_togglable};
+ 
+ /// Placeholder row when the catalog comes back empty (also what a disabled
+ /// workflows feature looks like on the wire, hence the hedged phrasing).
+ pub(super) const WORKFLOWS_EMPTY_PLACEHOLDER: &str =
+     "No workflows available. Ask Grok to help make you one!";
+ 
+-/// One picker row for the Workflows tab (flat, browse-only catalog).
++/// One picker row for the Workflows tab (flat catalog; builtins may toggle).
+ #[derive(Debug)]
+ pub(super) struct WorkflowRow {
+     pub(super) label: String,
+@@ -15,6 +15,8 @@ pub(super) struct WorkflowRow {
+     pub(super) desc_lines: Vec<String>,
+     pub(super) fields: Vec<(String, String)>,
+     pub(super) dimmed: bool,
++    pub(super) disabled_badge: bool,
++    pub(super) data_index: Option<usize>,
+ }
+ 
+ impl WorkflowRow {
+@@ -26,6 +28,8 @@ impl WorkflowRow {
+             desc_lines: Vec::new(),
+             fields: Vec::new(),
+             dimmed: true,
++            disabled_badge: false,
++            data_index: None,
+         }
+     }
+ }
+@@ -54,6 +58,10 @@ pub(super) fn build_workflows_picker_rows(
+     visible
+         .into_iter()
+         .map(|wf| {
++            let data_index = workflows
++                .iter()
++                .position(|item| item.name == wf.name && item.source == wf.source)
++                .filter(|_| workflow_is_togglable(wf));
+             let mut fields = Vec::new();
+             if let Some(ref p) = wf.path {
+                 fields.push(("path".to_string(), p.clone()));
+@@ -70,7 +78,9 @@ pub(super) fn build_workflows_picker_rows(
+                     vec![wf.description.clone()]
+                 },
+                 fields,
+-                dimmed: false,
++                dimmed: !wf.enabled,
++                disabled_badge: !wf.enabled,
++                data_index,
+             }
+         })
+         .collect()
+@@ -93,6 +103,7 @@ mod tests {
+                 when_to_use: None,
+                 source: "user".into(),
+                 path: Some("/home/u/.grok/workflows/alpha-wf.rhai".into()),
++                enabled: true,
+             },
+             WorkflowInfo {
+                 name: "beta-wf".into(),
+@@ -100,6 +111,7 @@ mod tests {
+                 when_to_use: None,
+                 source: "user".into(),
+                 path: None,
++                enabled: true,
+             },
+         ]);
+         let by_desc = build_workflows_picker_rows(&workflows, "ci");
+@@ -134,4 +146,52 @@ mod tests {
+         assert_eq!(labels(&empty), [WORKFLOWS_EMPTY_PLACEHOLDER]);
+         assert!(empty[0].dimmed);
+     }
++
++    #[test]
++    fn workflows_picker_rows_togglable_and_dimmed_behavior() {
++        let workflows = TabDataState::Loaded(vec![
++            WorkflowInfo {
++                name: "deep-research".into(),
++                description: "builtin deep research".into(),
++                when_to_use: None,
++                source: "builtin".into(),
++                path: None,
++                enabled: false,
++            },
++            WorkflowInfo {
++                name: "my-workflow".into(),
++                description: "user workflow".into(),
++                when_to_use: None,
++                source: "user".into(),
++                path: None,
++                enabled: true,
++            },
++            WorkflowInfo {
++                name: "fix-ci".into(),
++                description: "other builtin".into(),
++                when_to_use: None,
++                source: "builtin".into(),
++                path: None,
++                enabled: true,
++            },
++        ]);
++        let rows = build_workflows_picker_rows(&workflows, "");
++        // Order A-Z by name: deep-research, fix-ci, my-workflow
++        assert_eq!(labels(&rows), ["deep-research", "fix-ci", "my-workflow"]);
++
++        // deep-research builtin disabled
++        assert_eq!(rows[0].data_index, Some(0));
++        assert!(rows[0].dimmed);
++        assert!(rows[0].disabled_badge);
++
++        // fix-ci builtin
++        assert_eq!(rows[1].data_index, None);
++        assert!(!rows[1].dimmed);
++        assert!(!rows[1].disabled_badge);
++
++        // my-workflow user
++        assert_eq!(rows[2].data_index, None);
++        assert!(!rows[2].dimmed);
++        assert!(!rows[2].disabled_badge);
++    }
+ }
 diff --git a/crates/codegen/xai-grok-pager/src/views/settings_modal/state.rs b/crates/codegen/xai-grok-pager/src/views/settings_modal/state.rs
 index b6c54c29..684915a7 100644
 --- a/crates/codegen/xai-grok-pager/src/views/settings_modal/state.rs

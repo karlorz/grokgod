@@ -15,7 +15,8 @@ _Avoid_: Mach-O hex edit, plugin.json rewrite as the engine fix
 Compiled-in grok-build workflow and `/deep-research` slash command. grokgod
 `0004` adds `[workflows.builtins] deep-research` (default on). `false` hides
 the builtin so plugin skill `deep-research:deep-research` can own the bare
-slash name. Not `[workflows] enabled = false` (that kills every workflow).
+slash name. `/settings` and `/plugin` → Workflows Space persist the same key.
+Not `[workflows] enabled = false` (that kills every workflow).
 _Avoid_: renaming the plugin; disabling all workflows to unstick the name
 
 **Session plan file**:
