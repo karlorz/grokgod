@@ -1,0 +1,317 @@
+diff --git a/crates/codegen/xai-grok-sampler/src/client.rs b/crates/codegen/xai-grok-sampler/src/client.rs
+index c48f42f5..0b4168dc 100644
+--- a/crates/codegen/xai-grok-sampler/src/client.rs
++++ b/crates/codegen/xai-grok-sampler/src/client.rs
+@@ -19,7 +19,7 @@ use indexmap::IndexMap;
+ use reqwest::header::{
+     ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, USER_AGENT,
+ };
+-use serde::Serialize;
++use serde::{Deserialize, Serialize};
+ 
+ use xai_grok_sampling_types::error::{
+     parse_error_code, try_parse_stream_error, user_facing_api_error_message,
+@@ -83,8 +83,29 @@ impl GrokRequestHeaders<'_> {
+ /// so we only handle that form. HTTP-dates silently return `None` and
+ /// the caller falls back to exponential backoff.
+ /// Capped at 120s to prevent absurdly long sleeps from a misbehaving upstream.
++/// Try injecting a default action into search call items missing `action`.
++///
++/// Handles `web_search_call` and `x_search_call` items where upstream
++/// omits `action` on in-progress / done frames or in terminal outputs.
++fn sanitize_search_call_action(item: &mut serde_json::Value) {
++    if let Some(obj) = item.as_object_mut() {
++        let is_search_call = obj
++            .get("type")
++            .and_then(|t| t.as_str())
++            .map(|t| t == "web_search_call" || t == "x_search_call")
++            .unwrap_or(false);
++        if is_search_call && !obj.contains_key("action") {
++            obj.insert(
++                "action".to_string(),
++                serde_json::json!({ "type": "search", "query": "" }),
++            );
++        }
++    }
++}
++
+ /// Deserialize a Responses API SSE event, with a fallback for xAI-specific
+-/// tool types (e.g., `x_search`) that `async_openai` can't parse.
++/// tool types (e.g., `x_search`) that `async_openai` can't parse and tolerant
++/// normalization of search-call items missing `action`.
+ ///
+ /// The API echoes the request's `tools` array in `ResponseCompleted` and
+ /// `ResponseCreated` events. If we sent `{"type": "x_search"}`, the response
+@@ -105,7 +126,7 @@ fn deserialize_response_event(data: &str) -> Result<rs::ResponseStreamEvent> {
+     let mut event = match serde_json::from_str::<rs::ResponseStreamEvent>(data) {
+         Ok(event) => event,
+         Err(first_err) => {
+-            // Try sanitizing: parse as Value, strip unknown tools, retry.
++            // Try sanitizing: parse as Value, strip unknown tools, inject missing search actions, retry.
+             if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(data) {
+                 // Strip tools that async_openai's rs::Tool can't deserialize
+                 // (e.g., xAI-specific "x_search"). Instead of maintaining a
+@@ -117,10 +138,90 @@ fn deserialize_response_event(data: &str) -> Result<rs::ResponseStreamEvent> {
+                 {
+                     tools.retain(|t| serde_json::from_value::<rs::Tool>(t.clone()).is_ok());
+                 }
+-                if let Ok(mut event) = serde_json::from_value::<rs::ResponseStreamEvent>(value) {
++
++                // Inject default action for actionless web_search_call / x_search_call items
++                if let Some(item) = value.pointer_mut("/item") {
++                    sanitize_search_call_action(item);
++                }
++                if let Some(output) = value
++                    .pointer_mut("/response/output")
++                    .and_then(|v| v.as_array_mut())
++                {
++                    for item in output {
++                        sanitize_search_call_action(item);
++                    }
++                }
++
++                if let Ok(mut event) = rs::ResponseStreamEvent::deserialize(&value) {
+                     apply_terminal_event_overrides(&mut event, data);
+                     return Ok(event);
+                 }
++
++                // If deserialize still fails on added/done frames because of an unknown output-item variant,
++                // drop the offending event or convert to a harmless representation with a WARN and retry once more.
++                // Never drop message/text output items, and never drop known output item types with missing required fields (e.g. missing id/status).
++                let event_type = value.get("type").and_then(|t| t.as_str());
++                if matches!(
++                    event_type,
++                    Some("response.output_item.added" | "response.output_item.done")
++                ) {
++                    if let Some(item_val) = value.get("item") {
++                        let item_type = item_val.get("type").and_then(|t| t.as_str());
++                        // Only drop if it is truly an unknown variant (type not in known OutputItem variants)
++                        const KNOWN_ITEM_TYPES: &[&str] = &[
++                            "message",
++                            "file_search_call",
++                            "function_call",
++                            "web_search_call",
++                            "computer_call",
++                            "reasoning",
++                            "compaction",
++                            "image_generation_call",
++                            "code_interpreter_call",
++                            "local_shell_call",
++                            "shell_call",
++                            "shell_call_output",
++                            "apply_patch_call",
++                            "apply_patch_call_output",
++                            "mcp_call",
++                            "mcp_list_tools",
++                            "mcp_approval_request",
++                            "custom_tool_call",
++                            "x_search_call",
++                        ];
++                        let is_known = item_type
++                            .map(|t| KNOWN_ITEM_TYPES.contains(&t))
++                            .unwrap_or(false);
++                        if !is_known && rs::OutputItem::deserialize(item_val).is_err() {
++                            tracing::warn!(
++                                item_type = item_type.unwrap_or("unknown"),
++                                "Dropping unknown output item variant on stream event"
++                            );
++                            // Replace event with a harmless inert event (e.g. response.queued)
++                            let seq = value
++                                .get("sequence_number")
++                                .and_then(|s| s.as_u64())
++                                .unwrap_or(0);
++                            let inert = serde_json::json!({
++                                "type": "response.queued",
++                                "sequence_number": seq,
++                                "response": {
++                                    "id": "inert",
++                                    "object": "response",
++                                    "created_at": 0,
++                                    "model": "",
++                                    "status": "in_progress",
++                                    "output": []
++                                }
++                            });
++                            if let Ok(event) =
++                                serde_json::from_value::<rs::ResponseStreamEvent>(inert)
++                            {
++                                return Ok(event);
++                            }
++                        }
++                    }
++                }
+             }
+             tracing::error!(
+                 error = %first_err,
+@@ -3252,4 +3353,171 @@ mod tests {
+             rs::ResponseStreamEvent::ResponseOutputTextDelta(_)
+         ));
+     }
++
++    /// Test 1: output_item.added with web_search_call missing action (exact probe frame).
++    /// Deserializes successfully and item survives with default Search action.
++    #[test]
++    fn deserialize_response_event_tolerates_output_item_added_missing_action() {
++        let sse = r#"{"type":"response.output_item.added","item":{"id":"ws_0d946a02bfcb6104016a91a4d9505c87d0b6389a02828c70cf","type":"web_search_call","status":"in_progress"},"output_index":1,"sequence_number":8}"#;
++        let event = deserialize_response_event(sse).expect("probe fixture should deserialize");
++        let rs::ResponseStreamEvent::ResponseOutputItemAdded(added) = event else {
++            panic!("expected ResponseOutputItemAdded");
++        };
++        let rs::OutputItem::WebSearchCall(ws) = added.item else {
++            panic!("expected WebSearchCall");
++        };
++        assert_eq!(
++            ws.id,
++            "ws_0d946a02bfcb6104016a91a4d9505c87d0b6389a02828c70cf"
++        );
++        assert_eq!(ws.status, rs::WebSearchToolCallStatus::InProgress);
++        let rs::WebSearchToolCallAction::Search(search) = ws.action else {
++            panic!("expected Search action");
++        };
++        assert_eq!(search.query, "");
++    }
++
++    /// Test 2: output_item.done variant with web_search_call missing action.
++    #[test]
++    fn deserialize_response_event_tolerates_output_item_done_missing_action() {
++        let sse = r#"{"type":"response.output_item.done","item":{"id":"ws_done_123","type":"web_search_call","status":"completed"},"output_index":1,"sequence_number":9}"#;
++        let event = deserialize_response_event(sse).expect("output_item.done should deserialize");
++        let rs::ResponseStreamEvent::ResponseOutputItemDone(done) = event else {
++            panic!("expected ResponseOutputItemDone");
++        };
++        let rs::OutputItem::WebSearchCall(ws) = done.item else {
++            panic!("expected WebSearchCall");
++        };
++        assert_eq!(ws.id, "ws_done_123");
++        assert_eq!(ws.status, rs::WebSearchToolCallStatus::Completed);
++        let rs::WebSearchToolCallAction::Search(search) = ws.action else {
++            panic!("expected Search action");
++        };
++        assert_eq!(search.query, "");
++    }
++
++    /// Test 3: response.completed whose /response/output[] contains an actionless web_search_call.
++    /// Deserializes successfully and usage override logic remains unaffected.
++    #[test]
++    fn deserialize_response_event_tolerates_actionless_search_in_terminal_output() {
++        let sse = r#"{
++            "type": "response.completed",
++            "sequence_number": 10,
++            "response": {
++                "id": "resp_term_1",
++                "object": "response",
++                "created_at": 0,
++                "model": "gpt-5.6-luna",
++                "status": "completed",
++                "output": [
++                    {
++                        "id": "ws_term_1",
++                        "type": "web_search_call",
++                        "status": "completed"
++                    }
++                ],
++                "usage": {
++                    "input_tokens": 100,
++                    "input_tokens_details": { "cached_tokens": 0 },
++                    "output_tokens": 50,
++                    "output_tokens_details": { "reasoning_tokens": 0 },
++                    "total_tokens": 150,
++                    "context_details": {
++                        "input_tokens": 80,
++                        "output_tokens": 40
++                    }
++                }
++            }
++        }"#;
++        let event = deserialize_response_event(sse).expect("terminal response should deserialize");
++        let rs::ResponseStreamEvent::ResponseCompleted(e) = event else {
++            panic!("expected ResponseCompleted");
++        };
++        assert_eq!(e.response.output.len(), 1);
++        let rs::OutputItem::WebSearchCall(ref ws) = e.response.output[0] else {
++            panic!("expected WebSearchCall in output");
++        };
++        assert_eq!(ws.id, "ws_term_1");
++        assert_eq!(ws.status, rs::WebSearchToolCallStatus::Completed);
++        let rs::WebSearchToolCallAction::Search(ref search) = ws.action else {
++            panic!("expected Search action");
++        };
++        assert_eq!(search.query, "");
++        // Context details override to 80 + 40 = 120 still works
++        let usage = e.response.usage.expect("usage present");
++        assert_eq!(usage.total_tokens, 120);
++    }
++
++    /// Test 4: Unknown output-item variant on added frame dropped with WARN.
++    #[test]
++    fn deserialize_response_event_drops_unknown_output_item_variant_on_added_frame() {
++        let sse = r#"{"type":"response.output_item.added","item":{"id":"future_1","type":"y_search_call","status":"in_progress"},"output_index":1,"sequence_number":8}"#;
++        let event = deserialize_response_event(sse)
++            .expect("event with unknown item should deserialize after item drop");
++        // Unknown item variant dropped gracefully without aborting the stream
++        assert!(matches!(event, rs::ResponseStreamEvent::ResponseQueued(_)));
++    }
++
++    /// Test 5: Strictness preserved: web_search_call missing id or status still errors;
++    /// and a fully valid frame is byte-untouched / parses directly.
++    #[test]
++    fn deserialize_response_event_strictness_preserved() {
++        // Missing id -> error
++        let missing_id = r#"{"type":"response.output_item.added","item":{"type":"web_search_call","status":"in_progress"},"output_index":1,"sequence_number":8}"#;
++        assert!(deserialize_response_event(missing_id).is_err());
++
++        // Missing status -> error
++        let missing_status = r#"{"type":"response.output_item.added","item":{"id":"ws_1","type":"web_search_call"},"output_index":1,"sequence_number":8}"#;
++        assert!(deserialize_response_event(missing_status).is_err());
++
++        // Fully valid frame parses directly
++        let fully_valid = r#"{"type":"response.output_item.added","item":{"id":"ws_1","type":"web_search_call","status":"in_progress","action":{"type":"search","query":"hello"}},"output_index":1,"sequence_number":8}"#;
++        let event = deserialize_response_event(fully_valid).expect("valid frame parses cleanly");
++        let rs::ResponseStreamEvent::ResponseOutputItemAdded(added) = event else {
++            panic!("expected ResponseOutputItemAdded");
++        };
++        let rs::OutputItem::WebSearchCall(ws) = added.item else {
++            panic!("expected WebSearchCall");
++        };
++        let rs::WebSearchToolCallAction::Search(search) = ws.action else {
++            panic!("expected Search action");
++        };
++        assert_eq!(search.query, "hello");
++    }
++
++    /// Test 6: Regression: existing sanitize path (/response/tools strip) still works.
++    #[test]
++    fn deserialize_response_event_strips_unknown_tools_regression() {
++        let sse = r#"{
++            "type": "response.completed",
++            "sequence_number": 0,
++            "response": {
++                "id": "resp_tools",
++                "object": "response",
++                "created_at": 0,
++                "model": "grok-build",
++                "status": "completed",
++                "output": [],
++                "tools": [
++                    { "type": "web_search" },
++                    { "type": "x_search" }
++                ],
++                "usage": {
++                    "input_tokens": 10,
++                    "input_tokens_details": { "cached_tokens": 0 },
++                    "output_tokens": 5,
++                    "output_tokens_details": { "reasoning_tokens": 0 },
++                    "total_tokens": 15
++                }
++            }
++        }"#;
++        let event = deserialize_response_event(sse).expect("should sanitize tools array");
++        let rs::ResponseStreamEvent::ResponseCompleted(e) = event else {
++            panic!("expected ResponseCompleted");
++        };
++        let tools = e.response.tools.expect("tools present");
++        // "x_search" was stripped, "web_search" retained
++        assert_eq!(tools.len(), 1);
++        assert!(matches!(tools[0], rs::Tool::WebSearch(_)));
++    }
+ }
