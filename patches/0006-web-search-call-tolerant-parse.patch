@@ -1,5 +1,5 @@
 diff --git a/crates/codegen/xai-grok-sampler/src/client.rs b/crates/codegen/xai-grok-sampler/src/client.rs
-index c48f42f5..0b4168dc 100644
+index 94d94c42..c895f6c9 100644
 --- a/crates/codegen/xai-grok-sampler/src/client.rs
 +++ b/crates/codegen/xai-grok-sampler/src/client.rs
 @@ -19,7 +19,7 @@ use indexmap::IndexMap;
@@ -11,7 +11,7 @@ index c48f42f5..0b4168dc 100644
  
  use xai_grok_sampling_types::error::{
      parse_error_code, try_parse_stream_error, user_facing_api_error_message,
-@@ -83,8 +83,29 @@ impl GrokRequestHeaders<'_> {
+@@ -89,8 +89,29 @@ impl GrokRequestHeaders<'_> {
  /// so we only handle that form. HTTP-dates silently return `None` and
  /// the caller falls back to exponential backoff.
  /// Capped at 120s to prevent absurdly long sleeps from a misbehaving upstream.
@@ -42,7 +42,7 @@ index c48f42f5..0b4168dc 100644
  ///
  /// The API echoes the request's `tools` array in `ResponseCompleted` and
  /// `ResponseCreated` events. If we sent `{"type": "x_search"}`, the response
-@@ -105,7 +126,7 @@ fn deserialize_response_event(data: &str) -> Result<rs::ResponseStreamEvent> {
+@@ -111,7 +132,7 @@ fn deserialize_response_event(data: &str) -> Result<rs::ResponseStreamEvent> {
      let mut event = match serde_json::from_str::<rs::ResponseStreamEvent>(data) {
          Ok(event) => event,
          Err(first_err) => {
@@ -51,7 +51,7 @@ index c48f42f5..0b4168dc 100644
              if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(data) {
                  // Strip tools that async_openai's rs::Tool can't deserialize
                  // (e.g., xAI-specific "x_search"). Instead of maintaining a
-@@ -117,10 +138,90 @@ fn deserialize_response_event(data: &str) -> Result<rs::ResponseStreamEvent> {
+@@ -123,10 +144,90 @@ fn deserialize_response_event(data: &str) -> Result<rs::ResponseStreamEvent> {
                  {
                      tools.retain(|t| serde_json::from_value::<rs::Tool>(t.clone()).is_ok());
                  }
@@ -143,7 +143,7 @@ index c48f42f5..0b4168dc 100644
              }
              tracing::error!(
                  error = %first_err,
-@@ -3252,4 +3353,171 @@ mod tests {
+@@ -3289,4 +3390,171 @@ mod tests {
              rs::ResponseStreamEvent::ResponseOutputTextDelta(_)
          ));
      }

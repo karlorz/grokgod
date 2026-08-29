@@ -14,7 +14,7 @@ This directory contains upstream source patches applied to `grok-build` for `gro
 
 ## Target Commit
 
-- Base commit: `grok-build` commit `9684fa3c` (`9684fa3cdbf2995e30ea8b9b637f1db008f144fc`) — origin/main at 0003 rebase + 0004. 0001/0002 still apply.
+- Base commit: `grok-build` commit `bc7f02ed` (`bc7f02eddd3d84085849dc19ed216f11c23b0571`) — origin/main sync past `9684fa3c`; 0001-0007 rebased onto it 2026-08-29.
 
 ## Verification
 

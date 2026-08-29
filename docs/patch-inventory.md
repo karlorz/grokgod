@@ -17,7 +17,7 @@ inventory. Persist status is exposed via the `grok status` persist block
 | `0006` | `patches/0006-web-search-call-tolerant-parse.patch` | Tolerant parse for hosted search calls missing `action` or unknown item variants in SSE stream | Upstream gateways emit `web_search_call` / `x_search_call` without `action` on in-progress frames, crashing strict deserialization with missing field `action`. Injection preserves turn continuity. |
 | `0007` | `patches/0007-hosted-web-search-splice-decouple.patch` | Decouple hosted web_search splice from client-side xAI credential gate | Upstream gates the server-side splice on client `WebSearchConfig::is_enabled()`, which resolves through xAI credentials. Logging out silently strips hosted search from BYOK entries whose backend serves it. |
 
-Base SHA: see `patches/README.md` (`9684fa3c`). Fail closed on `git apply --check`. Daily CI `.github/workflows/compat-daily.yml` runs `git apply --check` of `patches/*.patch` against latest `xai-org/grok-build` `origin/main`.
+Base SHA: see `patches/README.md` (`bc7f02ed`). Fail closed on `git apply --check`. Daily CI `.github/workflows/compat-daily.yml` runs `git apply --check` of `patches/*.patch` against latest `xai-org/grok-build` `origin/main`.
 
 ## Keep — wrapper, not a source patch
 

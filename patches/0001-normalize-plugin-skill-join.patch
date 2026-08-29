@@ -1,5 +1,5 @@
 diff --git a/crates/codegen/xai-grok-agent/src/plugins/manifest.rs b/crates/codegen/xai-grok-agent/src/plugins/manifest.rs
-index b19f2c21..43662068 100644
+index 8178db95..1455158f 100644
 --- a/crates/codegen/xai-grok-agent/src/plugins/manifest.rs
 +++ b/crates/codegen/xai-grok-agent/src/plugins/manifest.rs
 @@ -12,10 +12,20 @@

@@ -179,7 +179,7 @@ index ca63c785..337935c2 100644
      /// of web-search config.
      #[tokio::test]
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-index 80a3fb32..df33d322 100644
+index 8d86d1aa..9c4528f9 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
 @@ -974,6 +974,7 @@ pub(crate) async fn spawn_session_actor(
