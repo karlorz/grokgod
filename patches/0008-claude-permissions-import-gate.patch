@@ -1,0 +1,460 @@
+diff --git a/crates/codegen/xai-grok-config-types/src/lib.rs b/crates/codegen/xai-grok-config-types/src/lib.rs
+index dc7dbc89..b30c4c47 100644
+--- a/crates/codegen/xai-grok-config-types/src/lib.rs
++++ b/crates/codegen/xai-grok-config-types/src/lib.rs
+@@ -711,6 +711,8 @@ pub struct RemoteSettings {
+     #[serde(default)]
+     pub claude_sessions_enabled: Option<bool>,
+     #[serde(default)]
++    pub claude_permissions_enabled: Option<bool>,
++    #[serde(default)]
+     pub codex_sessions_enabled: Option<bool>,
+     /// When `Some(true)`, enable goal mode remotely.
+     /// When `Some(false)`, force-disable it (kill-switch).
+diff --git a/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md b/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
+index 2cb3f61e..8ed42e2d 100644
+--- a/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
++++ b/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
+@@ -399,6 +399,7 @@ agents = true     # scan ~/.claude/ and <dir>/.claude/CLAUDE*.md
+ mcps = true       # scan ~/.claude.json for MCP servers
+ hooks = true      # scan ~/.claude/settings.json for hooks
+ sessions = true   # staged; no scanner consumer yet
++permissions = true # import ~/.claude/settings.json permissions rules
+ 
+ [compat.codex]
+ sessions = true   # staged; no scanner consumer yet
+diff --git a/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md b/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md
+index 0cdff08b..8800ccaa 100644
+--- a/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md
++++ b/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md
+@@ -117,6 +117,7 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
+ | `compat.claude.agents` | `boolean` | `yes` | `user` | Scan CLAUDE.md. Also GROK_CLAUDE_AGENTS_ENABLED. |
+ | `compat.claude.hooks` | `boolean` | `yes` | `user` | Scan Claude hooks. Also GROK_CLAUDE_HOOKS_ENABLED. |
+ | `compat.claude.mcps` | `boolean` | `yes` | `user` | Scan Claude MCP config. Also GROK_CLAUDE_MCPS_ENABLED. |
++| `compat.claude.permissions` | `boolean` | `yes` | `user` | Import Claude permission rules from settings.json. Also GROK_CLAUDE_PERMISSIONS_ENABLED. |
+ | `compat.claude.rules` | `boolean` | `yes` | `user` | Scan Claude rules. Also GROK_CLAUDE_RULES_ENABLED. |
+ | `compat.claude.skills` | `boolean` | `yes` | `user` | Scan Claude skills. Also GROK_CLAUDE_SKILLS_ENABLED. |
+ | `compat.codex.hooks` | `boolean` | `yes` | `user` | Scan Codex hooks when present. |
+diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
+index 019272f6..a72b0199 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/config.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
+@@ -758,6 +758,7 @@ fn remote_compat_value(
+         CompatRemoteKey::ClaudeMcps => remote.claude_mcps_enabled,
+         CompatRemoteKey::ClaudeHooks => remote.claude_hooks_enabled,
+         CompatRemoteKey::ClaudeSessions => remote.claude_sessions_enabled,
++        CompatRemoteKey::ClaudePermissions => remote.claude_permissions_enabled,
+         CompatRemoteKey::CodexSessions => remote.codex_sessions_enabled,
+     }
+ }
+diff --git a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
+index 5780926e..9ad14c6f 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
+@@ -6044,6 +6044,7 @@ fn clear_runtime_env_vars() {
+         std::env::remove_var("GROK_CLAUDE_SKILLS_ENABLED");
+         std::env::remove_var("GROK_CLAUDE_RULES_ENABLED");
+         std::env::remove_var("GROK_CLAUDE_AGENTS_ENABLED");
++        std::env::remove_var("GROK_CLAUDE_PERMISSIONS_ENABLED");
+     }
+ }
+ fn clear_managed_mcp_env_vars() {
+@@ -6089,6 +6090,7 @@ fn remote_settings_with(key: CompatRemoteKey, value: bool) -> crate::util::confi
+         CompatRemoteKey::ClaudeMcps => remote.claude_mcps_enabled = Some(value),
+         CompatRemoteKey::ClaudeHooks => remote.claude_hooks_enabled = Some(value),
+         CompatRemoteKey::ClaudeSessions => remote.claude_sessions_enabled = Some(value),
++        CompatRemoteKey::ClaudePermissions => remote.claude_permissions_enabled = Some(value),
+         CompatRemoteKey::CodexSessions => remote.codex_sessions_enabled = Some(value),
+     }
+     remote
+diff --git a/crates/codegen/xai-grok-shell/src/claude_import.rs b/crates/codegen/xai-grok-shell/src/claude_import.rs
+index 8ff342b8..5a10546d 100644
+--- a/crates/codegen/xai-grok-shell/src/claude_import.rs
++++ b/crates/codegen/xai-grok-shell/src/claude_import.rs
+@@ -2127,6 +2127,7 @@ extra_rule_dirs = ["/c/rules"]
+             xai_grok_workspace::permission::resolution::resolve_permissions_with_provenance(
+                 dir.path(),
+                 true,
++                true,
+             )
+             .await;
+         if let Some(r) = resolved {
+diff --git a/crates/codegen/xai-grok-shell/src/inspect/compat.rs b/crates/codegen/xai-grok-shell/src/inspect/compat.rs
+index 1dab5e7f..0acde261 100644
+--- a/crates/codegen/xai-grok-shell/src/inspect/compat.rs
++++ b/crates/codegen/xai-grok-shell/src/inspect/compat.rs
+@@ -200,7 +200,7 @@ mod tests {
+         let report = resolve_without_env(Ok(&effective_config));
+ 
+         assert!(!report.remote_settings_loaded);
+-        assert_eq!(report.cells.len(), 13);
++        assert_eq!(report.cells.len(), 14);
+         assert!(
+             report
+                 .cells
+diff --git a/crates/codegen/xai-grok-shell/src/inspect/mod.rs b/crates/codegen/xai-grok-shell/src/inspect/mod.rs
+index e462f8e7..649fc59b 100644
+--- a/crates/codegen/xai-grok-shell/src/inspect/mod.rs
++++ b/crates/codegen/xai-grok-shell/src/inspect/mod.rs
+@@ -634,7 +634,7 @@ async fn list_permissions(cwd: &Path, project_trusted: bool) -> PermissionsRepor
+     }
+ 
+     let Some(resolved) =
+-        resolution::resolve_permissions_with_provenance(cwd, project_trusted).await
++        resolution::resolve_permissions_with_provenance(cwd, project_trusted, true).await
+     else {
+         return PermissionsReport {
+             sources: vec![],
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
+index 9c4528f9..1b74857a 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
+@@ -346,6 +346,7 @@ pub(crate) async fn spawn_session_actor(
+             xai_grok_workspace::permission::resolution::resolve_permission_config_with_fallback(
+                 tool_context.cwd.as_path(),
+                 project_trusted,
++                compat.claude.permissions,
+             )
+             .await;
+         let yolo_pin = xai_grok_workspace::permission::resolution::yolo_disabled_by_policy();
+diff --git a/crates/codegen/xai-grok-tools/src/types/compat.rs b/crates/codegen/xai-grok-tools/src/types/compat.rs
+index 76422380..e2047e03 100644
+--- a/crates/codegen/xai-grok-tools/src/types/compat.rs
++++ b/crates/codegen/xai-grok-tools/src/types/compat.rs
+@@ -40,6 +40,7 @@ pub enum CompatSurface {
+     Mcps,
+     Hooks,
+     Sessions,
++    Permissions,
+ }
+ 
+ impl CompatSurface {
+@@ -51,6 +52,7 @@ impl CompatSurface {
+             Self::Mcps => "mcps",
+             Self::Hooks => "hooks",
+             Self::Sessions => "sessions",
++            Self::Permissions => "permissions",
+         }
+     }
+ }
+@@ -69,6 +71,7 @@ pub enum CompatRemoteKey {
+     ClaudeMcps,
+     ClaudeHooks,
+     ClaudeSessions,
++    ClaudePermissions,
+     CodexSessions,
+ }
+ 
+@@ -123,7 +126,7 @@ impl CompatCell {
+     }
+ }
+ 
+-pub const COMPAT_CELLS: [CompatCell; 18] = [
++pub const COMPAT_CELLS: [CompatCell; 19] = [
+     CompatCell::new(
+         CompatVendor::Cursor,
+         CompatSurface::Skills,
+@@ -196,6 +199,12 @@ pub const COMPAT_CELLS: [CompatCell; 18] = [
+         "GROK_CLAUDE_SESSIONS_ENABLED",
+         Some(CompatRemoteKey::ClaudeSessions),
+     ),
++    CompatCell::new(
++        CompatVendor::Claude,
++        CompatSurface::Permissions,
++        "GROK_CLAUDE_PERMISSIONS_ENABLED",
++        Some(CompatRemoteKey::ClaudePermissions),
++    ),
+     CompatCell::new(
+         CompatVendor::Codex,
+         CompatSurface::Skills,
+@@ -245,6 +254,7 @@ pub struct VendorCompatToml {
+     pub mcps: Option<bool>,
+     pub hooks: Option<bool>,
+     pub sessions: Option<bool>,
++    pub permissions: Option<bool>,
+ }
+ 
+ impl VendorCompatToml {
+@@ -256,6 +266,7 @@ impl VendorCompatToml {
+             CompatSurface::Mcps => self.mcps,
+             CompatSurface::Hooks => self.hooks,
+             CompatSurface::Sessions => self.sessions,
++            CompatSurface::Permissions => self.permissions,
+         }
+     }
+ }
+@@ -290,6 +301,7 @@ pub struct VendorCompat {
+     pub mcps: bool,
+     pub hooks: bool,
+     pub sessions: bool,
++    pub permissions: bool,
+ }
+ 
+ impl VendorCompat {
+@@ -301,6 +313,7 @@ impl VendorCompat {
+             CompatSurface::Mcps => self.mcps,
+             CompatSurface::Hooks => self.hooks,
+             CompatSurface::Sessions => self.sessions,
++            CompatSurface::Permissions => self.permissions,
+         }
+     }
+ 
+@@ -312,6 +325,7 @@ impl VendorCompat {
+             CompatSurface::Mcps => self.mcps = value,
+             CompatSurface::Hooks => self.hooks = value,
+             CompatSurface::Sessions => self.sessions = value,
++            CompatSurface::Permissions => self.permissions = value,
+         }
+     }
+ }
+@@ -325,6 +339,7 @@ impl Default for VendorCompat {
+             mcps: true,
+             hooks: true,
+             sessions: true,
++            permissions: true,
+         }
+     }
+ }
+@@ -461,6 +476,7 @@ mod tests {
+                 ("claude", "mcps", Some(ClaudeMcps)),
+                 ("claude", "hooks", Some(ClaudeHooks)),
+                 ("claude", "sessions", Some(ClaudeSessions)),
++                ("claude", "permissions", Some(ClaudePermissions)),
+                 ("codex", "skills", None),
+                 ("codex", "rules", None),
+                 ("codex", "agents", None),
+@@ -482,7 +498,7 @@ mod tests {
+         for vendor in [defaults.cursor, defaults.claude, defaults.codex] {
+             assert!(vendor.skills && vendor.rules && vendor.agents);
+             assert!(vendor.mcps && vendor.hooks);
+-            assert!(vendor.sessions);
++            assert!(vendor.sessions && vendor.permissions);
+         }
+ 
+         assert_eq!(
+@@ -504,6 +520,7 @@ mod tests {
+                 ("claude", "mcps"),
+                 ("claude", "hooks"),
+                 ("claude", "sessions"),
++                ("claude", "permissions"),
+                 ("codex", "sessions"),
+             ]
+         );
+@@ -622,10 +639,11 @@ mod tests {
+         assert_eq!(parsed.codex.skills, None);
+ 
+         // mcps cell round-trips the same way.
+-        let parsed: CompatConfigToml = serde_yaml::from_str("claude:\n  mcps: false\n").unwrap();
++        let parsed: CompatConfigToml = serde_yaml::from_str("claude:\n  mcps: false\n  permissions: false\n").unwrap();
+         assert_eq!(parsed.claude.mcps, Some(false));
+         assert_eq!(parsed.claude.hooks, None);
+         assert_eq!(parsed.claude.sessions, None);
++        assert_eq!(parsed.claude.permissions, Some(false));
+         assert_eq!(parsed.cursor, VendorCompatToml::default());
+         assert_eq!(parsed.codex, VendorCompatToml::default());
+     }
+diff --git a/crates/codegen/xai-grok-workspace/src/discovery.rs b/crates/codegen/xai-grok-workspace/src/discovery.rs
+index 051209e0..04e94025 100644
+--- a/crates/codegen/xai-grok-workspace/src/discovery.rs
++++ b/crates/codegen/xai-grok-workspace/src/discovery.rs
+@@ -215,7 +215,7 @@ pub async fn load_permissions(root_cwd: &Path, project_trusted: bool) -> Value {
+     use crate::permission::resolution;
+ 
+     let Some(resolved) =
+-        resolution::resolve_permissions_with_provenance(root_cwd, project_trusted).await
++        resolution::resolve_permissions_with_provenance(root_cwd, project_trusted, true).await
+     else {
+         return Value::Null;
+     };
+diff --git a/crates/codegen/xai-grok-workspace/src/permission/resolution.rs b/crates/codegen/xai-grok-workspace/src/permission/resolution.rs
+index 9fb39379..43f55216 100644
+--- a/crates/codegen/xai-grok-workspace/src/permission/resolution.rs
++++ b/crates/codegen/xai-grok-workspace/src/permission/resolution.rs
+@@ -290,8 +290,9 @@ fn managed_config_permissions(
+ pub async fn resolve_permission_config_with_fallback(
+     cwd: &Path,
+     project_trusted: bool,
++    claude_permissions: bool,
+ ) -> Option<PermissionConfig> {
+-    resolve_permissions_with_provenance(cwd, project_trusted)
++    resolve_permissions_with_provenance(cwd, project_trusted, claude_permissions)
+         .await
+         .map(|r| r.config)
+ }
+@@ -471,10 +472,12 @@ struct ResolveInputs<'a> {
+     /// `.claude/settings.json` / `.grok/config.toml` permission rules are dropped
+     /// (global/user/admin tiers still load).
+     project_trusted: bool,
++    /// Whether Claude permissions import is enabled (from `[compat.claude] permissions`).
++    claude_permissions: bool,
+ }
+ 
+ impl ResolveInputs<'static> {
+-    fn live(project_trusted: bool) -> Self {
++    fn live(project_trusted: bool, claude_permissions: bool) -> Self {
+         Self {
+             policy_block: yolo_disabled_by_policy(),
+             managed: managed_settings(),
+@@ -482,6 +485,7 @@ impl ResolveInputs<'static> {
+                 &xai_grok_config::managed_config_layers(),
+             ),
+             project_trusted,
++            claude_permissions,
+         }
+     }
+ }
+@@ -513,8 +517,13 @@ impl ResolveInputs<'static> {
+ pub async fn resolve_permissions_with_provenance(
+     cwd: &Path,
+     project_trusted: bool,
++    claude_permissions: bool,
+ ) -> Option<ResolvedPermissions> {
+-    resolve_permissions_with_provenance_inner(cwd, ResolveInputs::live(project_trusted)).await
++    resolve_permissions_with_provenance_inner(
++        cwd,
++        ResolveInputs::live(project_trusted, claude_permissions),
++    )
++    .await
+ }
+ 
+ async fn resolve_permissions_with_provenance_inner(
+@@ -526,6 +535,7 @@ async fn resolve_permissions_with_provenance_inner(
+         managed,
+         managed_config_rules,
+         project_trusted,
++        claude_permissions,
+     } = inputs;
+     let config_toml_rules = load_config_toml_permissions(cwd, project_trusted);
+ 
+@@ -539,8 +549,9 @@ async fn resolve_permissions_with_provenance_inner(
+     };
+ 
+     // Phase 2 cutoff: skip the .claude/ fallback once the user has imported.
+-    // Native config-derived permissions still apply.
+-    let skip_claude = is_claude_import_marked_with_log("resolve_permissions_with_provenance");
++    // Also skip Claude permissions when [compat.claude] permissions is false.
++    let skip_claude = is_claude_import_marked_with_log("resolve_permissions_with_provenance")
++        || !claude_permissions;
+     let settings_json = if skip_claude {
+         None
+     } else {
+diff --git a/crates/codegen/xai-grok-workspace/src/permission/resolution_tests.rs b/crates/codegen/xai-grok-workspace/src/permission/resolution_tests.rs
+index f4a361f4..db936e67 100644
+--- a/crates/codegen/xai-grok-workspace/src/permission/resolution_tests.rs
++++ b/crates/codegen/xai-grok-workspace/src/permission/resolution_tests.rs
+@@ -2379,6 +2379,7 @@ fn inputs_trusted(
+         managed: DEFAULT_MANAGED.get_or_init(ManagedSettings::default),
+         managed_config_rules: Vec::new(),
+         project_trusted,
++        claude_permissions: true,
+     }
+ }
+ 
+@@ -2392,6 +2393,7 @@ fn inputs_with_managed<'a>(
+         managed,
+         managed_config_rules: Vec::new(),
+         project_trusted: true,
++        claude_permissions: true,
+     }
+ }
+ 
+@@ -2968,7 +2970,7 @@ async fn dont_ask_sets_prompt_policy_through_public_api() {
+     )
+     .unwrap();
+ 
+-    let cfg = resolve_permission_config_with_fallback(tmp.path(), true)
++    let cfg = resolve_permission_config_with_fallback(tmp.path(), true, true)
+         .await
+         .unwrap();
+     assert_eq!(cfg.prompt_policy, PromptPolicy::Deny);
+@@ -2987,7 +2989,7 @@ async fn dont_ask_nested_under_permissions_sets_prompt_policy() {
+     )
+     .unwrap();
+ 
+-    let cfg = resolve_permission_config_with_fallback(tmp.path(), true)
++    let cfg = resolve_permission_config_with_fallback(tmp.path(), true, true)
+         .await
+         .unwrap();
+     assert_eq!(
+@@ -3008,7 +3010,7 @@ async fn auto_nested_under_permissions_sets_prompt_policy() {
+     )
+     .unwrap();
+ 
+-    let cfg = resolve_permission_config_with_fallback(tmp.path(), true)
++    let cfg = resolve_permission_config_with_fallback(tmp.path(), true, true)
+         .await
+         .unwrap();
+     assert_eq!(
+@@ -3292,7 +3294,7 @@ async fn nested_dont_ask_with_allow_rules_preserves_allow_and_deny_policy() {
+     )
+     .unwrap();
+ 
+-    let cfg = resolve_permission_config_with_fallback(tmp.path(), true)
++    let cfg = resolve_permission_config_with_fallback(tmp.path(), true, true)
+         .await
+         .unwrap();
+     assert_eq!(cfg.prompt_policy, PromptPolicy::Deny);
+@@ -3752,3 +3754,63 @@ fn explicit_default_mode_blocks_permission_mode_hint() {
+         );
+     }
+ }
++
++/// Claude permissions import gate:
++/// - `claude_permissions: true` (default): permissions in ~/.claude/settings.json are imported.
++/// - `claude_permissions: false`: Claude permissions are skipped, while other tiers still resolve.
++#[test]
++fn claude_permissions_import_gate_controls_resolution() {
++    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
++    let rt = tokio::runtime::Builder::new_current_thread()
++        .build()
++        .unwrap();
++
++    let tmp = tempfile::tempdir().unwrap();
++    let claude_dir = tmp.path().join(".claude");
++    std::fs::create_dir_all(&claude_dir).unwrap();
++    std::fs::write(
++        claude_dir.join("settings.json"),
++        r#"{"permissions": {"deny": ["WebFetch"]}}"#,
++    )
++    .unwrap();
++
++    let _home = EnvVarGuard::set("HOME", tmp.path());
++    let _grok_home = EnvVarGuard::set("GROK_HOME", &tmp.path().join(".grok"));
++    let _marker = EnvVarGuard::unset("_GROK_CLAUDE_MARKER_OVERRIDE");
++
++    // 1. claude_permissions: true -> WebFetch deny is present.
++    let mut on_inputs = inputs(None);
++    on_inputs.claude_permissions = true;
++    let resolved = rt
++        .block_on(resolve_permissions_with_provenance_inner(
++            tmp.path(),
++            on_inputs,
++        ))
++        .expect("permissions should resolve");
++    assert!(
++        resolved
++            .config
++            .rules
++            .iter()
++            .any(|r| r.action == RuleAction::Deny && r.tool == ToolFilter::WebFetch),
++        "WebFetch deny should be present when claude_permissions is true"
++    );
++
++    // 2. claude_permissions: false -> WebFetch deny is absent.
++    let mut off_inputs = inputs(None);
++    off_inputs.claude_permissions = false;
++    let resolved = rt.block_on(resolve_permissions_with_provenance_inner(
++        tmp.path(),
++        off_inputs,
++    ));
++    let has_web_fetch_deny = resolved.as_ref().is_some_and(|r| {
++        r.config
++            .rules
++            .iter()
++            .any(|rule| rule.action == RuleAction::Deny && rule.tool == ToolFilter::WebFetch)
++    });
++    assert!(
++        !has_web_fetch_deny,
++        "WebFetch deny should be absent when claude_permissions is false"
++    );
++}
