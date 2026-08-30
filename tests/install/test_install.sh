@@ -91,7 +91,7 @@ setup_sandbox() {
   cat << EOF > "$FAKE_BIN_SHADOW/cargo"
 #!/bin/sh
 set -eu
-echo "cargo invoked with: \$*" >> "$CARGO_INVOKED_FILE"
+echo "cargo invoked with: \$* (CARGO_INCREMENTAL=\${CARGO_INCREMENTAL:-unset})" >> "$CARGO_INVOKED_FILE"
 # Write fake built binary
 if [ -n "\${CARGO_TARGET_DIR:-}" ]; then
   mkdir -p "\$CARGO_TARGET_DIR/release"
@@ -135,6 +135,7 @@ DRY_OUT="$(
 
 echo "$DRY_OUT" | grep -q "Dry-run completed successfully" || { echo "FAIL: Expected dry-run success message"; exit 1; }
 echo "$DRY_OUT" | grep -q "Would test and apply patch" || { echo "FAIL: Expected patch test dry-run line"; exit 1; }
+echo "$DRY_OUT" | grep -q "CARGO_INCREMENTAL=0" || { echo "FAIL: Expected CARGO_INCREMENTAL=0 in dry-run build line"; exit 1; }
 
 # Verify nothing was written to fake dirs
 if [ -e "$FAKE_GROKGOD_HOME/bin/grok" ]; then
@@ -173,6 +174,14 @@ BIN_OUTPUT="$("$FAKE_GROKGOD_HOME/bin/grok")"
 if [ "$BIN_OUTPUT" != "MOCK_BUILT_GROK_BINARY" ]; then
   echo "FAIL: Installed binary content mismatch: $BIN_OUTPUT"; exit 1
 fi
+
+# Verify cargo was invoked with CARGO_INCREMENTAL=0
+if [ ! -f "$CARGO_INVOKED_FILE" ]; then
+  echo "FAIL: Cargo was not invoked in fresh install"; exit 1
+fi
+grep -q "CARGO_INCREMENTAL=0" "$CARGO_INVOKED_FILE" || {
+  echo "FAIL: Cargo was not invoked with CARGO_INCREMENTAL=0: $(cat "$CARGO_INVOKED_FILE")"; exit 1
+}
 
 # 2. Verify stamps in .source-version
 if [ ! -f "$FAKE_GROKGOD_HOME/.source-version" ]; then

@@ -360,7 +360,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
       log_dry "No patches found; would build stock"
     fi
 
-    log_dry "Would build: CARGO_TARGET_DIR=$CARGO_TARGET_DIR cargo build --release -p xai-grok-pager-bin (in $GROK_BUILD_SRC)"
+    log_dry "Would build: CARGO_TARGET_DIR=$CARGO_TARGET_DIR CARGO_INCREMENTAL=0 cargo build --release -p xai-grok-pager-bin (in $GROK_BUILD_SRC)"
     log_dry "Would copy binary: cp $CARGO_TARGET_DIR/release/xai-grok-pager $GROKGOD_HOME/bin/grok"
     log_dry "Would stamp: $GROKGOD_HOME/.source-version (MODE=source)"
   else
@@ -769,7 +769,8 @@ if [ "$MODE" = "source" ]; then
     log_step "Building xai-grok-pager-bin in release mode..."
     (
       cd "$GROK_BUILD_SRC"
-      CARGO_TARGET_DIR="$CARGO_TARGET_DIR" cargo build --release -p xai-grok-pager-bin
+      # Incremental off to prevent accumulating ~/.grokgod/target/release/incremental standing state
+      CARGO_TARGET_DIR="$CARGO_TARGET_DIR" CARGO_INCREMENTAL=0 cargo build --release -p xai-grok-pager-bin
     ) || {
       log_err "Cargo build failed. Aborting (fail-closed)."
       exit 1
