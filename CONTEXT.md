@@ -10,7 +10,8 @@ A `git apply` diff under `patches/` against a pinned grok-build SHA. Re-applied
 on `grok update` / `grokgod update`. Current set: `0001-normalize-plugin-skill-join`,
 `0002-plan-mode-extra-writable`, `0003-session-persist-single`, `0004-disable-builtin-deep-research`,
 `0005-model-tools-deny-allow`, `0006-web-search-call-tolerant-parse`, `0007-hosted-web-search-splice-decouple`,
-`0008-claude-permissions-import-gate`, `0009-deepseek-chat-fix`.
+`0008-claude-permissions-import-gate`, `0009-deepseek-chat-fix`,
+`0010-deepseek-chat-compact-lenient`.
 _Avoid_: Mach-O hex edit, plugin.json rewrite as the engine fix
 
 **Auth-decoupled hosted splice**:
@@ -35,7 +36,21 @@ as 0 via existing `deserialize_null_default`, so DeepSeek/Poe/CPA trailers
 with `reasoning_tokens: null` (and sibling usage ints) do not abort the turn
 with `invalid type: null, expected u32`.
 _Avoid_: folding into 0006 (Responses search-call), treating CPA stream
-intercept as the only fix, changing `ChatChunkChoice.index`
+intercept as the only fix, per-field `ChatChunkChoice.index` serde attrs
+(that class of compact omit/null is 0010)
+
+**Compact chat lenient parse**:
+Chat Completions SSE deserialize in grokgod `0010`, sibling of 0006 in
+`xai-grok-sampler` `client.rs`. Strict `ChatCompletionChunk` parse first;
+on missing-field or JSON-null errors, apply an allowlisted compact-JSON
+policy (choice/tool-call `index` → 0, missing/`null` `delta` → `{}`,
+usage ints → 0) and retry once. Stops wrapper-shaped DeepSeek/CPA/Poe
+chunks from forcing a new persist patch per omitted key. Identity
+fields (`id`, `object`, `created`, `model`) and tool-call `id` stay
+fail-closed. Stacks after 0001–0009; does not rewrite 0006 or 0009.
+_Avoid_: folding into `deserialize_response_event`, `DefaultOnError`,
+inventing identity fields, generating this patch against clean-pin
+`client.rs` (hunks fight 0006)
 
 **Per-model tool gating**:
 `[model."<id>".tools]` with `deny` and `allow` lists in grokgod `0005`. Strips

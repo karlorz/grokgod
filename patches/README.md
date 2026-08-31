@@ -13,10 +13,11 @@ This directory contains upstream source patches applied to `grok-build` for `gro
 - `0007-hosted-web-search-splice-decouple.patch`: Decouples the server-side hosted `web_search` tool splice from the client-side `WebSearchConfig` credential check. Preserves hosted search for BYOK models when logged out while maintaining explicit `disable_web_search` kill-switch and 0005 model deny semantics.
 - `0008-claude-permissions-import-gate.patch`: `[compat.claude] permissions` gate (default true, env `GROK_CLAUDE_PERMISSIONS_ENABLED`) to skip Claude settings permissions resolution so host Claude deny rules do not block grok native tools.
 - `0009-deepseek-chat-fix.patch`: Chat Completions usage `u32` fields accept JSON `null` as 0 via `deserialize_null_default`, so DeepSeek/Poe/CPA trailers with `reasoning_tokens: null` (and sibling usage ints) do not abort the turn.
+- `0010-deepseek-chat-compact-lenient.patch`: Chat Completions SSE compact-JSON lenient parse (sibling of 0006 in `client.rs`). Allowlisted retry for missing/`null` `choices[].index` (and empty `delta` / usage ints) so CPA/Poe wrappers cannot force a new patch per omitted key. Does not invent `id`/`model`/`created`. Stacked after 0001–0009.
 
 ## Target Commit
 
-- Base commit: `grok-build` commit `bc7f02ed` (`bc7f02eddd3d84085849dc19ed216f11c23b0571`) — origin/main sync past `9684fa3c`; 0001-0007 rebased onto it 2026-08-29; 0008–0009 stacked on the same pin.
+- Base commit: `grok-build` commit `bc7f02ed` (`bc7f02eddd3d84085849dc19ed216f11c23b0571`) — origin/main sync past `9684fa3c`; 0001-0007 rebased onto it 2026-08-29; 0008–0010 stacked on the same pin.
 
 ## Verification
 

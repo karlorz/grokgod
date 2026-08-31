@@ -151,6 +151,7 @@ case "$cmd" in
     echo "  0007-hosted-web-search-splice-decouple: $patch_status"
     echo "  0008-claude-permissions-import-gate: $patch_status"
     echo "  0009-deepseek-chat-fix: $patch_status"
+    echo "  0010-deepseek-chat-compact-lenient: $patch_status"
     echo "  overlay-pin: $overlay_status"
     echo "  weekly-pin: global-default"
     if [ -f "$GROKGOD_HOME/pin/orca-pin.toml" ]; then

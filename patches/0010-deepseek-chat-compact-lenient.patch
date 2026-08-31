@@ -1,0 +1,227 @@
+diff --git a/crates/codegen/xai-grok-sampler/src/client.rs b/crates/codegen/xai-grok-sampler/src/client.rs
+index c895f6c9..e8939bf7 100644
+--- a/crates/codegen/xai-grok-sampler/src/client.rs
++++ b/crates/codegen/xai-grok-sampler/src/client.rs
+@@ -241,6 +241,112 @@ fn deserialize_response_event(data: &str) -> Result<rs::ResponseStreamEvent> {
+     Ok(event)
+ }
+ 
++/// Deserialize a Chat Completions SSE chunk.
++///
++/// Strict parse first. On missing-field or JSON-null errors, apply an
++/// allowlisted compact-JSON policy (choice/tool-call `index`, empty
++/// `delta`, usage ints) and retry once. Identity fields (`id`, `object`,
++/// `created`, `model`) and tool-call `id` are never invented.
++fn deserialize_chat_completion_chunk(data: &str) -> Result<ChatCompletionChunk> {
++    match serde_json::from_str::<ChatCompletionChunk>(data) {
++        Ok(chunk) => Ok(chunk),
++        Err(first_err) => {
++            if is_compact_retryable_chat_chunk_error(&first_err) {
++                if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(data) {
++                    sanitize_chat_completion_chunk_compact(&mut value);
++                    if let Ok(chunk) = ChatCompletionChunk::deserialize(&value) {
++                        tracing::warn!(
++                            error = %first_err,
++                            "Retrying ChatCompletionChunk deserialize after compact-JSON sanitize"
++                        );
++                        return Ok(chunk);
++                    }
++                }
++            }
++            tracing::error!(
++                error = %first_err,
++                raw_data = %data,
++                "Failed to deserialize ChatCompletionChunk from stream"
++            );
++            Err(SamplingError::Serialization(first_err))
++        }
++    }
++}
++
++fn is_compact_retryable_chat_chunk_error(err: &serde_json::Error) -> bool {
++    let msg = err.to_string();
++    msg.contains("missing field") || msg.contains("invalid type: null")
++}
++
++fn fill_u32_if_null_or_missing(obj: &mut serde_json::Map<String, serde_json::Value>, key: &str) {
++    match obj.get(key) {
++        None | Some(serde_json::Value::Null) => {
++            obj.insert(key.to_string(), serde_json::json!(0));
++        }
++        _ => {}
++    }
++}
++
++/// Allowlisted compact-JSON defaults for wrapper-shaped Chat Completions chunks.
++/// Does not invent top-level identity fields or tool-call ids.
++fn sanitize_chat_completion_chunk_compact(value: &mut serde_json::Value) {
++    let Some(root) = value.as_object_mut() else {
++        return;
++    };
++
++    if let Some(choices) = root.get_mut("choices").and_then(|v| v.as_array_mut()) {
++        for choice in choices {
++            let Some(choice_obj) = choice.as_object_mut() else {
++                continue;
++            };
++            fill_u32_if_null_or_missing(choice_obj, "index");
++            match choice_obj.get("delta") {
++                None | Some(serde_json::Value::Null) => {
++                    choice_obj.insert("delta".to_string(), serde_json::json!({}));
++                }
++                _ => {}
++            }
++            if let Some(delta) = choice_obj.get_mut("delta").and_then(|v| v.as_object_mut()) {
++                if let Some(tool_calls) = delta.get_mut("tool_calls").and_then(|v| v.as_array_mut())
++                {
++                    for tool_call in tool_calls {
++                        if let Some(tc) = tool_call.as_object_mut() {
++                            fill_u32_if_null_or_missing(tc, "index");
++                        }
++                    }
++                }
++            }
++        }
++    }
++
++    if let Some(usage) = root.get_mut("usage").and_then(|v| v.as_object_mut()) {
++        for key in ["prompt_tokens", "completion_tokens", "total_tokens"] {
++            fill_u32_if_null_or_missing(usage, key);
++        }
++        if let Some(details) = usage
++            .get_mut("prompt_tokens_details")
++            .and_then(|v| v.as_object_mut())
++        {
++            for key in ["cached_tokens", "audio_tokens"] {
++                fill_u32_if_null_or_missing(details, key);
++            }
++        }
++        if let Some(details) = usage
++            .get_mut("completion_tokens_details")
++            .and_then(|v| v.as_object_mut())
++        {
++            for key in [
++                "reasoning_tokens",
++                "audio_tokens",
++                "accepted_prediction_tokens",
++                "rejected_prediction_tokens",
++            ] {
++                fill_u32_if_null_or_missing(details, key);
++            }
++        }
++    }
++}
++
+ /// On terminal Responses API events (`response.completed` /
+ /// `response.incomplete`), rewrite `response.usage.total_tokens` to the
+ /// live context length when the wire includes
+@@ -1269,16 +1375,7 @@ impl SamplingClient {
+                         if let Some(stream_error) = try_parse_stream_error(data) {
+                             Some(Err(stream_error))
+                         } else {
+-                            Some(
+-                                serde_json::from_str::<ChatCompletionChunk>(data).map_err(|e| {
+-                                    tracing::error!(
+-                                        error = %e,
+-                                        raw_data = %data,
+-                                        "Failed to deserialize ChatCompletionChunk from stream"
+-                                    );
+-                                    SamplingError::Serialization(e)
+-                                }),
+-                            )
++                            Some(deserialize_chat_completion_chunk(data))
+                         }
+                     }
+                     Err(e) => {
+@@ -3557,4 +3654,91 @@ mod tests {
+         assert_eq!(tools.len(), 1);
+         assert!(matches!(tools[0], rs::Tool::WebSearch(_)));
+     }
++
++    /// Compact CPA/Poe Chat Completions tool-call chunk omitting choices[0].index.
++    /// Live 2026-08-31: `missing field index` at column ~324.
++    #[test]
++    fn deserialize_chat_completion_chunk_defaults_missing_choice_index() {
++        let json = r#"{"id":"chatcmpl-compact","object":"chat.completion.chunk","created":1756622681,"model":"deepseek-v4-flash","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_web","type":"function","function":{"name":"web_search","arguments":"{\"query\":\"ai news\"}"}}]},"finish_reason":null}]}"#;
++        let chunk = deserialize_chat_completion_chunk(json)
++            .expect("compact chunk missing choice index should deserialize");
++        assert_eq!(chunk.choices[0].index, 0);
++        assert_eq!(
++            chunk.choices[0].delta.tool_calls[0].id.as_deref(),
++            Some("call_web")
++        );
++    }
++
++    #[test]
++    fn deserialize_chat_completion_chunk_defaults_null_choice_index() {
++        let json = r#"{"id":"chatcmpl-null-idx","object":"chat.completion.chunk","created":1756622681,"model":"deepseek-v4-flash","choices":[{"index":null,"delta":{"content":"ok"},"finish_reason":null}]}"#;
++        let chunk = deserialize_chat_completion_chunk(json)
++            .expect("null choice index should deserialize as 0");
++        assert_eq!(chunk.choices[0].index, 0);
++    }
++
++    #[test]
++    fn deserialize_chat_completion_chunk_rejects_missing_top_level_id() {
++        let json = r#"{"object":"chat.completion.chunk","created":1,"model":"deepseek-v4-flash","choices":[]}"#;
++        let err = deserialize_chat_completion_chunk(json).expect_err("missing id must fail closed");
++        let msg = err.to_string();
++        assert!(
++            msg.contains("missing field `id`") || msg.contains("missing field id"),
++            "expected missing id error, got {msg}"
++        );
++    }
++
++    #[test]
++    fn deserialize_chat_completion_chunk_null_usage_detail_ints_regression() {
++        let json = r#"{
++            "id":"chatcmpl-aaaaaaaaaaaa",
++            "object":"chat.completion.chunk",
++            "created":1756622681,
++            "model":"deepseek-v4-flash",
++            "choices":[{"index":0,"delta":{},"finish_reason":"stop"}],
++            "usage":{
++                "prompt_tokens":111111,
++                "completion_tokens":11111,
++                "total_tokens":111111,
++                "prompt_tokens_details":{"cached_tokens":null},
++                "completion_tokens_details":{"reasoning_tokens":null}
++            }
++        }"#;
++        let chunk = deserialize_chat_completion_chunk(json)
++            .expect("0009 null usage ints should still deserialize as 0");
++        let usage = chunk.usage.expect("usage present");
++        assert_eq!(usage.prompt_tokens, 111111);
++        assert_eq!(
++            usage
++                .prompt_tokens_details
++                .as_ref()
++                .map(|d| d.cached_tokens),
++            Some(0)
++        );
++        assert_eq!(
++            usage
++                .completion_tokens_details
++                .as_ref()
++                .map(|d| d.reasoning_tokens),
++            Some(0)
++        );
++    }
++
++    #[test]
++    fn deserialize_chat_completion_chunk_allows_midstream_null_usage() {
++        let json = r#"{"id":"chatcmpl-usage-null","object":"chat.completion.chunk","created":1,"model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}],"usage":null}"#;
++        let chunk = deserialize_chat_completion_chunk(json)
++            .expect("mid-stream usage:null is Option and must parse");
++        assert!(chunk.usage.is_none());
++        assert_eq!(chunk.choices[0].delta.content.as_deref(), Some("hi"));
++    }
++
++    #[test]
++    fn deserialize_chat_completion_chunk_rejects_string_choice_index() {
++        let json = r#"{"id":"chatcmpl-bad-idx","object":"chat.completion.chunk","created":1,"model":"deepseek-v4-flash","choices":[{"index":"0","delta":{},"finish_reason":null}]}"#;
++        assert!(
++            deserialize_chat_completion_chunk(json).is_err(),
++            "wrong type for index must stay an error"
++        );
++    }
+ }

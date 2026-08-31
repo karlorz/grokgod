@@ -43,11 +43,20 @@ if [ -d "$REAL_GROK_BUILD/.git" ]; then
   CLEANUP_WT="git -C $REAL_GROK_BUILD worktree remove --force $TMP_WT >/dev/null 2>&1 || rm -rf $TMP_WT"
   trap 'eval "$CLEANUP_WT"' EXIT INT TERM
 
-  # 0008 is a series patch: its hunks sit near 0001-0007 content, so verify
-  # the way install.sh consumes it — cumulative application in order.
-  for pred in "$REPO_ROOT"/patches/000[1-7]*.patch; do
+  # Cumulative series in install.sh order. Do not glob `000[1-7]*` — that
+  # also matches `0010-*.patch` (`000` + `1` + `0-...`).
+  for pred in "$REPO_ROOT"/patches/*.patch; do
+    [ -f "$pred" ] || continue
+    base="$(basename "$pred")"
+    num="${base%%-*}"
+    case "$num" in
+      *[!0-9]*) continue ;;
+    esac
+    stripped="$(printf '%s' "$num" | sed 's/^0*//')"
+    [ -n "$stripped" ] || continue
+    [ "$stripped" -le 7 ] || continue
     git -C "$TMP_WT" apply "$pred" || {
-      echo "FAIL: predecessor patch failed in series: $(basename "$pred")" >&2
+      echo "FAIL: predecessor patch failed in series: $base" >&2
       exit 1
     }
   done

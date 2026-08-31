@@ -3,7 +3,7 @@
 ClawGod-style tracking of what grokgod **must** re-apply after `grok update`,
 versus wrapper behavior, versus work we will not keep. This file is the
 inventory. Persist status is exposed via the `grok status` persist block
-(`0001-normalize-plugin-skill-join: applied|missing`, `0002-plan-mode-extra-writable: applied|missing`, `0003-session-persist-single: applied|missing`, `0004-disable-builtin-deep-research: applied|missing`, `0005-model-tools-deny-allow: applied|missing`, `0006-web-search-call-tolerant-parse: applied|missing`, `0007-hosted-web-search-splice-decouple: applied|missing`, `0008-claude-permissions-import-gate: applied|missing`, `0009-deepseek-chat-fix: applied|missing`, `overlay-pin: wrapper|missing`).
+(`0001-normalize-plugin-skill-join: applied|missing`, `0002-plan-mode-extra-writable: applied|missing`, `0003-session-persist-single: applied|missing`, `0004-disable-builtin-deep-research: applied|missing`, `0005-model-tools-deny-allow: applied|missing`, `0006-web-search-call-tolerant-parse: applied|missing`, `0007-hosted-web-search-splice-decouple: applied|missing`, `0008-claude-permissions-import-gate: applied|missing`, `0009-deepseek-chat-fix: applied|missing`, `0010-deepseek-chat-compact-lenient: applied|missing`, `overlay-pin: wrapper|missing`).
 
 ## Keep — grok-build source patch (re-apply on update)
 
@@ -18,6 +18,7 @@ inventory. Persist status is exposed via the `grok status` persist block
 | `0007` | `patches/0007-hosted-web-search-splice-decouple.patch` | Decouple hosted web_search splice from client-side xAI credential gate | Upstream gates the server-side splice on client `WebSearchConfig::is_enabled()`, which resolves through xAI credentials. Logging out silently strips hosted search from BYOK entries whose backend serves it. |
 | `0008` | `patches/0008-claude-permissions-import-gate.patch` | `[compat.claude] permissions` gate (default true, env `GROK_CLAUDE_PERMISSIONS_ENABLED`) to skip Claude settings permissions resolution | Host `~/.claude/settings.json` carries deny rules meant for Claude Code (e.g. WebFetch/WebSearch); grok-build inherits them and denies web_fetch despite native enable. Opt-out skips Claude permission tier while keeping plugin skills, hooks, and MCP servers. |
 | `0009` | `patches/0009-deepseek-chat-fix.patch` | Chat Completions usage `u32`s accept JSON `null` as 0 via existing `deserialize_null_default` | Compat wrappers (Poe / CPA openai→openai, DeepSeek-shaped Chat Completions) emit `"reasoning_tokens": null` and sibling usage ints; stock serde `u32` aborts the turn (`serialization error: invalid type: null, expected u32`). Distinct from 0006 (Responses `web_search_call` missing `action`). |
+| `0010` | `patches/0010-deepseek-chat-compact-lenient.patch` | Chat Completions SSE choke point: allowlisted compact-JSON retry for missing/`null` choice `index` (and sibling defaultable structural fields) | Same wrapper class as 0009; search/tool turns omit `choices[].index` (`missing field index`). Sibling of 0006 in `client.rs`; not a per-field serde attr. Identity fields stay fail-closed. |
 
 Base SHA: see `patches/README.md` (`bc7f02ed`). Fail closed on `git apply --check`. Daily CI `.github/workflows/compat-daily.yml` runs `git apply --check` of `patches/*.patch` against latest `xai-org/grok-build` `origin/main`.
 
