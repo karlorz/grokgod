@@ -111,7 +111,12 @@ do_report() {
         echo "$sid" | grep -E -q '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' || continue
         n_sess=$((n_sess + 1))
         mt=""
-        mt="$(stat -f %m "$sid_dir" 2>/dev/null || stat -c %Y "$sid_dir" 2>/dev/null || echo "")"
+        # BSD `stat -f %m` is mtime. GNU `stat -f` is --file-system and
+        # succeeds with a prose dump, so `|| stat -c` never runs on Linux CI.
+        mt="$(stat -f %m "$sid_dir" 2>/dev/null || true)"
+        case "$mt" in
+          ''|*[!0-9]*) mt="$(stat -c %Y "$sid_dir" 2>/dev/null || echo "")" ;;
+        esac
         if [ -z "$mt" ]; then
           continue
         fi

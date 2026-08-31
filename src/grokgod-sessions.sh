@@ -31,7 +31,13 @@ is_uuid() {
 }
 
 dir_mtime() {
-  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo ""
+  # BSD `stat -f %m` is mtime. GNU `stat -f` is --file-system and succeeds
+  # with a prose dump, so `|| stat -c` never runs. Keep only a digit epoch.
+  mt="$(stat -f %m "$1" 2>/dev/null || true)"
+  case "$mt" in
+    ''|*[!0-9]*) mt="$(stat -c %Y "$1" 2>/dev/null || echo "")" ;;
+  esac
+  echo "$mt"
 }
 
 dir_size() {
