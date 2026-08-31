@@ -11,10 +11,12 @@ This directory contains upstream source patches applied to `grok-build` for `gro
 - `0005-model-tools-deny-allow.patch`: Per-model tools gating via `[model."<id>".tools]` with `deny` and `allow` plain-name lists with removal-before-request semantics on both the client function-tool surface and the hosted splice (`x_search`, hosted `web_search`). Lets BYOK gateway model entries drop `web_search`/`web_fetch` while official `api.x.ai` models retain them.
 - `0006-web-search-call-tolerant-parse.patch`: Tolerant parsing of hosted search-call stream items (`web_search_call`, `x_search_call`) missing the `action` field on in-progress frames from upstream gateways, injecting a minimal default `Search` action on deserialize error and dropping unknown output-item variants with a warning instead of aborting the turn.
 - `0007-hosted-web-search-splice-decouple.patch`: Decouples the server-side hosted `web_search` tool splice from the client-side `WebSearchConfig` credential check. Preserves hosted search for BYOK models when logged out while maintaining explicit `disable_web_search` kill-switch and 0005 model deny semantics.
+- `0008-claude-permissions-import-gate.patch`: `[compat.claude] permissions` gate (default true, env `GROK_CLAUDE_PERMISSIONS_ENABLED`) to skip Claude settings permissions resolution so host Claude deny rules do not block grok native tools.
+- `0009-deepseek-chat-fix.patch`: Chat Completions usage `u32` fields accept JSON `null` as 0 via `deserialize_null_default`, so DeepSeek/Poe/CPA trailers with `reasoning_tokens: null` (and sibling usage ints) do not abort the turn.
 
 ## Target Commit
 
-- Base commit: `grok-build` commit `bc7f02ed` (`bc7f02eddd3d84085849dc19ed216f11c23b0571`) — origin/main sync past `9684fa3c`; 0001-0007 rebased onto it 2026-08-29.
+- Base commit: `grok-build` commit `bc7f02ed` (`bc7f02eddd3d84085849dc19ed216f11c23b0571`) — origin/main sync past `9684fa3c`; 0001-0007 rebased onto it 2026-08-29; 0008–0009 stacked on the same pin.
 
 ## Verification
 

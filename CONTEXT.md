@@ -9,7 +9,8 @@ shared language for what grokgod keeps across `grok update`, not a spec.
 A `git apply` diff under `patches/` against a pinned grok-build SHA. Re-applied
 on `grok update` / `grokgod update`. Current set: `0001-normalize-plugin-skill-join`,
 `0002-plan-mode-extra-writable`, `0003-session-persist-single`, `0004-disable-builtin-deep-research`,
-`0005-model-tools-deny-allow`, `0006-web-search-call-tolerant-parse`, `0007-hosted-web-search-splice-decouple`.
+`0005-model-tools-deny-allow`, `0006-web-search-call-tolerant-parse`, `0007-hosted-web-search-splice-decouple`,
+`0008-claude-permissions-import-gate`, `0009-deepseek-chat-fix`.
 _Avoid_: Mach-O hex edit, plugin.json rewrite as the engine fix
 
 **Auth-decoupled hosted splice**:
@@ -26,6 +27,15 @@ in-progress `web_search_call` / `x_search_call` items, injects a minimal default
 action, and drops unparseable unknown item variants with a warning instead of killing
 the turn. Enables `supports_backend_search = true` on hosted GPT codex entries.
 _Avoid_: gateway-side hard-dependencies, dropping all unknown SSE events silently, forking async-openai
+
+**DeepSeek chat usage null**:
+Chat Completions usage integers in grokgod `0009`. Owned serde types
+(`Usage`, `PromptTokensDetails`, `CompletionTokensDetails`) treat JSON `null`
+as 0 via existing `deserialize_null_default`, so DeepSeek/Poe/CPA trailers
+with `reasoning_tokens: null` (and sibling usage ints) do not abort the turn
+with `invalid type: null, expected u32`.
+_Avoid_: folding into 0006 (Responses search-call), treating CPA stream
+intercept as the only fix, changing `ChatChunkChoice.index`
 
 **Per-model tool gating**:
 `[model."<id>".tools]` with `deny` and `allow` lists in grokgod `0005`. Strips

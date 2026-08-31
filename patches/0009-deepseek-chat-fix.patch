@@ -1,0 +1,90 @@
+diff --git a/crates/codegen/xai-grok-sampling-types/src/types.rs b/crates/codegen/xai-grok-sampling-types/src/types.rs
+index 266e4bc6..44cc90f2 100644
+--- a/crates/codegen/xai-grok-sampling-types/src/types.rs
++++ b/crates/codegen/xai-grok-sampling-types/src/types.rs
+@@ -538,8 +538,11 @@ impl ToolCallFunction {
+ 
+ #[derive(Debug, Serialize, Deserialize, Clone)]
+ pub struct Usage {
++    #[serde(default, deserialize_with = "deserialize_null_default")]
+     pub prompt_tokens: u32,
++    #[serde(default, deserialize_with = "deserialize_null_default")]
+     pub completion_tokens: u32,
++    #[serde(default, deserialize_with = "deserialize_null_default")]
+     pub total_tokens: u32,
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub prompt_tokens_details: Option<PromptTokensDetails>,
+@@ -554,21 +557,21 @@ pub struct Usage {
+ 
+ #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+ pub struct PromptTokensDetails {
+-    #[serde(default)]
++    #[serde(default, deserialize_with = "deserialize_null_default")]
+     pub cached_tokens: u32,
+-    #[serde(default)]
++    #[serde(default, deserialize_with = "deserialize_null_default")]
+     pub audio_tokens: u32,
+ }
+ 
+ #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+ pub struct CompletionTokensDetails {
+-    #[serde(default)]
++    #[serde(default, deserialize_with = "deserialize_null_default")]
+     pub reasoning_tokens: u32,
+-    #[serde(default)]
++    #[serde(default, deserialize_with = "deserialize_null_default")]
+     pub audio_tokens: u32,
+-    #[serde(default)]
++    #[serde(default, deserialize_with = "deserialize_null_default")]
+     pub accepted_prediction_tokens: u32,
+-    #[serde(default)]
++    #[serde(default, deserialize_with = "deserialize_null_default")]
+     pub rejected_prediction_tokens: u32,
+ }
+ // ============ Streaming types ============
+@@ -1489,6 +1492,45 @@ mod tests {
+         assert!(delta.tool_calls.is_empty());
+     }
+ 
++    /// DeepSeek/Poe/CPA Chat Completions usage trailers emit JSON null for
++    /// integer detail fields. OpenAI types these as integer default 0.
++    #[test]
++    fn test_chat_completion_chunk_deserializes_null_usage_detail_ints() {
++        let json = r#"{
++            "id":"chatcmpl-aaaaaaaaaaaa",
++            "object":"chat.completion.chunk",
++            "created":1756622681,
++            "model":"deepseek-v4-flash",
++            "choices":[{"index":0,"delta":{},"finish_reason":"stop"}],
++            "usage":{
++                "prompt_tokens":111111,
++                "completion_tokens":11111,
++                "total_tokens":111111,
++                "prompt_tokens_details":{"cached_tokens":null},
++                "completion_tokens_details":{"reasoning_tokens":null}
++            }
++        }"#;
++
++        let chunk: ChatCompletionChunk =
++            serde_json::from_str(json).expect("null usage ints should deserialize as 0");
++        let usage = chunk.usage.expect("usage present");
++        assert_eq!(usage.prompt_tokens, 111111);
++        assert_eq!(
++            usage
++                .prompt_tokens_details
++                .as_ref()
++                .map(|d| d.cached_tokens),
++            Some(0)
++        );
++        assert_eq!(
++            usage
++                .completion_tokens_details
++                .as_ref()
++                .map(|d| d.reasoning_tokens),
++            Some(0)
++        );
++    }
++
+     /// Regression test: cloning `Box<dyn TraceContext>` must not infinitely recurse.
+     ///
+     /// The blanket `impl<T: Clone + ...> TraceContext for T` applies to
