@@ -1,8 +1,8 @@
 diff --git a/crates/codegen/xai-grok-config-types/src/lib.rs b/crates/codegen/xai-grok-config-types/src/lib.rs
-index a6c9af06..003c668a 100644
+index 393a78d4..5e591957 100644
 --- a/crates/codegen/xai-grok-config-types/src/lib.rs
 +++ b/crates/codegen/xai-grok-config-types/src/lib.rs
-@@ -26,6 +26,47 @@ pub struct CampaignOverride {
+@@ -26,6 +26,45 @@ pub struct CampaignOverride {
      #[serde(flatten, default)]
      pub patch: serde_json::Map<String, serde_json::Value>,
  }
@@ -25,10 +25,8 @@ index a6c9af06..003c668a 100644
 +
 +impl PlanModeSettings {
 +    /// Default extra-path catalog when `extra_writable_globs` is absent.
-+    pub const DEFAULT_EXTRA_WRITABLE_GLOBS: &'static [&'static str] = &[
-+        "**/projects/*/work/*/*.md",
-+        "**/docs/superpowers/**/*.md",
-+    ];
++    pub const DEFAULT_EXTRA_WRITABLE_GLOBS: &'static [&'static str] =
++        &["**/projects/*/work/*/*.md", "**/docs/superpowers/**/*.md"];
 +
 +    /// `None` → default catalog. `Some([])` → no extra paths. Non-empty replaces.
 +    pub fn resolved_extra_writable_globs(&self) -> Vec<String> {
@@ -47,15 +45,15 @@ index a6c9af06..003c668a 100644
 +    }
 +}
 +
- /// Doom-loop recovery settings: ONE struct serves both the local
- /// `[doom_loop_recovery]` TOML table and the remote settings
- /// `doom_loop_recovery` JSON object, so the two stay 1:1. All fields are
+ /// Doom-loop recovery settings: one struct serves both the local `[doom_loop_recovery]` TOML table and the remote `doom_loop_recovery` JSON object.
+ /// Every field is `Option` with a per-field default, so a partial object parses and unknown future keys are ignored.
+ /// Unset fields fall through per-field in `resolve_doom_loop_recovery`: env, then TOML, then remote, then default.
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
-index 137ac779..0277c0b4 100644
+index 6d22429e..372b28ca 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
-@@ -1303,6 +1303,9 @@ pub struct Config {
-     /// object. See [`crate::util::config::DoomLoopRecoverySettings`].
+@@ -1244,6 +1244,9 @@ pub struct Config {
+     /// See [`crate::util::config::DoomLoopRecoverySettings`].
      #[serde(default)]
      pub doom_loop_recovery: crate::util::config::DoomLoopRecoverySettings,
 +    /// `[plan_mode]` extra writable globs and implement-via-subagents flag.
@@ -64,15 +62,15 @@ index 137ac779..0277c0b4 100644
      /// `[worktree]` section (currently `[worktree.auto_gc]` only).
      #[serde(default)]
      pub worktree: WorktreeConfigSection,
-@@ -1756,6 +1759,7 @@ impl Default for Config {
+@@ -1655,6 +1658,7 @@ impl Default for Config {
              goal: GoalConfig::default(),
              workflows: WorkflowsConfig::default(),
              doom_loop_recovery: crate::util::config::DoomLoopRecoverySettings::default(),
 +            plan_mode: crate::util::config::PlanModeSettings::default(),
              worktree: WorktreeConfigSection::default(),
              auto_mode: AutoModeConfig::default(),
-             feature_values: BTreeMap::new(),
-@@ -2606,6 +2610,15 @@ impl Config {
+             prompt_suggestions: crate::util::config::PromptSuggestConfig::default(),
+@@ -2489,6 +2493,15 @@ impl Config {
                  ),
          })
      }
@@ -85,14 +83,14 @@ index 137ac779..0277c0b4 100644
 +    pub(crate) fn resolve_plan_mode_implement_via_subagents(&self) -> bool {
 +        self.plan_mode.resolved_implement_via_subagents()
 +    }
-     /// Automatic worktree GC policy. Precedence: env kill/dry-run >
-     /// `[worktree.auto_gc]` TOML > remote `worktree_auto_gc` > defaults.
-     /// Platform age-expiry (`process_cwd_scan_available`: linux+macos) is enforced
+     /// Automatic worktree GC policy.
+     /// Precedence: env kill/dry-run > `[worktree.auto_gc]` TOML > remote `worktree_auto_gc` > defaults.
+     /// Platform age-expiry (`process_cwd_scan_available`: linux+macos) is enforced inside `xai_fast_worktree::maybe_auto_gc`, not here.
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
-index 914a96a9..faceb56c 100644
+index efb34d6f..aa9e9b12 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
-@@ -223,10 +223,21 @@ impl SessionActor {
+@@ -219,10 +219,21 @@ impl SessionActor {
              if let Some(client) = self.rebuild_spec.managed_gateway_tool_client.clone() {
                  bridge.update_resource(client).await;
              }
@@ -116,10 +114,10 @@ index 914a96a9..faceb56c 100644
                  bridge
                      .set_display_cwd(std::path::PathBuf::from(display_cwd))
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/session_mode.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/session_mode.rs
-index d98e26e1..d1fc3220 100644
+index e55b5c0f..fad07abc 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/session_mode.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/session_mode.rs
-@@ -382,9 +382,21 @@ impl SessionActor {
+@@ -368,9 +368,21 @@ impl SessionActor {
          plan_path: &std::path::Path,
          plan_has_content: bool,
      ) -> Option<String> {
@@ -142,10 +140,10 @@ index d98e26e1..d1fc3220 100644
          self.agent
              .borrow()
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-index 1030db05..a4371b0e 100644
+index 5a80629b..846c6a5c 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-@@ -1588,6 +1588,13 @@ pub(crate) async fn spawn_session_actor(
+@@ -1578,6 +1578,13 @@ pub(crate) async fn spawn_session_actor(
          }
      };
      let doom_loop_recovery = effective_config.resolve_doom_loop_recovery();
@@ -159,7 +157,7 @@ index 1030db05..a4371b0e 100644
      let resolved_tool_overrides: std::sync::Arc<
          arc_swap::ArcSwapOption<xai_grok_sampling_types::ToolOverrides>,
      > = std::sync::Arc::new(arc_swap::ArcSwapOption::empty());
-@@ -1910,13 +1917,27 @@ pub(crate) async fn spawn_session_actor(
+@@ -1935,13 +1942,27 @@ pub(crate) async fn spawn_session_actor(
              .await;
      }
      {
@@ -189,13 +187,13 @@ index 1030db05..a4371b0e 100644
      session.inject_deny_read_globs().await;
      if session.permissions.is_auto_mode() {
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
-index 27a66e6b..bacf464a 100644
+index b11bd828..d4e572d4 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
-@@ -237,6 +237,12 @@ pub(super) enum PlanEditGate {
- /// flow to the normal permission path, where yolo may still auto-approve
- /// them. `enter_plan_mode` / `exit_plan_mode` map to `AccessKind::Read` and
- /// are likewise never gated.
+@@ -226,6 +226,12 @@ pub(super) enum PlanEditGate {
+ /// It is always rejected in plan mode (conservative: per-file targets are only known after patch parsing).
+ /// Non-edit tools (bash, read, grep, MCP, web) are never gated here; they flow to the normal permission path, where yolo may still auto-approve them.
+ /// `enter_plan_mode` / `exit_plan_mode` map to `AccessKind::Read` and are likewise never gated.
 +fn extra_glob_edit_tool(tool_input: &ToolInput) -> bool {
 +    matches!(
 +        tool_input,
@@ -205,7 +203,7 @@ index 27a66e6b..bacf464a 100644
  pub(super) fn plan_mode_edit_gate(
      tracker: &crate::session::plan_mode::PlanModeTracker,
      tool_input: &ToolInput,
-@@ -249,8 +255,15 @@ pub(super) fn plan_mode_edit_gate(
+@@ -238,8 +244,15 @@ pub(super) fn plan_mode_edit_gate(
          return PlanEditGate::Allow;
      }
      match access_kind {
@@ -223,7 +221,7 @@ index 27a66e6b..bacf464a 100644
          }
          _ => PlanEditGate::Allow,
      }
-@@ -3318,6 +3331,74 @@ mod plan_mode_edit_gate_tests {
+@@ -3364,6 +3377,74 @@ mod plan_mode_edit_gate_tests {
              "Pending means the model has no plan-mode instructions yet — don't gate"
          );
      }
@@ -299,10 +297,10 @@ index 27a66e6b..bacf464a 100644
  #[cfg(test)]
  mod plan_approval_helper_tests {
 diff --git a/crates/codegen/xai-grok-shell/src/session/plan_mode.rs b/crates/codegen/xai-grok-shell/src/session/plan_mode.rs
-index a9fc8d41..9ba3348a 100644
+index 1716afd0..eee398a1 100644
 --- a/crates/codegen/xai-grok-shell/src/session/plan_mode.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/plan_mode.rs
-@@ -77,6 +77,12 @@ pub struct PlanModeTracker {
+@@ -55,6 +55,12 @@ pub struct PlanModeTracker {
      /// Lives inside the session directory:
      /// `~/.grok/sessions/<cwd>/<session_id>/plan.md`
      plan_file_path: PathBuf,
@@ -313,19 +311,19 @@ index a9fc8d41..9ba3348a 100644
 +    /// When true, exit reminders prefer second-tier implementer subagents.
 +    implement_via_subagents: bool,
  }
- /// A buffered mid-turn activation reminder plus the state needed to roll the
- /// activation back if it is withdrawn before delivery.
-@@ -108,6 +114,9 @@ impl PlanModeTracker {
+ /// A buffered mid-turn activation reminder plus the state needed to roll the activation back if it is withdrawn before delivery.
+ struct PendingActivation {
+@@ -80,6 +86,9 @@ impl PlanModeTracker {
      /// Create a new tracker. `session_dir` is the session's storage
      /// directory (e.g., `~/.grok/sessions/<encoded-cwd>/<session-id>/`).
      pub fn new(session_dir: PathBuf) -> Self {
-+        let extra_writable_globs = crate::util::config::PlanModeSettings::default()
-+            .resolved_extra_writable_globs();
++        let extra_writable_globs =
++            crate::util::config::PlanModeSettings::default().resolved_extra_writable_globs();
 +        let extra_writable_set = compile_extra_writable_set(&extra_writable_globs);
          Self {
              state: PlanModeState::Inactive,
              was_previously_active: false,
-@@ -116,6 +125,9 @@ impl PlanModeTracker {
+@@ -88,6 +97,9 @@ impl PlanModeTracker {
              awaiting_plan_approval: false,
              pending_activation: None,
              plan_file_path: session_dir.join("plan.md"),
@@ -334,18 +332,18 @@ index a9fc8d41..9ba3348a 100644
 +            implement_via_subagents: true,
          }
      }
-     /// Restore a tracker from a persisted snapshot.
-@@ -136,6 +148,9 @@ impl PlanModeTracker {
+     /// `session_dir` is used to recompute `plan_file_path`.
+@@ -104,6 +116,9 @@ impl PlanModeTracker {
              }
              _ => {}
          }
-+        let extra_writable_globs = crate::util::config::PlanModeSettings::default()
-+            .resolved_extra_writable_globs();
++        let extra_writable_globs =
++            crate::util::config::PlanModeSettings::default().resolved_extra_writable_globs();
 +        let extra_writable_set = compile_extra_writable_set(&extra_writable_globs);
          Self {
              state: snapshot.state,
              was_previously_active: snapshot.was_previously_active,
-@@ -144,8 +159,28 @@ impl PlanModeTracker {
+@@ -112,8 +127,28 @@ impl PlanModeTracker {
              awaiting_plan_approval: snapshot.awaiting_plan_approval,
              pending_activation: None,
              plan_file_path: session_dir.join("plan.md"),
@@ -374,7 +372,7 @@ index a9fc8d41..9ba3348a 100644
      /// Mark that the client is waiting on plan approval (`exit_plan_mode` parked).
      pub(crate) fn set_awaiting_plan_approval(&mut self, awaiting: bool) {
          self.awaiting_plan_approval = awaiting;
-@@ -386,7 +421,13 @@ using the ${{ tools.by_kind.edit }} tool.
+@@ -336,7 +371,13 @@ using the ${{ tools.by_kind.edit }} tool.
  ${%- endif %}
  
  You should build your plan by writing to or editing this file. \
@@ -388,8 +386,8 @@ index a9fc8d41..9ba3348a 100644
  
  Your turn should only end with either ${{ tools.by_kind.ask_user }} to clarify \
  requirements or ${{ tools.by_kind.exit_plan }} to present your plan to the user."
-@@ -428,7 +469,13 @@ pub(crate) fn plan_mode_edit_rejected_template() -> &'static str {
- /// (user-initiated exit via toggle). Contains no placeholders.
+@@ -368,13 +409,50 @@ pub(crate) fn plan_mode_edit_rejected_template() -> &'static str {
+ /// Contains no placeholders.
  pub(crate) fn plan_mode_exit_reminder_template() -> &'static str {
      "\
 -You have exited plan mode. You can now make edits, run tools, and take actions."
@@ -401,9 +399,8 @@ index a9fc8d41..9ba3348a 100644
 +If a test-first execute skill is in play, the implementer follows it.\
 +${%- endif %}"
  }
- /// Check if a write target matches the plan file.
- ///
-@@ -437,6 +484,35 @@ You have exited plan mode. You can now make edits, run tools, and take actions."
+ /// `target_path` is the absolute path the tool is trying to write to.
+ /// `plan_file` is the absolute path from [`PlanModeTracker::plan_file_path`].
  pub(crate) fn is_plan_file_write(target_path: &Path, plan_file: &Path) -> bool {
      target_path == plan_file
  }
@@ -414,9 +411,11 @@ index a9fc8d41..9ba3348a 100644
 +            builder.add(glob);
 +        }
 +    }
-+    builder
-+        .build()
-+        .unwrap_or_else(|_| globset::GlobSetBuilder::new().build().expect("empty globset"))
++    builder.build().unwrap_or_else(|_| {
++        globset::GlobSetBuilder::new()
++            .build()
++            .expect("empty globset")
++    })
 +}
 +fn extra_writable_set_matches(target_path: &Path, set: &globset::GlobSet) -> bool {
 +    if set.is_empty() {
@@ -438,8 +437,8 @@ index a9fc8d41..9ba3348a 100644
 +}
  /// Whether the path's final component ends with a markdown suffix (case-insensitive).
  ///
- /// Suffixes align with client / workspace `MARKDOWN_SUFFIXES`:
-@@ -810,6 +886,21 @@ mod tests {
+ /// Suffixes align with client / workspace `MARKDOWN_SUFFIXES`: `.md`, `.markdown`, `.mdown`, `.mkd`, `.mkdn`, `.mdx`.
+@@ -743,6 +821,21 @@ mod tests {
          assert!(!text.contains("${{"));
      }
      #[test]
@@ -461,13 +460,13 @@ index a9fc8d41..9ba3348a 100644
      fn edit_rejected_template_renders() {
          let r = test_renderer();
          let text = render(
-@@ -860,6 +951,27 @@ mod tests {
+@@ -793,6 +886,27 @@ mod tests {
          assert!(!is_plan_file_write(target, plan));
      }
      #[test]
 +    fn extra_writable_matches_default_catalog() {
-+        let globs = crate::util::config::PlanModeSettings::default()
-+            .resolved_extra_writable_globs();
++        let globs =
++            crate::util::config::PlanModeSettings::default().resolved_extra_writable_globs();
 +        assert!(is_extra_writable_plan_path(
 +            Path::new("/Users/x/wiki/projects/foo/work/2026-08-20-bar/plan.md"),
 +            &globs
@@ -490,10 +489,10 @@ index a9fc8d41..9ba3348a 100644
          assert!(is_markdown_file_path(Path::new("/x/plan.md")));
          assert!(is_markdown_file_path(Path::new("notes.MDX")));
 diff --git a/crates/codegen/xai-grok-shell/src/util/config/mod.rs b/crates/codegen/xai-grok-shell/src/util/config/mod.rs
-index 3067942e..971fe077 100644
+index 607203e2..4e7f9f46 100644
 --- a/crates/codegen/xai-grok-shell/src/util/config/mod.rs
 +++ b/crates/codegen/xai-grok-shell/src/util/config/mod.rs
-@@ -35,6 +35,6 @@ pub use tips::*;
+@@ -34,6 +34,6 @@ pub use tips::*;
  pub use worktree::*;
  pub use xai_grok_config_types::{
      CampaignOverride, ConsentGate, ContextualHintsRemote, DisplayRefreshSettings,
@@ -703,7 +702,7 @@ index e129918b..dfb2f8aa 100644
      async fn reads_from_plan_file_path_resource() {
          let tmp = TempDir::new().unwrap();
 diff --git a/crates/codegen/xai-grok-tools/src/types/resources.rs b/crates/codegen/xai-grok-tools/src/types/resources.rs
-index b4e48928..bbf3928b 100644
+index de68a25d..386bee06 100644
 --- a/crates/codegen/xai-grok-tools/src/types/resources.rs
 +++ b/crates/codegen/xai-grok-tools/src/types/resources.rs
 @@ -411,6 +411,10 @@ pub struct Cwd(pub PathBuf);

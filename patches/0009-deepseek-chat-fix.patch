@@ -1,8 +1,8 @@
 diff --git a/crates/codegen/xai-grok-sampling-types/src/types.rs b/crates/codegen/xai-grok-sampling-types/src/types.rs
-index 266e4bc6..44cc90f2 100644
+index 90248d86..236926ca 100644
 --- a/crates/codegen/xai-grok-sampling-types/src/types.rs
 +++ b/crates/codegen/xai-grok-sampling-types/src/types.rs
-@@ -538,8 +538,11 @@ impl ToolCallFunction {
+@@ -526,8 +526,11 @@ impl ToolCallFunction {
  
  #[derive(Debug, Serialize, Deserialize, Clone)]
  pub struct Usage {
@@ -14,7 +14,7 @@ index 266e4bc6..44cc90f2 100644
      pub total_tokens: u32,
      #[serde(default, skip_serializing_if = "Option::is_none")]
      pub prompt_tokens_details: Option<PromptTokensDetails>,
-@@ -554,21 +557,21 @@ pub struct Usage {
+@@ -541,21 +544,21 @@ pub struct Usage {
  
  #[derive(Debug, Serialize, Deserialize, Clone, Default)]
  pub struct PromptTokensDetails {
@@ -42,7 +42,7 @@ index 266e4bc6..44cc90f2 100644
      pub rejected_prediction_tokens: u32,
  }
  // ============ Streaming types ============
-@@ -1489,6 +1492,45 @@ mod tests {
+@@ -1449,6 +1452,45 @@ mod tests {
          assert!(delta.tool_calls.is_empty());
      }
  
@@ -87,4 +87,4 @@ index 266e4bc6..44cc90f2 100644
 +
      /// Regression test: cloning `Box<dyn TraceContext>` must not infinitely recurse.
      ///
-     /// The blanket `impl<T: Clone + ...> TraceContext for T` applies to
+     /// The blanket `impl<T: Clone + ...> TraceContext for T` applies to `Box<dyn TraceContext>` itself.

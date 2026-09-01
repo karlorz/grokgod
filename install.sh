@@ -8,7 +8,7 @@ GROKGOD_REPO="${GROKGOD_REPO:-https://github.com/karlorz/grokgod}"
 GROKGOD_VERSION="${GROKGOD_VERSION:-}"
 
 # Base commit that source patches were authored against (mirrors patches/README.md)
-PINNED_BASE_SHA=bc7f02eddd3d84085849dc19ed216f11c23b0571
+PINNED_BASE_SHA=bb7f39d5858cbf5e00de639367f59debbdcb0138
 
 GROKGOD_HOME="${GROKGOD_HOME:-$HOME/.grokgod}"
 GROK_HOME="${GROK_HOME:-$HOME/.grok}"

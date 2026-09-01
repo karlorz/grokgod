@@ -20,7 +20,7 @@ inventory. Persist status is exposed via the `grok status` persist block
 | `0009` | `patches/0009-deepseek-chat-fix.patch` | Chat Completions usage `u32`s accept JSON `null` as 0 via existing `deserialize_null_default` | Compat wrappers (Poe / CPA openai→openai, DeepSeek-shaped Chat Completions) emit `"reasoning_tokens": null` and sibling usage ints; stock serde `u32` aborts the turn (`serialization error: invalid type: null, expected u32`). Distinct from 0006 (Responses `web_search_call` missing `action`). |
 | `0010` | `patches/0010-deepseek-chat-compact-lenient.patch` | Chat Completions SSE choke point: allowlisted compact-JSON retry for missing/`null` choice `index` (and sibling defaultable structural fields) | Same wrapper class as 0009; search/tool turns omit `choices[].index` (`missing field index`). Sibling of 0006 in `client.rs`; not a per-field serde attr. Identity fields stay fail-closed. |
 
-Base SHA: see `patches/README.md` (`bc7f02ed`). Fail closed on `git apply --check`. Daily CI `.github/workflows/compat-daily.yml` runs `git apply --check` of `patches/*.patch` against latest `xai-org/grok-build` `origin/main`.
+Base SHA: see `patches/README.md` (`bb7f39d5`). Fail closed on `git apply --check`. Daily CI `.github/workflows/compat-daily.yml` runs `git apply --check` of `patches/*.patch` against latest `xai-org/grok-build` `origin/main`.
 
 ## Keep — wrapper, not a source patch
 

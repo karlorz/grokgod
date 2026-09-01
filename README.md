@@ -73,7 +73,7 @@ re-applying persist patches, and rebuilding), mirroring ClawGod's `@latest`
 lifecycle. `--version <sha>` locks to a specific commit. `--no-upgrade` skips
 fetch and checkout to re-apply / restore launchers on the current tree.
 
-Patch authorship base SHA: `c2ad97f87aea4303b6000a2c22128bc91ee76c9b` (`patches/README.md`). Session-start
+Patch authorship base SHA: `bb7f39d5858cbf5e00de639367f59debbdcb0138` (`patches/README.md`). Session-start
 checks: [docs/RUNBOOK-session-start.md](docs/RUNBOOK-session-start.md) (auto-load
 via [AGENTS.md](AGENTS.md)). Persist inventory (keep vs phase-out):
 [docs/patch-inventory.md](docs/patch-inventory.md).

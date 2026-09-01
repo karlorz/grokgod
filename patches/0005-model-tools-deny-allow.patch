@@ -1,8 +1,8 @@
 diff --git a/crates/codegen/xai-grok-agent/src/config.rs b/crates/codegen/xai-grok-agent/src/config.rs
-index 2cb2ab76..991235de 100644
+index fc46a7bd..8045a79f 100644
 --- a/crates/codegen/xai-grok-agent/src/config.rs
 +++ b/crates/codegen/xai-grok-agent/src/config.rs
-@@ -1297,6 +1297,20 @@ fn default_output_byte_limit() -> usize {
+@@ -1223,6 +1223,20 @@ fn default_output_byte_limit() -> usize {
  fn default_true() -> bool {
      true
  }
@@ -23,7 +23,7 @@ index 2cb2ab76..991235de 100644
  /// Strip a tool id's `Namespace:` prefix, yielding its short name.
  pub(crate) fn short_tool_name(id: &str) -> &str {
      id.rsplit(':').next().unwrap_or(id)
-@@ -1404,9 +1418,37 @@ impl AgentDefinition {
+@@ -1329,8 +1343,35 @@ impl AgentDefinition {
      }
  }
  impl AgentDefinition {
@@ -54,16 +54,13 @@ index 2cb2ab76..991235de 100644
 +        }
 +    }
 +
-     /// Whether `id` passes the session-operator clamp: denylist wins, then an
--    /// unset allowlist allows all.
+     /// Whether `id` passes the session-operator clamp: denylist wins, then an unset allowlist allows all.
 -    pub(crate) fn session_tools_allowed(&self, id: &str) -> bool {
-+    /// unset allowlist allows all. Always-on meta-tools (search_tool, use_tool)
-+    /// survive allowlist mode, but deny wins over everything.
 +    pub fn session_tools_allowed(&self, id: &str) -> bool {
          if self
              .session_tools_denylist
              .as_deref()
-@@ -1414,6 +1456,9 @@ impl AgentDefinition {
+@@ -1338,6 +1379,9 @@ impl AgentDefinition {
          {
              return false;
          }
@@ -73,20 +70,20 @@ index 2cb2ab76..991235de 100644
          self.session_tools_allowlist
              .as_deref()
              .is_none_or(|a| tool_id_matches(a, id))
-@@ -1422,7 +1467,7 @@ impl AgentDefinition {
-     /// `disallowed_tools`/`tools` and the session clamp. Hosted tools aren't in
-     /// `tool_config`, so they're gated by name here — and strictly (no
-     /// compat-name mapping or unresolved-entry fallback like the function path).
+@@ -1345,7 +1389,7 @@ impl AgentDefinition {
+     /// Whether a hosted/server-side tool `id` survives the agent's own `disallowed_tools`/`tools` and the session clamp.
+     /// Hosted tools aren't in `tool_config`, so they're gated by name here.
+     /// The gate is strict: no compat-name mapping or unresolved-entry fallback like the function path.
 -    pub(crate) fn hosted_tool_allowed(&self, id: &str) -> bool {
 +    pub fn hosted_tool_allowed(&self, id: &str) -> bool {
          if tool_id_matches(&self.disallowed_tools, id) {
              return false;
          }
 diff --git a/crates/codegen/xai-grok-agent/src/lib.rs b/crates/codegen/xai-grok-agent/src/lib.rs
-index 013ea9e4..16c88b48 100644
+index 647f765e..4ae828a0 100644
 --- a/crates/codegen/xai-grok-agent/src/lib.rs
 +++ b/crates/codegen/xai-grok-agent/src/lib.rs
-@@ -21,6 +21,7 @@ pub use agent::Agent;
+@@ -18,6 +18,7 @@ pub use agent::Agent;
  pub use builder::AgentBuilder;
  pub use compaction::CompactionPolicy;
  pub use config::AgentDefinition;
@@ -95,18 +92,18 @@ index 013ea9e4..16c88b48 100644
  pub use config::toolset_for_preset;
  pub use config::workspace_grok_build_toolset;
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
-index 6ad3a469..019272f6 100644
+index f039f4cb..da6bee6b 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
-@@ -3913,6 +3913,7 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
-                 supports_reasoning_effort: m.supports_reasoning_effort,
+@@ -3753,6 +3753,7 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
                  reasoning_efforts: m.reasoning_efforts,
+                 variants: m.variants,
                  supports_backend_search: m.supports_backend_search,
 +                tools: None,
                  compactions_remaining: m.compactions_remaining,
                  compaction_at_tokens: m.compaction_at_tokens,
                  show_model_fingerprint: m.show_model_fingerprint,
-@@ -4025,6 +4026,9 @@ pub struct ModelEntryConfig {
+@@ -3864,6 +3865,9 @@ pub struct ModelEntryConfig {
      pub supported_in_api: bool,
      #[serde(default, skip_serializing_if = "is_false")]
      pub supports_backend_search: bool,
@@ -116,15 +113,15 @@ index 6ad3a469..019272f6 100644
      /// Per-model config for the `x-compactions-remaining` header; `None` disables it.
      #[serde(default, skip_serializing_if = "Option::is_none")]
      pub compactions_remaining: Option<CompactionsRemaining>,
-@@ -4108,6 +4112,7 @@ pub struct ConfigModelOverride {
+@@ -3937,6 +3941,7 @@ pub struct ConfigModelOverride {
      pub supports_reasoning_effort: Option<bool>,
      pub reasoning_efforts: Vec<ReasoningEffortOption>,
      pub supports_backend_search: Option<bool>,
 +    pub tools: Option<xai_grok_agent::ModelToolsConfig>,
-     /// Aliases must be registered in `config_model_override_parse::ALIASES`;
-     /// serde rejects a table that contains both spellings otherwise.
+     /// Aliases must be registered in `config_model_override_parse::ALIASES`; serde rejects a table that contains both spellings otherwise.
      #[serde(alias = "send_compactions_remaining")]
-@@ -4203,6 +4208,9 @@ impl ConfigModelOverride {
+     pub compactions_remaining: Option<CompactionsRemaining>,
+@@ -4031,6 +4036,9 @@ impl ConfigModelOverride {
          if let Some(v) = self.supports_backend_search {
              entry.info.supports_backend_search = v;
          }
@@ -134,9 +131,9 @@ index 6ad3a469..019272f6 100644
          if self.compactions_remaining.is_some() {
              entry.info.compactions_remaining = self.compactions_remaining;
          }
-@@ -4300,6 +4308,9 @@ pub struct ModelInfo {
+@@ -4126,6 +4134,9 @@ pub struct ModelInfo {
      #[serde(default, skip_serializing_if = "Vec::is_empty")]
-     pub reasoning_efforts: Vec<ReasoningEffortOption>,
+     pub variants: Vec<ModelVariant>,
      pub supports_backend_search: bool,
 +    /// Per-model tools deny/allow lists (`[model."<id>".tools]`).
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -144,43 +141,43 @@ index 6ad3a469..019272f6 100644
      /// Per-model config for the `x-compactions-remaining` header; `None` disables it.
      pub compactions_remaining: Option<CompactionsRemaining>,
      /// Per-model config for the `x-compaction-at` header; `None` disables it.
-@@ -4348,6 +4359,7 @@ impl ModelInfo {
-             supports_reasoning_effort: false,
+@@ -4174,6 +4185,7 @@ impl ModelInfo {
              reasoning_efforts: Vec::new(),
+             variants: Vec::new(),
              supports_backend_search: false,
 +            tools: None,
              compactions_remaining: None,
              compaction_at_tokens: None,
              show_model_fingerprint: false,
-@@ -4387,6 +4399,7 @@ impl ModelInfo {
-             supports_reasoning_effort: entry.supports_reasoning_effort,
+@@ -4213,6 +4225,7 @@ impl ModelInfo {
              reasoning_efforts: entry.reasoning_efforts.clone(),
+             variants: entry.variants.clone(),
              supports_backend_search: entry.supports_backend_search,
 +            tools: entry.tools.clone(),
              compactions_remaining: entry.compactions_remaining,
              compaction_at_tokens: entry.compaction_at_tokens,
              show_model_fingerprint: entry.show_model_fingerprint,
-@@ -5173,6 +5186,7 @@ pub(crate) fn resolve_aux_model_sampling_config(
-                 supports_reasoning_effort: false,
+@@ -4982,6 +4995,7 @@ pub(crate) fn resolve_aux_model_sampling_config(
                  reasoning_efforts: Vec::new(),
+                 variants: Vec::new(),
                  supports_backend_search: false,
 +                tools: None,
                  compactions_remaining: None,
                  compaction_at_tokens: None,
                  show_model_fingerprint: false,
-@@ -5411,6 +5425,7 @@ fn resolve_hidden_default_web_search_sampling_config(
-             supports_reasoning_effort: false,
+@@ -5212,6 +5226,7 @@ fn resolve_hidden_default_web_search_sampling_config(
              reasoning_efforts: Vec::new(),
+             variants: Vec::new(),
              supports_backend_search: false,
 +            tools: None,
              compactions_remaining: None,
              compaction_at_tokens: None,
              show_model_fingerprint: false,
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config_model_override_parse.rs b/crates/codegen/xai-grok-shell/src/agent/config_model_override_parse.rs
-index 6ba241c2..c3b941ae 100644
+index 3180d84e..4c296d38 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config_model_override_parse.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config_model_override_parse.rs
-@@ -724,6 +724,10 @@ mod tests {
+@@ -707,6 +707,10 @@ mod tests {
                  default: true,
              }],
              supports_backend_search: Some(false),
@@ -192,10 +189,10 @@ index 6ba241c2..c3b941ae 100644
              compaction_at_tokens: Some(CompactionAtTokens::Fixed(100_000)),
              show_model_fingerprint: Some(true),
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
-index 40d9bd03..5780926e 100644
+index 7f1779e5..1098dc7a 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
-@@ -1064,6 +1064,7 @@ fn test_model_entry(
+@@ -1054,6 +1054,7 @@ fn test_model_entry(
              supports_reasoning_effort: false,
              reasoning_efforts: Vec::new(),
              supports_backend_search: false,
@@ -203,7 +200,7 @@ index 40d9bd03..5780926e 100644
              compactions_remaining: None,
              compaction_at_tokens: None,
              show_model_fingerprint: false,
-@@ -2139,6 +2140,7 @@ fn model_info_from_config_propagates_use_concise() {
+@@ -2122,6 +2123,7 @@ fn model_info_from_config_propagates_use_concise() {
          supports_reasoning_effort: false,
          reasoning_efforts: Vec::new(),
          supports_backend_search: false,
@@ -211,7 +208,7 @@ index 40d9bd03..5780926e 100644
          compactions_remaining: None,
          compaction_at_tokens: None,
          show_model_fingerprint: false,
-@@ -2300,6 +2302,7 @@ fn model_info_from_config_propagates_agent_type() {
+@@ -2284,6 +2286,7 @@ fn model_info_from_config_propagates_agent_type() {
          supports_reasoning_effort: false,
          reasoning_efforts: Vec::new(),
          supports_backend_search: false,
@@ -219,7 +216,7 @@ index 40d9bd03..5780926e 100644
          compactions_remaining: None,
          compaction_at_tokens: None,
          show_model_fingerprint: false,
-@@ -2753,6 +2756,7 @@ fn inference_idle_timeout_propagates_to_model_info() {
+@@ -2738,6 +2741,7 @@ fn inference_idle_timeout_propagates_to_model_info() {
          supports_reasoning_effort: false,
          reasoning_efforts: Vec::new(),
          supports_backend_search: false,
@@ -227,7 +224,7 @@ index 40d9bd03..5780926e 100644
          compactions_remaining: None,
          compaction_at_tokens: None,
          show_model_fingerprint: false,
-@@ -6776,6 +6780,7 @@ fn prefetch_model_entry(slug: &str, context_window: u64, api_backend: ApiBackend
+@@ -6724,6 +6728,7 @@ fn prefetch_model_entry(slug: &str, context_window: u64, api_backend: ApiBackend
              supports_reasoning_effort: false,
              reasoning_efforts: Vec::new(),
              supports_backend_search: false,
@@ -235,7 +232,7 @@ index 40d9bd03..5780926e 100644
              compactions_remaining: None,
              compaction_at_tokens: None,
              show_model_fingerprint: false,
-@@ -7621,3 +7626,184 @@ fn a_status_line_the_parser_could_not_read_in_full_reaches_grok_inspect() {
+@@ -7569,3 +7574,184 @@ fn a_status_line_the_parser_could_not_read_in_full_reaches_grok_inspect() {
      );
      assert_eq!(cfg.ui.theme.as_deref(), Some("kanagawa"));
  }
@@ -421,7 +418,7 @@ index 40d9bd03..5780926e 100644
 +    assert!(!child_def.session_tools_allowed("grep"));
 +}
 diff --git a/crates/codegen/xai-grok-shell/src/agent/handlers/model_switch.rs b/crates/codegen/xai-grok-shell/src/agent/handlers/model_switch.rs
-index 2c36bc9c..08ac1a5c 100644
+index 0de66027..ec2871b0 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/handlers/model_switch.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/handlers/model_switch.rs
 @@ -111,7 +111,12 @@ pub(crate) async fn apply(
@@ -439,10 +436,10 @@ index 2c36bc9c..08ac1a5c 100644
                          session_id = %session_id.0,
                          model_id = %model_id.0,
 diff --git a/crates/codegen/xai-grok-shell/src/agent/models.rs b/crates/codegen/xai-grok-shell/src/agent/models.rs
-index 793563d3..144f5362 100644
+index 840e57b7..65d93d41 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/models.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/models.rs
-@@ -588,6 +588,14 @@ impl ModelsManager {
+@@ -608,6 +608,14 @@ impl ModelsManager {
              .unwrap_or(false)
      }
  
@@ -458,10 +455,10 @@ index 793563d3..144f5362 100644
          &self,
          model_id: &str,
 diff --git a/crates/codegen/xai-grok-shell/src/agent/models/tests.rs b/crates/codegen/xai-grok-shell/src/agent/models/tests.rs
-index b1576349..8470dc50 100644
+index 6b01792f..9f74a405 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/models/tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/models/tests.rs
-@@ -2052,6 +2052,7 @@ fn make_entry_config_with_id(
+@@ -2045,6 +2045,7 @@ fn make_entry_config_with_id(
          supports_reasoning_effort: false,
          reasoning_efforts: Vec::new(),
          supports_backend_search: false,
@@ -470,10 +467,10 @@ index b1576349..8470dc50 100644
          compaction_at_tokens: None,
          show_model_fingerprint: false,
 diff --git a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs
-index 6e6523de..6b8d08e0 100644
+index 3bae866c..f6e5b2b3 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs
-@@ -4476,6 +4476,9 @@ impl MvpAgent {
+@@ -4345,6 +4345,9 @@ impl MvpAgent {
                  sampling_config,
                  origin_client.clone(),
              );
@@ -484,10 +481,10 @@ index 6e6523de..6b8d08e0 100644
              .apply_supported_effort(
                  &mut sampling_config,
 diff --git a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests.rs b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests.rs
-index 0bc3867a..06256bc6 100644
+index 94120880..5a56b25c 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests.rs
-@@ -2744,6 +2744,7 @@ fn find_model_by_id_prefers_key_then_falls_back_to_slug() {
+@@ -2678,6 +2678,7 @@ fn find_model_by_id_prefers_key_then_falls_back_to_slug() {
              supports_reasoning_effort: false,
              reasoning_efforts: Vec::new(),
              supports_backend_search: false,
@@ -496,13 +493,13 @@ index 0bc3867a..06256bc6 100644
              compaction_at_tokens: None,
              show_model_fingerprint: false,
 diff --git a/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs b/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs
-index f307ef14..211a71e8 100644
+index aa8d8e68..c7d84bc1 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs
-@@ -471,6 +471,12 @@ pub(crate) async fn run_shell_child(
-             }
-         }
-     }
+@@ -704,6 +704,12 @@ pub(crate) async fn run_shell_child(
+     let subagent_model_id = effective_sampling_config.model.clone();
+     let auto_compact_threshold_percent =
+         ctx.resolve_auto_compact_threshold_percent(&subagent_model_id);
 +    if let Some(model_tools) = ctx
 +        .models_manager
 +        .model_tools_config(effective_model_id.0.as_ref())
@@ -513,10 +510,10 @@ index f307ef14..211a71e8 100644
      let child_session_id = acp::SessionId::new(subagent_id.clone());
      let override_cwd = select_override_cwd(resume_source.as_ref(), request.cwd.as_deref());
 diff --git a/crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs b/crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs
-index 560d047c..b1945ec8 100644
+index cafbd9e5..9924cb77 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs
-@@ -1848,6 +1848,7 @@ fn test_model_entry(model_id: &str) -> crate::agent::config::ModelEntry {
+@@ -2340,6 +2340,7 @@ fn test_model_entry(model_id: &str) -> crate::agent::config::ModelEntry {
              supports_reasoning_effort: false,
              reasoning_efforts: Vec::new(),
              supports_backend_search: false,
@@ -525,10 +522,10 @@ index 560d047c..b1945ec8 100644
              compaction_at_tokens: None,
              show_model_fingerprint: false,
 diff --git a/crates/codegen/xai-grok-shell/src/remote/client.rs b/crates/codegen/xai-grok-shell/src/remote/client.rs
-index 0ea956e3..ff5b8a91 100644
+index 909bf522..47eca70e 100644
 --- a/crates/codegen/xai-grok-shell/src/remote/client.rs
 +++ b/crates/codegen/xai-grok-shell/src/remote/client.rs
-@@ -820,6 +820,18 @@ pub(crate) fn parse_remote_model_value(
+@@ -817,6 +817,18 @@ pub(crate) fn parse_remote_model_value(
              .or_else(|| meta.and_then(|m| m.get("supportsBackendSearch")))
              .and_then(|v| v.as_bool())
              .unwrap_or(false),
