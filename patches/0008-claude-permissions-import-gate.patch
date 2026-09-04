@@ -1,8 +1,8 @@
 diff --git a/crates/codegen/xai-grok-config-types/src/lib.rs b/crates/codegen/xai-grok-config-types/src/lib.rs
-index ee586610..1e18ac4c 100644
+index 839a322d..ee7e929d 100644
 --- a/crates/codegen/xai-grok-config-types/src/lib.rs
 +++ b/crates/codegen/xai-grok-config-types/src/lib.rs
-@@ -692,6 +692,8 @@ pub struct RemoteSettings {
+@@ -699,6 +699,8 @@ pub struct RemoteSettings {
      #[serde(default)]
      pub claude_sessions_enabled: Option<bool>,
      #[serde(default)]
@@ -12,10 +12,10 @@ index ee586610..1e18ac4c 100644
      /// When `Some(true)`, enable goal mode remotely.
      /// When `Some(false)`, force-disable it (kill-switch).
 diff --git a/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md b/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
-index 2cb3f61e..8ed42e2d 100644
+index b7f55b93..5efca61a 100644
 --- a/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
 +++ b/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
-@@ -399,6 +399,7 @@ agents = true     # scan ~/.claude/ and <dir>/.claude/CLAUDE*.md
+@@ -402,6 +402,7 @@ agents = true     # scan ~/.claude/ and <dir>/.claude/CLAUDE*.md
  mcps = true       # scan ~/.claude.json for MCP servers
  hooks = true      # scan ~/.claude/settings.json for hooks
  sessions = true   # staged; no scanner consumer yet
@@ -24,7 +24,7 @@ index 2cb3f61e..8ed42e2d 100644
  [compat.codex]
  sessions = true   # staged; no scanner consumer yet
 diff --git a/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md b/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md
-index 6b7f4b76..4143e572 100644
+index 76c10e9e..81d24a2f 100644
 --- a/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md
 +++ b/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md
 @@ -117,6 +117,7 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
@@ -36,10 +36,10 @@ index 6b7f4b76..4143e572 100644
  | `compat.claude.skills` | `boolean` | `yes` | `user` | Scan Claude skills. Also GROK_CLAUDE_SKILLS_ENABLED. |
  | `compat.codex.hooks` | `boolean` | `yes` | `user` | Scan Codex hooks when present. |
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
-index da6bee6b..b35ddc72 100644
+index a9d6e629..ce831512 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
-@@ -719,6 +719,7 @@ fn remote_compat_value(
+@@ -746,6 +746,7 @@ fn remote_compat_value(
          CompatRemoteKey::ClaudeMcps => remote.claude_mcps_enabled,
          CompatRemoteKey::ClaudeHooks => remote.claude_hooks_enabled,
          CompatRemoteKey::ClaudeSessions => remote.claude_sessions_enabled,
@@ -48,10 +48,10 @@ index da6bee6b..b35ddc72 100644
      }
  }
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
-index 1098dc7a..b4a93ced 100644
+index da42654b..09cca5c0 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
-@@ -5995,6 +5995,7 @@ fn clear_runtime_env_vars() {
+@@ -6445,6 +6445,7 @@ fn clear_runtime_env_vars() {
          std::env::remove_var("GROK_CLAUDE_SKILLS_ENABLED");
          std::env::remove_var("GROK_CLAUDE_RULES_ENABLED");
          std::env::remove_var("GROK_CLAUDE_AGENTS_ENABLED");
@@ -59,7 +59,7 @@ index 1098dc7a..b4a93ced 100644
      }
  }
  fn clear_managed_mcp_env_vars() {
-@@ -6040,6 +6041,7 @@ fn remote_settings_with(key: CompatRemoteKey, value: bool) -> crate::util::confi
+@@ -6490,6 +6491,7 @@ fn remote_settings_with(key: CompatRemoteKey, value: bool) -> crate::util::confi
          CompatRemoteKey::ClaudeMcps => remote.claude_mcps_enabled = Some(value),
          CompatRemoteKey::ClaudeHooks => remote.claude_hooks_enabled = Some(value),
          CompatRemoteKey::ClaudeSessions => remote.claude_sessions_enabled = Some(value),
@@ -68,7 +68,7 @@ index 1098dc7a..b4a93ced 100644
      }
      remote
 diff --git a/crates/codegen/xai-grok-shell/src/claude_import.rs b/crates/codegen/xai-grok-shell/src/claude_import.rs
-index d29eed03..d0956057 100644
+index c3aac499..0e766f21 100644
 --- a/crates/codegen/xai-grok-shell/src/claude_import.rs
 +++ b/crates/codegen/xai-grok-shell/src/claude_import.rs
 @@ -2046,6 +2046,7 @@ extra_rule_dirs = ["/c/rules"]
@@ -77,8 +77,8 @@ index d29eed03..d0956057 100644
                  true,
 +                true,
              )
-             .await;
-         if let Some(r) = resolved {
+             .await
+             .resolved;
 diff --git a/crates/codegen/xai-grok-shell/src/inspect/compat.rs b/crates/codegen/xai-grok-shell/src/inspect/compat.rs
 index 000132a3..c5c04f2b 100644
 --- a/crates/codegen/xai-grok-shell/src/inspect/compat.rs
@@ -93,29 +93,30 @@ index 000132a3..c5c04f2b 100644
              report
                  .cells
 diff --git a/crates/codegen/xai-grok-shell/src/inspect/mod.rs b/crates/codegen/xai-grok-shell/src/inspect/mod.rs
-index 11ca7ce9..234ffc71 100644
+index 4c8d9150..e1d6a5ec 100644
 --- a/crates/codegen/xai-grok-shell/src/inspect/mod.rs
 +++ b/crates/codegen/xai-grok-shell/src/inspect/mod.rs
-@@ -622,6 +622,7 @@ async fn list_permissions(cwd: &Path, project_trusted: bool) -> PermissionsRepor
-         cwd,
-         project_trusted,
-         yolo_lock.as_ref(),
-+        true,
-     )
-     .await
-     {
+@@ -623,7 +623,7 @@ async fn list_permissions(cwd: &Path, project_trusted: bool) -> PermissionsRepor
+     let resolution::ProvenanceResolution {
+         yolo_lock,
+         resolved,
+-    } = resolution::resolve_permissions_with_provenance(cwd, project_trusted).await;
++    } = resolution::resolve_permissions_with_provenance(cwd, project_trusted, true).await;
+     let (sources, loaded, skipped) = match resolved {
+         Some(resolved) => {
+             let mut sources: Vec<String> = resolved.sources.iter().map(|s| s.to_string()).collect();
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-index b792faa6..79ce3153 100644
+index 79376ae7..4d17506e 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-@@ -335,6 +335,7 @@ pub(crate) async fn spawn_session_actor(
-             xai_grok_workspace::permission::resolution::resolve_permission_config_with_fallback(
+@@ -342,6 +342,7 @@ pub(crate) async fn spawn_session_actor(
                  tool_context.cwd.as_path(),
                  project_trusted,
+                 yolo_lock.as_ref(),
 +                compat.claude.permissions,
              )
              .await;
-         let yolo_pin = xai_grok_workspace::permission::resolution::yolo_disabled_by_policy();
+         let (cli_permission_rules, dropped_catchalls) =
 diff --git a/crates/codegen/xai-grok-tools/src/types/compat.rs b/crates/codegen/xai-grok-tools/src/types/compat.rs
 index 76422380..b5e06c17 100644
 --- a/crates/codegen/xai-grok-tools/src/types/compat.rs
@@ -254,20 +255,20 @@ index 76422380..b5e06c17 100644
          assert_eq!(parsed.codex, VendorCompatToml::default());
      }
 diff --git a/crates/codegen/xai-grok-workspace/src/discovery.rs b/crates/codegen/xai-grok-workspace/src/discovery.rs
-index 50c80f14..ace941d2 100644
+index 34501d4f..3f92a6b0 100644
 --- a/crates/codegen/xai-grok-workspace/src/discovery.rs
 +++ b/crates/codegen/xai-grok-workspace/src/discovery.rs
-@@ -188,7 +188,7 @@ pub async fn load_permissions(root_cwd: &Path, project_trusted: bool) -> Value {
+@@ -187,7 +187,7 @@ fn toml_to_json(v: &toml::Value) -> Value {
+ pub async fn load_permissions(root_cwd: &Path, project_trusted: bool) -> Value {
      use crate::permission::resolution;
  
-     let Some(resolved) =
--        resolution::resolve_permissions_with_provenance(root_cwd, project_trusted).await
-+        resolution::resolve_permissions_with_provenance(root_cwd, project_trusted, true).await
+-    let Some(resolved) = resolution::resolve_permissions_with_provenance(root_cwd, project_trusted)
++    let Some(resolved) = resolution::resolve_permissions_with_provenance(root_cwd, project_trusted, true)
+         .await
+         .resolved
      else {
-         return Value::Null;
-     };
 diff --git a/crates/codegen/xai-grok-workspace/src/permission/resolution.rs b/crates/codegen/xai-grok-workspace/src/permission/resolution.rs
-index 2f8c615e..913e9047 100644
+index 96acb4b0..41905d36 100644
 --- a/crates/codegen/xai-grok-workspace/src/permission/resolution.rs
 +++ b/crates/codegen/xai-grok-workspace/src/permission/resolution.rs
 @@ -279,8 +279,9 @@ fn managed_config_permissions(
@@ -279,9 +280,22 @@ index 2f8c615e..913e9047 100644
 -    resolve_permissions_with_provenance(cwd, project_trusted)
 +    resolve_permissions_with_provenance(cwd, project_trusted, claude_permissions)
          .await
+         .resolved
          .map(|r| r.config)
- }
-@@ -445,10 +446,16 @@ struct ResolveInputs<'a> {
+@@ -293,10 +294,11 @@ pub async fn resolve_permission_config_with_fallback_pinned(
+     cwd: &Path,
+     project_trusted: bool,
+     yolo_lock: Option<&YoloPolicyLock>,
++    claude_permissions: bool,
+ ) -> Option<PermissionConfig> {
+     resolve_permissions_with_provenance_inner(
+         cwd,
+-        ResolveInputs::live(project_trusted, yolo_lock.cloned()),
++        ResolveInputs::live(project_trusted, yolo_lock.cloned(), claude_permissions),
+     )
+     .await
+     .map(|r| r.config)
+@@ -474,12 +476,18 @@ struct ResolveInputs<'a> {
      /// Folder-trust verdict for `cwd`.
      /// When false, project-tier `.claude/settings.json` / `.grok/config.toml` permission rules are dropped (global/user/admin tiers still load).
      project_trusted: bool,
@@ -290,16 +304,18 @@ index 2f8c615e..913e9047 100644
  }
  
  impl ResolveInputs<'static> {
--    fn live(project_trusted: bool, policy_block: Option<&'static str>) -> Self {
+     /// Production inputs; the caller supplies the always-approve pin so one
+     /// read serves the whole flow.
+-    fn live(project_trusted: bool, yolo_lock: Option<YoloPolicyLock>) -> Self {
 +    fn live(
 +        project_trusted: bool,
-+        policy_block: Option<&'static str>,
++        yolo_lock: Option<YoloPolicyLock>,
 +        claude_permissions: bool,
 +    ) -> Self {
          Self {
-             policy_block,
-             managed: managed_settings(),
-@@ -456,6 +463,7 @@ impl ResolveInputs<'static> {
+             yolo_lock,
+             // The engine view, not the compat shim shadowing `resolution::`.
+@@ -488,6 +496,7 @@ impl ResolveInputs<'static> {
                  &xai_grok_config::managed_config_layers(),
              ),
              project_trusted,
@@ -307,50 +323,29 @@ index 2f8c615e..913e9047 100644
          }
      }
  }
-@@ -481,9 +489,16 @@ impl ResolveInputs<'static> {
+@@ -515,11 +524,12 @@ impl ResolveInputs<'static> {
  pub async fn resolve_permissions_with_provenance(
      cwd: &Path,
      project_trusted: bool,
 +    claude_permissions: bool,
- ) -> Option<ResolvedPermissions> {
-     let lock = yolo_policy_lock();
--    resolve_permissions_with_provenance_pinned(cwd, project_trusted, lock.as_ref()).await
-+    resolve_permissions_with_provenance_pinned(
-+        cwd,
-+        project_trusted,
-+        lock.as_ref(),
-+        claude_permissions,
-+    )
-+    .await
- }
- 
- /// [`resolve_permissions_with_provenance`] with a caller-supplied pin, so the `grok inspect` report reads the pin once and cannot contradict itself.
-@@ -491,10 +506,15 @@ pub async fn resolve_permissions_with_provenance_pinned(
-     cwd: &Path,
-     project_trusted: bool,
-     yolo_lock: Option<&YoloPolicyLock>,
-+    claude_permissions: bool,
- ) -> Option<ResolvedPermissions> {
-     resolve_permissions_with_provenance_inner(
+ ) -> ProvenanceResolution {
+     let yolo_lock = yolo_policy_lock();
+     let resolved = resolve_permissions_with_provenance_inner(
          cwd,
--        ResolveInputs::live(project_trusted, yolo_lock.map(|lock| lock.reason)),
-+        ResolveInputs::live(
-+            project_trusted,
-+            yolo_lock.map(|lock| lock.reason),
-+            claude_permissions,
-+        ),
+-        ResolveInputs::live(project_trusted, yolo_lock.clone()),
++        ResolveInputs::live(project_trusted, yolo_lock.clone(), claude_permissions),
      )
-     .await
- }
-@@ -508,6 +528,7 @@ async fn resolve_permissions_with_provenance_inner(
+     .await;
+     ProvenanceResolution {
+@@ -537,6 +547,7 @@ async fn resolve_permissions_with_provenance_inner(
          managed,
          managed_config_rules,
          project_trusted,
 +        claude_permissions,
      } = inputs;
+     let policy_block = yolo_lock.as_ref().map(|lock| lock.reason.message());
      let config_toml_rules = load_config_toml_permissions(cwd, project_trusted);
- 
-@@ -520,8 +541,9 @@ async fn resolve_permissions_with_provenance_inner(
+@@ -550,8 +561,9 @@ async fn resolve_permissions_with_provenance_inner(
      };
  
      // Phase 2 cutoff: skip the .claude/ fallback once the user has imported.
@@ -363,10 +358,10 @@ index 2f8c615e..913e9047 100644
          None
      } else {
 diff --git a/crates/codegen/xai-grok-workspace/src/permission/resolution_tests.rs b/crates/codegen/xai-grok-workspace/src/permission/resolution_tests.rs
-index c20d9d3e..17a087fb 100644
+index 9383db99..2fd203ae 100644
 --- a/crates/codegen/xai-grok-workspace/src/permission/resolution_tests.rs
 +++ b/crates/codegen/xai-grok-workspace/src/permission/resolution_tests.rs
-@@ -2298,6 +2298,7 @@ fn inputs_trusted(
+@@ -1216,6 +1216,7 @@ fn inputs_trusted(
          managed: DEFAULT_MANAGED.get_or_init(ManagedSettings::default),
          managed_config_rules: Vec::new(),
          project_trusted,
@@ -374,7 +369,7 @@ index c20d9d3e..17a087fb 100644
      }
  }
  
-@@ -2311,6 +2312,7 @@ fn inputs_with_managed<'a>(
+@@ -1229,6 +1230,7 @@ fn inputs_with_managed<'a>(
          managed,
          managed_config_rules: Vec::new(),
          project_trusted: true,
@@ -382,7 +377,25 @@ index c20d9d3e..17a087fb 100644
      }
  }
  
-@@ -2876,7 +2878,7 @@ async fn dont_ask_sets_prompt_policy_through_public_api() {
+@@ -1844,7 +1846,7 @@ async fn fallback_pinned_lock_param_controls_catchall_drop() {
+     )
+     .unwrap();
+ 
+-    let cfg = resolve_permission_config_with_fallback_pinned(tmp.path(), true, None)
++    let cfg = resolve_permission_config_with_fallback_pinned(tmp.path(), true, None, true)
+         .await
+         .expect("rules resolve");
+     assert!(
+@@ -1853,7 +1855,7 @@ async fn fallback_pinned_lock_param_controls_catchall_drop() {
+     );
+ 
+     let lock = pin_lock();
+-    let cfg = resolve_permission_config_with_fallback_pinned(tmp.path(), true, Some(&lock))
++    let cfg = resolve_permission_config_with_fallback_pinned(tmp.path(), true, Some(&lock), true)
+         .await
+         .expect("skip-only resolution survives");
+     assert!(
+@@ -1873,7 +1875,7 @@ async fn dont_ask_sets_prompt_policy_through_public_api() {
      )
      .unwrap();
  
@@ -391,7 +404,7 @@ index c20d9d3e..17a087fb 100644
          .await
          .unwrap();
      assert_eq!(cfg.prompt_policy, PromptPolicy::Deny);
-@@ -2895,7 +2897,7 @@ async fn dont_ask_nested_under_permissions_sets_prompt_policy() {
+@@ -1892,7 +1894,7 @@ async fn dont_ask_nested_under_permissions_sets_prompt_policy() {
      )
      .unwrap();
  
@@ -400,7 +413,7 @@ index c20d9d3e..17a087fb 100644
          .await
          .unwrap();
      assert_eq!(
-@@ -2916,7 +2918,7 @@ async fn auto_nested_under_permissions_sets_prompt_policy() {
+@@ -1913,7 +1915,7 @@ async fn auto_nested_under_permissions_sets_prompt_policy() {
      )
      .unwrap();
  
@@ -409,7 +422,7 @@ index c20d9d3e..17a087fb 100644
          .await
          .unwrap();
      assert_eq!(
-@@ -3200,7 +3202,7 @@ async fn nested_dont_ask_with_allow_rules_preserves_allow_and_deny_policy() {
+@@ -2177,7 +2179,7 @@ async fn nested_dont_ask_with_allow_rules_preserves_allow_and_deny_policy() {
      )
      .unwrap();
  
@@ -418,7 +431,7 @@ index c20d9d3e..17a087fb 100644
          .await
          .unwrap();
      assert_eq!(cfg.prompt_policy, PromptPolicy::Deny);
-@@ -3654,3 +3656,63 @@ fn explicit_default_mode_blocks_permission_mode_hint() {
+@@ -2631,3 +2633,63 @@ fn explicit_default_mode_blocks_permission_mode_hint() {
          );
      }
  }

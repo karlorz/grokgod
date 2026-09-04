@@ -17,7 +17,7 @@ This directory contains upstream source patches applied to `grok-build` for `gro
 
 ## Target Commit
 
-- Base commit: `grok-build` commit `bb7f39d5` (`bb7f39d5858cbf5e00de639367f59debbdcb0138`) — origin/main 1.0.13; 0001-0010 rebased onto it 2026-09-01.
+- Base commit: `grok-build` commit `72a61251` (`72a61251fcffb464bcc687aeb5a998e5a98ec0c9`) — origin/main 1.0.16; 0004/0006/0008/0010 rebased onto it 2026-09-04; 0001-0003/0005/0007/0009 unchanged and verified applying.
 
 ## Verification
 
@@ -31,9 +31,9 @@ git -C <grok-build-checkout> apply --check patches/0001-normalize-plugin-skill-j
 
 To regenerate or update a patch:
 
-1. Create a worktree of `grok-build` at base commit `bb7f39d5`:
+1. Create a worktree of `grok-build` at base commit `72a61251`:
    ```bash
-   git -C /path/to/grok-build worktree add /tmp/grokbuild-patch-wt bb7f39d5
+   git -C /path/to/grok-build worktree add /tmp/grokbuild-patch-wt 72a61251
    ```
 2. Apply changes and create the patch:
    ```bash

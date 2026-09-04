@@ -1,8 +1,8 @@
 diff --git a/crates/codegen/xai-grok-sampler/src/client.rs b/crates/codegen/xai-grok-sampler/src/client.rs
-index 9d050797..a238b16e 100644
+index 475ebf7c..4004f14d 100644
 --- a/crates/codegen/xai-grok-sampler/src/client.rs
 +++ b/crates/codegen/xai-grok-sampler/src/client.rs
-@@ -219,6 +219,112 @@ fn deserialize_response_event(data: &str) -> Result<rs::ResponseStreamEvent> {
+@@ -219,6 +219,112 @@ pub(crate) fn deserialize_response_event(data: &str) -> Result<rs::ResponseStrea
      Ok(event)
  }
  
@@ -115,7 +115,7 @@ index 9d050797..a238b16e 100644
  /// On `response.completed` / `response.incomplete`, rewrite `usage.total_tokens` to the live context length from `context_details`.
  /// `total_tokens` drives the CLI's `/context` bar, the auto-compact threshold, and `meta.totalTokens` on persisted sessions.
  /// Under server-side loops (`web_search`, `x_search`) the cumulative total inflates; `context_details` holds the final turn's real context.
-@@ -1187,16 +1293,7 @@ impl SamplingClient {
+@@ -1211,16 +1317,7 @@ impl SamplingClient {
                          if let Some(stream_error) = try_parse_stream_error(data) {
                              Some(Err(stream_error))
                          } else {
@@ -133,7 +133,7 @@ index 9d050797..a238b16e 100644
                          }
                      }
                      Err(e) => {
-@@ -3323,4 +3420,91 @@ mod tests {
+@@ -3378,4 +3475,91 @@ mod tests {
          assert_eq!(tools.len(), 1);
          assert!(matches!(tools[0], rs::Tool::WebSearch(_)));
      }

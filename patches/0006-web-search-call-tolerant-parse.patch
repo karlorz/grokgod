@@ -1,20 +1,20 @@
 diff --git a/crates/codegen/xai-grok-sampler/src/client.rs b/crates/codegen/xai-grok-sampler/src/client.rs
-index a482a9b0..9d050797 100644
+index 7ea06c58..475ebf7c 100644
 --- a/crates/codegen/xai-grok-sampler/src/client.rs
 +++ b/crates/codegen/xai-grok-sampler/src/client.rs
-@@ -17,7 +17,7 @@ use indexmap::IndexMap;
+@@ -20,7 +20,7 @@ use indexmap::IndexMap;
  use reqwest::header::{
      ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, USER_AGENT,
  };
 -use serde::Serialize;
 +use serde::{Deserialize, Serialize};
+ use tracing::Instrument;
  
  use xai_grok_sampling_types::error::{
-     parse_error_code, try_parse_stream_error, user_facing_api_error_message,
-@@ -85,6 +85,26 @@ impl GrokRequestHeaders<'_> {
- /// Our inference backends only emit integer seconds (never HTTP-date), so we only handle that form.
- /// HTTP-dates silently return `None` and the caller falls back to exponential backoff.
- /// Capped at 120s to prevent absurdly long sleeps from a misbehaving upstream.
+@@ -87,12 +87,32 @@ impl GrokRequestHeaders<'_> {
+     }
+ }
+ 
 +/// Try injecting a default action into search call items missing `action`.
 +///
 +/// Handles `web_search_call` and `x_search_call` items where upstream
@@ -35,10 +35,8 @@ index a482a9b0..9d050797 100644
 +    }
 +}
 +
- /// Deserialize a Responses API SSE event, with a fallback for xAI-specific tool types (e.g., `x_search`) that `async_openai` can't parse.
- /// The API echoes the request's `tools` array in `ResponseCreated` and `ResponseCompleted` events.
- /// If we sent `{"type": "x_search"}`, `rs::Tool` deserialization fails, so we strip unrecognized tools from the raw JSON and retry.
-@@ -92,7 +112,7 @@ fn deserialize_response_event(data: &str) -> Result<rs::ResponseStreamEvent> {
+ /// Deserialize a Responses SSE event, stripping unknown tools and rewriting terminal `total_tokens` from `context_details`.
+ pub(crate) fn deserialize_response_event(data: &str) -> Result<rs::ResponseStreamEvent> {
      let mut event = match serde_json::from_str::<rs::ResponseStreamEvent>(data) {
          Ok(event) => event,
          Err(first_err) => {
@@ -47,7 +45,7 @@ index a482a9b0..9d050797 100644
              if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(data) {
                  // Strip tools that async_openai's rs::Tool can't deserialize (e.g., xAI-specific "x_search")
                  // Instead of maintaining a hardcoded allowlist, try deserializing each tool entry; if it fails, drop it
-@@ -102,10 +122,90 @@ fn deserialize_response_event(data: &str) -> Result<rs::ResponseStreamEvent> {
+@@ -102,10 +122,90 @@ pub(crate) fn deserialize_response_event(data: &str) -> Result<rs::ResponseStrea
                  {
                      tools.retain(|t| serde_json::from_value::<rs::Tool>(t.clone()).is_ok());
                  }
@@ -139,7 +137,7 @@ index a482a9b0..9d050797 100644
              }
              tracing::error!(
                  error = %first_err,
-@@ -3056,4 +3156,171 @@ mod tests {
+@@ -3111,4 +3211,171 @@ mod tests {
              rs::ResponseStreamEvent::ResponseOutputTextDelta(_)
          ));
      }
