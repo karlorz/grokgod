@@ -39,6 +39,8 @@ grep -q "ToggleSelectedBuiltinWorkflow" "$PATCH_0004" || { echo "FAIL: Missing /
 grep -q "x.ai/workflows/set-builtin-deep-research" "$PATCH_0004" || { echo "FAIL: Missing live slash ACP in 0004"; exit 1; }
 grep -q 'label: "Built-in deep-research workflow"' "$PATCH_0004" && { echo "FAIL: 0004 must not add a /settings catalog row"; exit 1; }
 grep -q "workflows.builtins" "$PATCH_0004" || { echo "FAIL: Missing workflows.builtins in 0004"; exit 1; }
+grep -q "send_available_commands_update(AdvertiseTrigger::WorkflowsChanged)" "$PATCH_0004" || { echo "FAIL: SetBuiltinDeepResearch must advertise with WorkflowsChanged"; exit 1; }
+grep -q 'send_available_commands_update().await' "$PATCH_0004" && { echo "FAIL: 0004 must not call send_available_commands_update with zero args"; exit 1; }
 echo "PASS: Patch 0004 touches expected files"
 
 TMP_ROOT="$(mktemp -d)"

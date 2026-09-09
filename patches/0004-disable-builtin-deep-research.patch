@@ -1373,7 +1373,7 @@ diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop
 index ab30a524..fad2936b 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs
-@@ -1835,6 +1835,12 @@ pub(super) async fn run_session(
+@@ -1835,6 +1835,14 @@ pub(super) async fn run_session(
                          SessionCommand::AdvertiseCommands { trigger } => {
                              session.send_available_commands_update(trigger).await;
                          }
@@ -1381,7 +1381,9 @@ index ab30a524..fad2936b 100644
 +                            session
 +                                .builtin_deep_research_enabled
 +                                .store(enabled, std::sync::atomic::Ordering::Relaxed);
-+                            session.send_available_commands_update().await;
++                            session
++                                .send_available_commands_update(AdvertiseTrigger::WorkflowsChanged)
++                                .await;
 +                        }
                          SessionCommand::GetWorkflowCatalogState { respond_to } => {
                              let tool_names = session.registered_tool_names().await;
