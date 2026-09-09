@@ -293,7 +293,10 @@ echo "EXISTING_GOOD_BINARY" > "$FAKE_GROKGOD_HOME/bin/grok"
 chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
 printf "SHA=deadbeefdeadbeef\nPATCHSET=test\nVERSION=deadbeefdeadbeef\nMODE=source\n" > "$FAKE_GROKGOD_HOME/.source-version"
 
-echo "leftover-dirt" >> "$GB_WORKTREE/Cargo.toml"
+# Dirt a path every grokgod patch fixture tracks. Cargo.toml is not in
+# patches/*.patch, so the CI curl fixture never adds it; appending there
+# creates an untracked file that `git diff --quiet` ignores.
+echo "leftover-dirt" >> "$GB_WORKTREE/crates/codegen/xai-grok-agent/src/plugins/manifest.rs"
 
 set +e
 LEFTOVER_OUT="$(
