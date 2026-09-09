@@ -46,6 +46,88 @@ log_err() {
   printf "  \033[0;31m✗\033[0m %s\n" "$1" >&2
 }
 
+COMPAT_ISSUE_URL="https://github.com/karlorz/grokgod/issues?q=is%3Aopen+label%3Acompat-broken"
+COMPAT_ISSUE_TITLE="compat-daily: source patches do not apply to grok-build origin/main"
+
+short_sha() {
+  printf '%s' "${1:-}" | cut -c1-8
+}
+
+local_pager_version() {
+  _toml="${GROK_BUILD_SRC:-}/crates/codegen/xai-grok-pager-bin/Cargo.toml"
+  if [ -f "$_toml" ]; then
+    grep '^version' "$_toml" | head -n 1 | sed 's/^version *= *"//;s/".*//'
+  fi
+}
+
+stamp_sha() {
+  if [ -f "$GROKGOD_HOME/.source-version" ]; then
+    grep '^SHA=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true
+  fi
+}
+
+live_grok_version_line() {
+  if [ -x "$GROKGOD_HOME/bin/grok" ]; then
+    _v="$("$GROKGOD_HOME/bin/grok" --version 2>/dev/null | head -n 1 || true)"
+    case "$_v" in
+      grok\ *) printf '%s' "$_v" ;;
+    esac
+  fi
+}
+
+log_live_untouched() {
+  _sha="$(stamp_sha)"
+  _short="$(short_sha "$_sha")"
+  _ver="$(live_grok_version_line)"
+  # grok --version already includes its SHA, e.g. "grok 1.0.16 (72a61251fcff)".
+  if [ -n "$_ver" ]; then
+    log_err "Live binary untouched: ${_ver} in $GROKGOD_HOME/bin/grok."
+  elif [ -n "$_short" ]; then
+    log_err "Live binary untouched: ${_short} in $GROKGOD_HOME/bin/grok."
+  else
+    log_err "Live binary untouched."
+  fi
+}
+
+log_compat_abort() {
+  _pname="$1"
+  _how="$2"
+  _tshort="$(short_sha "${TARGET_SHA:-}")"
+  _tver="$(local_pager_version)"
+  log_err "Compatibility: persist patch ${_pname}"
+  if [ -n "$_tver" ] && [ -n "$_tshort" ]; then
+    log_err "${_how} grok-build ${_tshort} (${_tver})."
+  elif [ -n "$_tshort" ]; then
+    log_err "${_how} grok-build ${_tshort}."
+  else
+    log_err "${_how} grok-build."
+  fi
+  log_err "This is grokgod/upstream drift, not a grok-build installer failure."
+  log_err "Patches after ${_pname} were not tested (first failure stops the run)."
+  log_live_untouched
+  log_err "CI tracker: ${COMPAT_ISSUE_URL}"
+  log_err "  title: ${COMPAT_ISSUE_TITLE}"
+  if [ -n "$_tshort" ]; then
+    log_err "Next: rebase that patch against ${_tshort}. A second grok update will not help until it applies."
+  else
+    log_err "Next: rebase that patch. A second grok update will not help until it applies."
+  fi
+}
+
+log_leftover_abort() {
+  log_err "$1"
+  log_err "This is usually a previous aborted update that applied some patches, then failed."
+  log_err "This is NOT the CI compat-broken miss."
+  log_live_untouched
+  log_err "Next: inspect and resolve git status in $GROK_BUILD_SRC (operator-owned), then retry grok update."
+}
+
+log_build_abort() {
+  log_err "Build failure after patches applied; not a persist-patch compatibility miss."
+  log_err "Cargo build failed. Aborting (fail-closed)."
+  log_live_untouched
+}
+
 log_step() {
   printf "\033[1m==> %s\033[0m\n" "$1"
 }
@@ -728,12 +810,11 @@ if [ "$MODE" = "source" ]; then
           }
         done
         if ! git -C "$GROK_BUILD_SRC" diff --quiet 2>/dev/null; then
-          log_err "Working tree in $GROK_BUILD_SRC is still dirty after reversing patches. Aborting (fail-closed)."
+          log_leftover_abort "Local leftover: working tree in $GROK_BUILD_SRC is still dirty after reversing patches."
           exit 1
         fi
       else
-        log_err "Working tree in $GROK_BUILD_SRC is dirty and does not match clean grokgod patches."
-        log_err "Aborting (fail-closed); please resolve git status in $GROK_BUILD_SRC."
+        log_leftover_abort "Local leftover: working tree in $GROK_BUILD_SRC is dirty and is not a clean grokgod patch stack."
         exit 1
       fi
     fi
@@ -752,13 +833,12 @@ if [ "$MODE" = "source" ]; then
       for p in $patch_files; do
         log_info "Testing patch: $(basename "$p")"
         if ! git -C "$GROK_BUILD_SRC" apply --check "$p"; then
-          log_err "Patch check failed for $(basename "$p"). Aborting (fail-closed)."
-          log_err "Existing binary in $GROKGOD_HOME/bin/grok is untouched."
+          log_compat_abort "$(basename "$p")" "does not apply to"
           exit 1
         fi
         log_info "Applying patch: $(basename "$p")"
         if ! git -C "$GROK_BUILD_SRC" apply "$p"; then
-          log_err "Failed to apply patch $(basename "$p"). Aborting (fail-closed)."
+          log_compat_abort "$(basename "$p")" "failed to apply to"
           exit 1
         fi
       done
@@ -772,7 +852,7 @@ if [ "$MODE" = "source" ]; then
       # Incremental off to prevent accumulating ~/.grokgod/target/release/incremental standing state
       CARGO_TARGET_DIR="$CARGO_TARGET_DIR" CARGO_INCREMENTAL=0 cargo build --release -p xai-grok-pager-bin
     ) || {
-      log_err "Cargo build failed. Aborting (fail-closed)."
+      log_build_abort
       exit 1
     }
 

@@ -264,7 +264,67 @@ EXISTING_CONTENT="$(cat "$FAKE_GROKGOD_HOME/bin/grok")"
 if [ "$EXISTING_CONTENT" != "EXISTING_GOOD_BINARY" ]; then
   echo "FAIL: Pre-existing binary was modified!"; exit 1
 fi
+echo "$FAIL_OUT" | grep -q "Compatibility: persist patch 0001-corrupt.patch" || {
+  echo "FAIL: Expected Compatibility abort class ($FAIL_OUT)"; exit 1
+}
+echo "$FAIL_OUT" | grep -q "CI tracker: https://github.com/karlorz/grokgod/issues?q=is%3Aopen+label%3Acompat-broken" || {
+  echo "FAIL: Expected static compat-broken tracker URL ($FAIL_OUT)"; exit 1
+}
+echo "$FAIL_OUT" | grep -q "title: compat-daily: source patches do not apply to grok-build origin/main" || {
+  echo "FAIL: Expected stable compat-daily issue title ($FAIL_OUT)"; exit 1
+}
+echo "$FAIL_OUT" | grep -q "Live binary untouched" || {
+  echo "FAIL: Expected live-binary-untouched line ($FAIL_OUT)"; exit 1
+}
+echo "$FAIL_OUT" | grep -q "Local leftover" && {
+  echo "FAIL: Compatibility abort must not be labeled leftover ($FAIL_OUT)"; exit 1
+}
 echo "PASS: Test (c) - Fail-closed on corrupt patch"
+
+# ─────────────────────────────────────────────────────────
+# Test (c2): Non-patch dirty tree is leftover, not compatibility
+# ─────────────────────────────────────────────────────────
+echo "Test (c2): Leftover dirty tree that is not a grokgod patch stack"
+setup_sandbox "test_c2"
+reset_worktree
+
+mkdir -p "$FAKE_GROKGOD_HOME/bin"
+echo "EXISTING_GOOD_BINARY" > "$FAKE_GROKGOD_HOME/bin/grok"
+chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
+printf "SHA=deadbeefdeadbeef\nPATCHSET=test\nVERSION=deadbeefdeadbeef\nMODE=source\n" > "$FAKE_GROKGOD_HOME/.source-version"
+
+echo "leftover-dirt" >> "$GB_WORKTREE/Cargo.toml"
+
+set +e
+LEFTOVER_OUT="$(
+  PATH="$FAKE_BIN_SHADOW:$PATH" \
+  HOME="$FAKE_HOME" \
+  GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+  GROK_BUILD_SRC="$GB_WORKTREE" \
+  BIN_DIR="$FAKE_BIN_DIR" \
+  CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+  sh "$INSTALL_SCRIPT" --from-source --no-upgrade 2>&1
+)"
+LEFTOVER_STATUS=$?
+set -eu
+
+if [ "$LEFTOVER_STATUS" -eq 0 ]; then
+  echo "FAIL: Expected leftover dirty-tree abort, but exited 0"; exit 1
+fi
+echo "$LEFTOVER_OUT" | grep -q "Local leftover:" || {
+  echo "FAIL: Expected Local leftover class ($LEFTOVER_OUT)"; exit 1
+}
+echo "$LEFTOVER_OUT" | grep -q "NOT the CI compat-broken miss" || {
+  echo "FAIL: Expected leftover-is-not-CI line ($LEFTOVER_OUT)"; exit 1
+}
+echo "$LEFTOVER_OUT" | grep -q "Compatibility:" && {
+  echo "FAIL: Leftover abort must not be labeled Compatibility ($LEFTOVER_OUT)"; exit 1
+}
+EXISTING_CONTENT="$(cat "$FAKE_GROKGOD_HOME/bin/grok")"
+if [ "$EXISTING_CONTENT" != "EXISTING_GOOD_BINARY" ]; then
+  echo "FAIL: Pre-existing binary was modified on leftover abort"; exit 1
+fi
+echo "PASS: Test (c2) - Leftover dirty tree is not compatibility"
 
 # ─────────────────────────────────────────────────────────
 # Test (d): --no-upgrade fast path
