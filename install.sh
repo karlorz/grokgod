@@ -8,7 +8,7 @@ GROKGOD_REPO="${GROKGOD_REPO:-https://github.com/karlorz/grokgod}"
 GROKGOD_VERSION="${GROKGOD_VERSION:-}"
 
 # Base commit that source patches were authored against (mirrors patches/README.md)
-PINNED_BASE_SHA=bb7f39d5858cbf5e00de639367f59debbdcb0138
+PINNED_BASE_SHA=75810042ca2762aa0b0fa17864f3f68823ccbea5
 
 GROKGOD_HOME="${GROKGOD_HOME:-$HOME/.grokgod}"
 GROK_HOME="${GROK_HOME:-$HOME/.grok}"
@@ -79,7 +79,7 @@ log_live_untouched() {
   _sha="$(stamp_sha)"
   _short="$(short_sha "$_sha")"
   _ver="$(live_grok_version_line)"
-  # grok --version already includes its SHA, e.g. "grok 1.0.16 (72a61251fcff)".
+  # grok --version already includes its SHA, e.g. "grok 1.0.24 (75810042ca27)".
   if [ -n "$_ver" ]; then
     log_err "Live binary untouched: ${_ver} in $GROKGOD_HOME/bin/grok."
   elif [ -n "$_short" ]; then

@@ -1,8 +1,8 @@
 diff --git a/crates/codegen/xai-grok-config-types/src/lib.rs b/crates/codegen/xai-grok-config-types/src/lib.rs
-index 393a78d4..5e591957 100644
+index d6047d31..9ebf1bd6 100644
 --- a/crates/codegen/xai-grok-config-types/src/lib.rs
 +++ b/crates/codegen/xai-grok-config-types/src/lib.rs
-@@ -26,6 +26,45 @@ pub struct CampaignOverride {
+@@ -30,6 +30,45 @@ pub struct CampaignOverride {
      #[serde(flatten, default)]
      pub patch: serde_json::Map<String, serde_json::Value>,
  }
@@ -49,10 +49,10 @@ index 393a78d4..5e591957 100644
  /// Every field is `Option` with a per-field default, so a partial object parses and unknown future keys are ignored.
  /// Unset fields fall through per-field in `resolve_doom_loop_recovery`: env, then TOML, then remote, then default.
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
-index 6d22429e..372b28ca 100644
+index 6dc094ce..66df4bf7 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
-@@ -1244,6 +1244,9 @@ pub struct Config {
+@@ -1207,6 +1207,9 @@ pub struct Config {
      /// See [`crate::util::config::DoomLoopRecoverySettings`].
      #[serde(default)]
      pub doom_loop_recovery: crate::util::config::DoomLoopRecoverySettings,
@@ -62,7 +62,7 @@ index 6d22429e..372b28ca 100644
      /// `[worktree]` section (currently `[worktree.auto_gc]` only).
      #[serde(default)]
      pub worktree: WorktreeConfigSection,
-@@ -1655,6 +1658,7 @@ impl Default for Config {
+@@ -1599,6 +1602,7 @@ impl Default for Config {
              goal: GoalConfig::default(),
              workflows: WorkflowsConfig::default(),
              doom_loop_recovery: crate::util::config::DoomLoopRecoverySettings::default(),
@@ -70,7 +70,7 @@ index 6d22429e..372b28ca 100644
              worktree: WorktreeConfigSection::default(),
              auto_mode: AutoModeConfig::default(),
              prompt_suggestions: crate::util::config::PromptSuggestConfig::default(),
-@@ -2489,6 +2493,15 @@ impl Config {
+@@ -2471,6 +2475,15 @@ impl Config {
                  ),
          })
      }
@@ -87,10 +87,10 @@ index 6d22429e..372b28ca 100644
      /// Precedence: env kill/dry-run > `[worktree.auto_gc]` TOML > remote `worktree_auto_gc` > defaults.
      /// Platform age-expiry (`process_cwd_scan_available`: linux+macos) is enforced inside `xai_fast_worktree::maybe_auto_gc`, not here.
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
-index efb34d6f..aa9e9b12 100644
+index d498c720..8ab45db8 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
-@@ -219,10 +219,21 @@ impl SessionActor {
+@@ -260,10 +260,21 @@ impl SessionActor {
              if let Some(client) = self.rebuild_spec.managed_gateway_tool_client.clone() {
                  bridge.update_resource(client).await;
              }
@@ -114,10 +114,10 @@ index efb34d6f..aa9e9b12 100644
                  bridge
                      .set_display_cwd(std::path::PathBuf::from(display_cwd))
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/session_mode.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/session_mode.rs
-index e55b5c0f..fad07abc 100644
+index 31ec21ff..80faf233 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/session_mode.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/session_mode.rs
-@@ -368,9 +368,21 @@ impl SessionActor {
+@@ -344,9 +344,21 @@ impl SessionActor {
          plan_path: &std::path::Path,
          plan_has_content: bool,
      ) -> Option<String> {
@@ -140,10 +140,10 @@ index e55b5c0f..fad07abc 100644
          self.agent
              .borrow()
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-index 5a80629b..846c6a5c 100644
+index 818e085d..d4b42ae1 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-@@ -1578,6 +1578,13 @@ pub(crate) async fn spawn_session_actor(
+@@ -1700,6 +1700,13 @@ pub(crate) async fn spawn_session_actor(
          }
      };
      let doom_loop_recovery = effective_config.resolve_doom_loop_recovery();
@@ -157,42 +157,49 @@ index 5a80629b..846c6a5c 100644
      let resolved_tool_overrides: std::sync::Arc<
          arc_swap::ArcSwapOption<xai_grok_sampling_types::ToolOverrides>,
      > = std::sync::Arc::new(arc_swap::ArcSwapOption::empty());
-@@ -1935,13 +1942,27 @@ pub(crate) async fn spawn_session_actor(
-             .await;
-     }
-     {
--        let plan_path = session.plan_mode.lock().plan_file_path().to_path_buf();
-+        let (plan_path, implement_via_subagents) = {
-+            let guard = session.plan_mode.lock();
-+            (
-+                guard.plan_file_path().to_path_buf(),
-+                guard.implement_via_subagents(),
-+            )
-+        };
-         session
+@@ -2077,19 +2084,32 @@ pub(crate) async fn spawn_session_actor(
+                 .await;
+         }
+         {
+-            let plan_path = session.plan_mode.lock().plan_file_path().to_path_buf();
++            let (plan_path, implement_via_subagents) = {
++                let guard = session.plan_mode.lock();
++                (
++                    guard.plan_file_path().to_path_buf(),
++                    guard.implement_via_subagents(),
++                )
++            };
+             session
+                 .agent
+                 .borrow()
+                 .tool_bridge()
+                 .update_resource(xai_grok_tools::types::resources::PlanFilePath(plan_path))
+                 .await;
++            session
++                .agent
++                .borrow()
++                .tool_bridge()
++                .update_resource(xai_grok_tools::types::resources::ImplementViaSubagents(
++                    implement_via_subagents,
++                ))
++                .await;
+         }
+         session.inject_deny_read_globs().await;
+         if session.permissions.is_auto_mode() {
+             session.wire_permission_auto_llm_classifier().await;
+-        }
+-        session
++        }        session
              .agent
              .borrow()
              .tool_bridge()
-             .update_resource(xai_grok_tools::types::resources::PlanFilePath(plan_path))
-             .await;
-+        session
-+            .agent
-+            .borrow()
-+            .tool_bridge()
-+            .update_resource(xai_grok_tools::types::resources::ImplementViaSubagents(
-+                implement_via_subagents,
-+            ))
-+            .await;
-     }
-     session.inject_deny_read_globs().await;
-     if session.permissions.is_auto_mode() {
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
-index b11bd828..d4e572d4 100644
+index b15a7fa9..93b65d37 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
-@@ -226,6 +226,12 @@ pub(super) enum PlanEditGate {
- /// It is always rejected in plan mode (conservative: per-file targets are only known after patch parsing).
- /// Non-edit tools (bash, read, grep, MCP, web) are never gated here; they flow to the normal permission path, where yolo may still auto-approve them.
+@@ -214,6 +214,12 @@ pub(super) enum PlanEditGate {
+ /// Compat-toolset `Delete` is not on the markdown carve-out: it maps to `AccessKind::Edit` and is plan-file-only (same as grok edits).
+ /// `apply_patch` maps to a placeholder `AccessKind::Edit("apply_patch")` and therefore never matches the plan file.
  /// `enter_plan_mode` / `exit_plan_mode` map to `AccessKind::Read` and are likewise never gated.
 +fn extra_glob_edit_tool(tool_input: &ToolInput) -> bool {
 +    matches!(
@@ -200,10 +207,10 @@ index b11bd828..d4e572d4 100644
 +        ToolInput::Write(_) | ToolInput::SearchReplace(_) | ToolInput::HashlineEdit(_)
 +    )
 +}
- pub(super) fn plan_mode_edit_gate(
-     tracker: &crate::session::plan_mode::PlanModeTracker,
-     tool_input: &ToolInput,
-@@ -238,8 +244,15 @@ pub(super) fn plan_mode_edit_gate(
+ fn access_kind_for_resolved_tool(tool_name: &str, tool_input: &ToolInput) -> AccessKind {
+     if tool_name == xai_grok_tools::implementations::grok_build::SEND_FEEDBACK_TOOL_NAME {
+         return match tool_input {
+@@ -237,8 +243,15 @@ pub(super) fn plan_mode_edit_gate(
          return PlanEditGate::Allow;
      }
      match access_kind {
@@ -221,7 +228,7 @@ index b11bd828..d4e572d4 100644
          }
          _ => PlanEditGate::Allow,
      }
-@@ -3364,6 +3377,74 @@ mod plan_mode_edit_gate_tests {
+@@ -3419,6 +3432,74 @@ mod plan_mode_edit_gate_tests {
              "Pending means the model has no plan-mode instructions yet — don't gate"
          );
      }
@@ -297,10 +304,10 @@ index b11bd828..d4e572d4 100644
  #[cfg(test)]
  mod plan_approval_helper_tests {
 diff --git a/crates/codegen/xai-grok-shell/src/session/plan_mode.rs b/crates/codegen/xai-grok-shell/src/session/plan_mode.rs
-index 1716afd0..eee398a1 100644
+index 499cf506..45598489 100644
 --- a/crates/codegen/xai-grok-shell/src/session/plan_mode.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/plan_mode.rs
-@@ -55,6 +55,12 @@ pub struct PlanModeTracker {
+@@ -43,6 +43,12 @@ pub struct PlanModeTracker {
      /// Lives inside the session directory:
      /// `~/.grok/sessions/<cwd>/<session_id>/plan.md`
      plan_file_path: PathBuf,
@@ -313,7 +320,7 @@ index 1716afd0..eee398a1 100644
  }
  /// A buffered mid-turn activation reminder plus the state needed to roll the activation back if it is withdrawn before delivery.
  struct PendingActivation {
-@@ -80,6 +86,9 @@ impl PlanModeTracker {
+@@ -68,6 +74,9 @@ impl PlanModeTracker {
      /// Create a new tracker. `session_dir` is the session's storage
      /// directory (e.g., `~/.grok/sessions/<encoded-cwd>/<session-id>/`).
      pub fn new(session_dir: PathBuf) -> Self {
@@ -323,7 +330,7 @@ index 1716afd0..eee398a1 100644
          Self {
              state: PlanModeState::Inactive,
              was_previously_active: false,
-@@ -88,6 +97,9 @@ impl PlanModeTracker {
+@@ -76,6 +85,9 @@ impl PlanModeTracker {
              awaiting_plan_approval: false,
              pending_activation: None,
              plan_file_path: session_dir.join("plan.md"),
@@ -333,7 +340,7 @@ index 1716afd0..eee398a1 100644
          }
      }
      /// `session_dir` is used to recompute `plan_file_path`.
-@@ -104,6 +116,9 @@ impl PlanModeTracker {
+@@ -92,6 +104,9 @@ impl PlanModeTracker {
              }
              _ => {}
          }
@@ -343,7 +350,7 @@ index 1716afd0..eee398a1 100644
          Self {
              state: snapshot.state,
              was_previously_active: snapshot.was_previously_active,
-@@ -112,8 +127,28 @@ impl PlanModeTracker {
+@@ -100,8 +115,28 @@ impl PlanModeTracker {
              awaiting_plan_approval: snapshot.awaiting_plan_approval,
              pending_activation: None,
              plan_file_path: session_dir.join("plan.md"),
@@ -372,7 +379,7 @@ index 1716afd0..eee398a1 100644
      /// Mark that the client is waiting on plan approval (`exit_plan_mode` parked).
      pub(crate) fn set_awaiting_plan_approval(&mut self, awaiting: bool) {
          self.awaiting_plan_approval = awaiting;
-@@ -336,7 +371,13 @@ using the ${{ tools.by_kind.edit }} tool.
+@@ -304,7 +339,13 @@ using the ${{ tools.by_kind.edit }} tool.
  ${%- endif %}
  
  You should build your plan by writing to or editing this file. \
@@ -386,7 +393,7 @@ index 1716afd0..eee398a1 100644
  
  Your turn should only end with either ${{ tools.by_kind.ask_user }} to clarify \
  requirements or ${{ tools.by_kind.exit_plan }} to present your plan to the user."
-@@ -368,13 +409,50 @@ pub(crate) fn plan_mode_edit_rejected_template() -> &'static str {
+@@ -335,13 +376,50 @@ pub(crate) fn plan_mode_edit_rejected_template() -> &'static str {
  /// Contains no placeholders.
  pub(crate) fn plan_mode_exit_reminder_template() -> &'static str {
      "\
@@ -436,9 +443,9 @@ index 1716afd0..eee398a1 100644
 +    extra_writable_set_matches(target_path, &compile_extra_writable_set(globs))
 +}
  /// Whether the path's final component ends with a markdown suffix (case-insensitive).
- ///
  /// Suffixes align with client / workspace `MARKDOWN_SUFFIXES`: `.md`, `.markdown`, `.mdown`, `.mkd`, `.mkdn`, `.mdx`.
-@@ -743,6 +821,21 @@ mod tests {
+ /// In plan mode the shell rejects `Write` and `StrReplace` when this is false.
+@@ -705,6 +783,21 @@ mod tests {
          assert!(!text.contains("${{"));
      }
      #[test]
@@ -460,7 +467,7 @@ index 1716afd0..eee398a1 100644
      fn edit_rejected_template_renders() {
          let r = test_renderer();
          let text = render(
-@@ -793,6 +886,27 @@ mod tests {
+@@ -755,6 +848,27 @@ mod tests {
          assert!(!is_plan_file_write(target, plan));
      }
      #[test]
@@ -489,7 +496,7 @@ index 1716afd0..eee398a1 100644
          assert!(is_markdown_file_path(Path::new("/x/plan.md")));
          assert!(is_markdown_file_path(Path::new("notes.MDX")));
 diff --git a/crates/codegen/xai-grok-shell/src/util/config/mod.rs b/crates/codegen/xai-grok-shell/src/util/config/mod.rs
-index 607203e2..4e7f9f46 100644
+index 8f85bf8f..0de700db 100644
 --- a/crates/codegen/xai-grok-shell/src/util/config/mod.rs
 +++ b/crates/codegen/xai-grok-shell/src/util/config/mod.rs
 @@ -34,6 +34,6 @@ pub use tips::*;
@@ -502,7 +509,7 @@ index 607203e2..4e7f9f46 100644
 +    WorktreeAutoGcSettings, WorktreeKindMaxAge, deserialize_tolerant,
  };
 diff --git a/crates/codegen/xai-grok-tools/src/implementations/grok_build/exit_plan_mode/mod.rs b/crates/codegen/xai-grok-tools/src/implementations/grok_build/exit_plan_mode/mod.rs
-index e129918b..dfb2f8aa 100644
+index f0a62c78..f7ed0b60 100644
 --- a/crates/codegen/xai-grok-tools/src/implementations/grok_build/exit_plan_mode/mod.rs
 +++ b/crates/codegen/xai-grok-tools/src/implementations/grok_build/exit_plan_mode/mod.rs
 @@ -26,7 +26,9 @@ pub use types::{ExitPlanModeExtRequest, ExitPlanModeExtResponse};
@@ -515,8 +522,8 @@ index e129918b..dfb2f8aa 100644
 +};
  use crate::types::tool::{ToolKind, ToolNamespace};
  
- /// Input for the `ExitPlanMode` tool.
-@@ -118,11 +120,13 @@ impl xai_tool_runtime::Tool for ExitPlanModeTool {
+ /// Input for the `ExitPlanMode` tool. Empty object — the plan is read from the plan file on disk,
+@@ -110,11 +112,13 @@ impl xai_tool_runtime::Tool for ExitPlanModeTool {
          use crate::types::tool_metadata::shared_resources;
          let resources = shared_resources(&ctx)?;
  
@@ -531,7 +538,7 @@ index e129918b..dfb2f8aa 100644
              // Read the plan file from disk via the FileSystem abstraction.
              let content = if let Some(fs) = res.get::<FileSystem>() {
                  match fs.0.read_file(&plan_path).await {
-@@ -144,7 +148,7 @@ impl xai_tool_runtime::Tool for ExitPlanModeTool {
+@@ -136,7 +140,7 @@ impl xai_tool_runtime::Tool for ExitPlanModeTool {
                  }
              };
  
@@ -540,7 +547,7 @@ index e129918b..dfb2f8aa 100644
          };
  
          // Notify the gateway / client.
-@@ -159,6 +163,8 @@ impl xai_tool_runtime::Tool for ExitPlanModeTool {
+@@ -151,6 +155,8 @@ impl xai_tool_runtime::Tool for ExitPlanModeTool {
              }
          }
  
@@ -549,7 +556,7 @@ index e129918b..dfb2f8aa 100644
          match plan_content {
              Some(content) => {
                  tracing::info!(
-@@ -166,7 +172,11 @@ impl xai_tool_runtime::Tool for ExitPlanModeTool {
+@@ -158,7 +164,11 @@ impl xai_tool_runtime::Tool for ExitPlanModeTool {
                      "Exiting plan mode with plan content"
                  );
  
@@ -562,7 +569,7 @@ index e129918b..dfb2f8aa 100644
  
                  Ok(ExitPlanModeOutput::PlanReady {
                      message,
-@@ -177,10 +187,17 @@ impl xai_tool_runtime::Tool for ExitPlanModeTool {
+@@ -169,10 +179,17 @@ impl xai_tool_runtime::Tool for ExitPlanModeTool {
              None => {
                  tracing::info!("Exiting plan mode with empty/missing plan file");
  
@@ -583,7 +590,7 @@ index e129918b..dfb2f8aa 100644
                      plan_file_path,
                  })
              }
-@@ -382,6 +399,117 @@ mod tests {
+@@ -374,6 +391,117 @@ mod tests {
  
      // -- PlanFilePath resource tests --
  
@@ -702,11 +709,11 @@ index e129918b..dfb2f8aa 100644
      async fn reads_from_plan_file_path_resource() {
          let tmp = TempDir::new().unwrap();
 diff --git a/crates/codegen/xai-grok-tools/src/types/resources.rs b/crates/codegen/xai-grok-tools/src/types/resources.rs
-index de68a25d..386bee06 100644
+index 22052272..e38e8a27 100644
 --- a/crates/codegen/xai-grok-tools/src/types/resources.rs
 +++ b/crates/codegen/xai-grok-tools/src/types/resources.rs
-@@ -411,6 +411,10 @@ pub struct Cwd(pub PathBuf);
- /// tool falls back to `Cwd/.grok/plan.md`.
+@@ -355,6 +355,10 @@ pub struct Cwd(pub PathBuf);
+ /// absent the tool falls back to `Cwd/.grok/plan.md`.
  #[derive(Debug, Clone)]
  pub struct PlanFilePath(pub PathBuf);
 +/// When true, ExitPlanMode PlanReady/EmptyPlan messages prefer second-tier
