@@ -116,9 +116,15 @@ log_compat_abort() {
 
 log_leftover_abort() {
   log_err "$1"
-  log_err "This is usually a previous aborted update that applied some patches, then failed."
+  log_err "This is usually persist-dev leftover or a previous aborted update that applied some patches, then failed."
   log_err "This is NOT the CI compat-broken miss."
   log_live_untouched
+  if [ -n "${GROK_BUILD_SRC:-}" ] && command -v git >/dev/null 2>&1; then
+    _dirty="$(git -C "$GROK_BUILD_SRC" diff --name-only 2>/dev/null | tr '\n' ' ')"
+    if [ -n "$_dirty" ]; then
+      log_err "Dirty paths: $_dirty"
+    fi
+  fi
   log_err "Next: inspect and resolve git status in $GROK_BUILD_SRC (operator-owned), then retry grok update."
 }
 
@@ -231,6 +237,31 @@ get_free_kb() {
   fi
   # Use POSIX df output: line 2, column 4 (Available blocks in 1K)
   $DF_CMD -P -k "$check_dir" 2>/dev/null | awk 'NR==2 {print $4}'
+}
+
+# ff-only pull of the installed grokgod src (never the developer checkout
+# unless it is also GROKGOD_SRC). Skip when unset or not a git repo.
+sync_installed_grokgod_src() {
+  if [ -z "${GROKGOD_SRC:-}" ] || [ ! -d "$GROKGOD_SRC/.git" ]; then
+    return 0
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log_dry "Would git -C $GROKGOD_SRC pull --ff-only"
+    return 0
+  fi
+  log_step "Syncing grokgod src at $GROKGOD_SRC..."
+  if ! git -C "$GROKGOD_SRC" fetch origin; then
+    log_err "Failed to fetch grokgod src origin in $GROKGOD_SRC"
+    log_live_untouched
+    exit 1
+  fi
+  if ! git -C "$GROKGOD_SRC" pull --ff-only; then
+    log_err "grokgod src has local commits (not fast-forward) at $GROKGOD_SRC"
+    log_err "This is not leftover grok-build dirt and not the CI compat-broken miss."
+    log_live_untouched
+    log_err "Next: inspect $GROKGOD_SRC and rebase/ff onto origin, then retry grok update."
+    exit 1
+  fi
 }
 
 # Helper: compute SHA of patch set
@@ -735,6 +766,7 @@ if [ "$MODE" = "source" ]; then
     TARGET_SHA="$(git -C "$GROK_BUILD_SRC" rev-parse HEAD 2>/dev/null || echo "unknown")"
   fi
 
+  sync_installed_grokgod_src
   NOW_PATCHSET="$(compute_patchset_id)"
   EARLY_NOOP=0
   if [ "$FORCE" -eq 0 ] && [ -x "$GROKGOD_HOME/bin/grok" ] && [ -f "$GROKGOD_HOME/.source-version" ]; then
@@ -768,7 +800,6 @@ if [ "$MODE" = "source" ]; then
   if [ "$NEED_BUILD" -eq 1 ]; then
     log_step "Verifying clean working tree in $GROK_BUILD_SRC..."
     if ! git -C "$GROK_BUILD_SRC" diff --quiet 2>/dev/null; then
-      can_reverse=1
       patch_files=""
       if [ -d "$PATCHES_DIR" ]; then
         for p in "$PATCHES_DIR"/*.patch; do
@@ -778,43 +809,36 @@ if [ "$MODE" = "source" ]; then
         done
       fi
 
-      # Build reversed patch list (LIFO) for clean unapplying
+      # Newest-first suffix: reverse every patch whose reverse-check succeeds,
+      # stop at the first miss. Persist-dev leftover is often only the newest
+      # patch on a clean pin, not the full 0001–N stack.
       rev_patch_files=""
       for p in $patch_files; do
         rev_patch_files="$p $rev_patch_files"
       done
 
+      suffix_files=""
       if [ -n "$rev_patch_files" ]; then
+        log_info "Previous grokgod patches detected in working tree; reversing newest reverseable suffix..."
         for p in $rev_patch_files; do
-          if ! git -C "$GROK_BUILD_SRC" apply -R --check "$p" 2>/dev/null; then
-            can_reverse=0
+          if git -C "$GROK_BUILD_SRC" apply -R --check "$p" 2>/dev/null; then
+            git -C "$GROK_BUILD_SRC" apply -R "$p" || {
+              log_err "Failed to reverse prior patch $p"
+              exit 1
+            }
+            suffix_files="$suffix_files $p"
+          else
             break
           fi
-          # Speculatively apply reverse to test subsequent patches
-          git -C "$GROK_BUILD_SRC" apply -R "$p" 2>/dev/null || true
         done
-        # Restore working tree by re-applying forward before real reversal logic
-        for p in $patch_files; do
-          git -C "$GROK_BUILD_SRC" apply "$p" 2>/dev/null || true
-        done
-      else
-        can_reverse=0
       fi
 
-      if [ "$can_reverse" -eq 1 ]; then
-        log_info "Previous grokgod patches detected in working tree; reversing them..."
-        for p in $rev_patch_files; do
-          git -C "$GROK_BUILD_SRC" apply -R "$p" || {
-            log_err "Failed to reverse prior patch $p"
-            exit 1
-          }
-        done
-        if ! git -C "$GROK_BUILD_SRC" diff --quiet 2>/dev/null; then
-          log_leftover_abort "Local leftover: working tree in $GROK_BUILD_SRC is still dirty after reversing patches."
-          exit 1
-        fi
-      else
+      if [ -z "$suffix_files" ]; then
         log_leftover_abort "Local leftover: working tree in $GROK_BUILD_SRC is dirty and is not a clean grokgod patch stack."
+        exit 1
+      fi
+      if ! git -C "$GROK_BUILD_SRC" diff --quiet 2>/dev/null; then
+        log_leftover_abort "Local leftover: working tree in $GROK_BUILD_SRC is still dirty after reversing patches."
         exit 1
       fi
     fi

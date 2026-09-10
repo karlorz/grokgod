@@ -90,6 +90,14 @@ case "$cmd" in
         MODE_ARG="--from-source"
       fi
     fi
+    if [ -d "$GROKGOD_SRC/.git" ]; then
+      if ! git -C "$GROKGOD_SRC" fetch origin >/dev/null 2>&1 \
+        || ! git -C "$GROKGOD_SRC" pull --ff-only >/dev/null 2>&1; then
+        echo "grokgod: src has local commits (not fast-forward) at $GROKGOD_SRC" >&2
+        echo "grokgod: live binary untouched; rebase/ff onto origin, then retry grok update" >&2
+        exit 1
+      fi
+    fi
     if [ -n "$MODE_ARG" ]; then
       exec sh "$GROKGOD_SRC/install.sh" "$MODE_ARG" "$@"
     else

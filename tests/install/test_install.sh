@@ -1805,4 +1805,131 @@ grep -q "Installed build is pinned behind origin/main" "$INSTALL_SCRIPT" || {
 }
 echo "PASS: Test (z) - Pinned-behind warning string in install.sh"
 
+# ─────────────────────────────────────────────────────────
+# Test (aa): grokgod src behind origin ff-only pull then already-up-to-date
+# ─────────────────────────────────────────────────────────
+echo "Test (aa): Src-behind ff-only pull then already-up-to-date"
+setup_sandbox "test_aa"
+reset_worktree
+
+NEWEST_PATCH="$(ls "$REPO_ROOT"/patches/*.patch | tail -n 1)"
+ORIGIN_SRC="$TEST_DIR/grokgod_origin"
+BEHIND_SRC="$TEST_DIR/grokgod_behind"
+mkdir -p "$ORIGIN_SRC/patches" "$ORIGIN_SRC/src/shim"
+cp "$INSTALL_SCRIPT" "$ORIGIN_SRC/install.sh"
+cp "$REPO_ROOT/src/shim/grok-shim.sh" "$ORIGIN_SRC/src/shim/grok-shim.sh"
+for p in "$REPO_ROOT"/patches/*.patch; do
+  [ "$p" = "$NEWEST_PATCH" ] && continue
+  cp "$p" "$ORIGIN_SRC/patches/"
+done
+git -C "$ORIGIN_SRC" init -b main >/dev/null 2>&1
+git -C "$ORIGIN_SRC" config user.name "CI"
+git -C "$ORIGIN_SRC" config user.email "ci@example.com"
+git -C "$ORIGIN_SRC" add install.sh patches src
+git -C "$ORIGIN_SRC" commit -m "src without newest patch" >/dev/null 2>&1
+cp "$NEWEST_PATCH" "$ORIGIN_SRC/patches/"
+git -C "$ORIGIN_SRC" add patches
+git -C "$ORIGIN_SRC" commit -m "src with newest patch" >/dev/null 2>&1
+git clone --quiet "$ORIGIN_SRC" "$BEHIND_SRC"
+OLD_SRC_SHA="$(git -C "$ORIGIN_SRC" rev-parse HEAD~1)"
+git -C "$BEHIND_SRC" reset --hard "$OLD_SRC_SHA" >/dev/null 2>&1
+
+mkdir -p "$FAKE_GROKGOD_HOME/bin"
+cat << 'BIN_EOF' > "$FAKE_GROKGOD_HOME/bin/grok"
+#!/bin/sh
+echo "EXISTING_SOURCE_BINARY"
+BIN_EOF
+chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
+GB_HEAD="$(git -C "$GB_WORKTREE" rev-parse HEAD)"
+FULL_PATCHSET="$(cat "$ORIGIN_SRC"/patches/*.patch | (shasum -a 256 2>/dev/null || sha256sum 2>/dev/null || cksum 2>/dev/null) | awk '{print $1}')"
+printf "SHA=%s\nPATCHSET=%s\nVERSION=%s\nMODE=source\n" "$GB_HEAD" "$FULL_PATCHSET" "$GB_HEAD" > "$FAKE_GROKGOD_HOME/.source-version"
+INITIAL_AA_STAMP="$(cat "$FAKE_GROKGOD_HOME/.source-version")"
+INITIAL_AA_BIN="$(cat "$FAKE_GROKGOD_HOME/bin/grok")"
+rm -f "$CARGO_INVOKED_FILE"
+
+set +e
+AA_OUT="$(
+  PATH="$FAKE_BIN_SHADOW:$PATH" \
+  HOME="$FAKE_HOME" \
+  GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+  GROKGOD_SRC="$BEHIND_SRC" \
+  GROK_BUILD_SRC="$GB_WORKTREE" \
+  BIN_DIR="$FAKE_BIN_DIR" \
+  CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+  sh "$BEHIND_SRC/install.sh" --from-source --no-upgrade 2>&1
+)"
+AA_STATUS=$?
+set -eu
+if [ "$AA_STATUS" -ne 0 ]; then
+  echo "FAIL: Test (aa) - install exited $AA_STATUS ($AA_OUT)"; exit 1
+fi
+
+echo "$AA_OUT" | grep -q "Matching stamp found" || echo "$AA_OUT" | grep -q "Already up to date" || {
+  echo "FAIL: Test (aa) - expected stamp match no-op after src ff-only pull ($AA_OUT)"; exit 1
+}
+echo "$AA_OUT" | grep -q "skipping cargo build" || echo "$AA_OUT" | grep -q "Already up to date" || {
+  echo "FAIL: Test (aa) - expected cargo skipped after src ff-only pull ($AA_OUT)"; exit 1
+}
+if [ -f "$CARGO_INVOKED_FILE" ]; then
+  echo "FAIL: Test (aa) - cargo invoked"; exit 1
+fi
+AFTER_AA_STAMP="$(cat "$FAKE_GROKGOD_HOME/.source-version")"
+AFTER_AA_BIN="$(cat "$FAKE_GROKGOD_HOME/bin/grok")"
+if [ "$INITIAL_AA_STAMP" != "$AFTER_AA_STAMP" ]; then
+  echo "FAIL: Test (aa) - stamp modified"; exit 1
+fi
+if [ "$INITIAL_AA_BIN" != "$AFTER_AA_BIN" ]; then
+  echo "FAIL: Test (aa) - live binary modified"; exit 1
+fi
+git -C "$BEHIND_SRC" merge-base --is-ancestor "$(git -C "$ORIGIN_SRC" rev-parse HEAD)" HEAD || {
+  echo "FAIL: Test (aa) - GROKGOD_SRC did not ff-only to origin"; exit 1
+}
+echo "PASS: Test (aa) - Src-behind ff-only pull then already-up-to-date"
+
+# ─────────────────────────────────────────────────────────
+# Test (ab): newest-patch-only dirty tree is suffix-reversed then applied
+# ─────────────────────────────────────────────────────────
+echo "Test (ab): Newest-patch-only leftover suffix reverse"
+setup_sandbox "test_ab"
+reset_worktree
+
+NEWEST_PATCH="$(ls "$REPO_ROOT"/patches/*.patch | tail -n 1)"
+git -C "$GB_WORKTREE" apply "$NEWEST_PATCH"
+git -C "$GB_WORKTREE" diff --quiet && { echo "FAIL: Test (ab) - worktree should be dirty after newest-only apply"; exit 1; }
+
+mkdir -p "$FAKE_GROKGOD_HOME/bin"
+echo "EXISTING_GOOD_BINARY" > "$FAKE_GROKGOD_HOME/bin/grok"
+chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
+GB_HEAD="$(git -C "$GB_WORKTREE" rev-parse HEAD)"
+printf "SHA=%s\nPATCHSET=stale-not-full-stack\nVERSION=%s\nMODE=source\n" "$GB_HEAD" "$GB_HEAD" > "$FAKE_GROKGOD_HOME/.source-version"
+rm -f "$CARGO_INVOKED_FILE"
+
+set +e
+AB_OUT="$(
+  PATH="$FAKE_BIN_SHADOW:$PATH" \
+  HOME="$FAKE_HOME" \
+  GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+  GROK_BUILD_SRC="$GB_WORKTREE" \
+  BIN_DIR="$FAKE_BIN_DIR" \
+  CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+  sh "$INSTALL_SCRIPT" --from-source --no-upgrade 2>&1
+)"
+AB_STATUS=$?
+set -eu
+
+if [ "$AB_STATUS" -ne 0 ]; then
+  echo "FAIL: Test (ab) - expected suffix reverse then install, got exit $AB_STATUS ($AB_OUT)"; exit 1
+fi
+echo "$AB_OUT" | grep -q "Local leftover:" && {
+  echo "FAIL: Test (ab) - leftover-aborted newest-only dirt ($AB_OUT)"; exit 1
+}
+if [ ! -f "$CARGO_INVOKED_FILE" ]; then
+  echo "FAIL: Test (ab) - cargo not invoked after suffix reverse"; exit 1
+fi
+BUILT_BIN="$(cat "$FAKE_GROKGOD_HOME/bin/grok")"
+echo "$BUILT_BIN" | grep -q "MOCK_BUILT_GROK_BINARY" || {
+  echo "FAIL: Test (ab) - binary not replaced after suffix reverse ($BUILT_BIN)"; exit 1
+}
+echo "PASS: Test (ab) - Newest-patch-only suffix reverse"
+
 echo "=== All install.sh tests passed successfully! ==="

@@ -95,7 +95,41 @@ set -eu
 if [ "$STATUS_CODE" -ne 42 ]; then
   echo "FAIL: Expected exit code 42 from install.sh, got $STATUS_CODE"; exit 1
 fi
+
+# Test 2c: update ff-only pulls a behind GROKGOD_SRC git repo before exec
+echo "Test 2c: Update ff-only pulls behind GROKGOD_SRC"
+SHIM_ORIGIN="$TMP_DIR/shim_origin"
+SHIM_BEHIND="$TMP_DIR/shim_behind"
+mkdir -p "$SHIM_ORIGIN"
+git -C "$SHIM_ORIGIN" init -b main >/dev/null 2>&1
+git -C "$SHIM_ORIGIN" config user.name "CI"
+git -C "$SHIM_ORIGIN" config user.email "ci@example.com"
+printf '%s\n' '#!/bin/sh' 'echo INSTALL_OLD' > "$SHIM_ORIGIN/install.sh"
+chmod +x "$SHIM_ORIGIN/install.sh"
+git -C "$SHIM_ORIGIN" add install.sh
+git -C "$SHIM_ORIGIN" commit -m "old src" >/dev/null 2>&1
+OLD_SHIM_SHA="$(git -C "$SHIM_ORIGIN" rev-parse HEAD)"
+printf '%s\n' '#!/bin/sh' 'echo INSTALL_NEW' > "$SHIM_ORIGIN/install.sh"
+git -C "$SHIM_ORIGIN" add install.sh
+git -C "$SHIM_ORIGIN" commit -m "new src" >/dev/null 2>&1
+git clone --quiet "$SHIM_ORIGIN" "$SHIM_BEHIND"
+git -C "$SHIM_BEHIND" reset --hard "$OLD_SHIM_SHA" >/dev/null 2>&1
+SHIM_PULL_OUT="$(
+  HOME="$TEST_HOME" \
+  GROKGOD_HOME="$TEST_GROKGOD_HOME" \
+  GROKGOD_SRC="$SHIM_BEHIND" \
+  GROK_BUILD_SRC="${TEST_GROK_BUILD_SRC:-$TMP_DIR/nonexistent_grok_build}" \
+  TMP_DIR="$TMP_DIR" \
+  sh "$SHIM_SRC" update
+)"
+echo "$SHIM_PULL_OUT" | grep -q "INSTALL_NEW" || {
+  echo "FAIL: Test 2c - expected pulled install.sh ($SHIM_PULL_OUT)"; exit 1
+}
+echo "$SHIM_PULL_OUT" | grep -q "INSTALL_OLD" && {
+  echo "FAIL: Test 2c - ran stale src install.sh ($SHIM_PULL_OUT)"; exit 1
+}
 echo "PASS: Test 2"
+echo "PASS: Test 2c"
 
 # Test 3: Status subcommand
 echo "Test 3: Status subcommand"
