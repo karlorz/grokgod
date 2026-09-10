@@ -24,7 +24,7 @@ index e4d11f9f..6686e0fd 100644
  [compat.codex]
  sessions = true   # staged; no scanner consumer yet
 diff --git a/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md b/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md
-index 17ab5532..86b23460 100644
+index ab1dbe2d..14fca9d5 100644
 --- a/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md
 +++ b/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md
 @@ -119,6 +119,7 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
@@ -36,7 +36,7 @@ index 17ab5532..86b23460 100644
  | `compat.claude.skills` | `boolean` | `yes` | `user` | Scan Claude skills. Also GROK_CLAUDE_SKILLS_ENABLED. |
  | `compat.codex.hooks` | `boolean` | `yes` | `user` | Scan Codex hooks when present. |
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
-index 1a2a89cb..74faf58b 100644
+index d8044ae8..34ab35e0 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
 @@ -702,6 +702,7 @@ fn remote_compat_value(
@@ -48,10 +48,10 @@ index 1a2a89cb..74faf58b 100644
      }
  }
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
-index 62838381..cf032383 100644
+index f3df69c1..dfa7efcd 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
-@@ -6617,6 +6617,7 @@ fn clear_runtime_env_vars() {
+@@ -6628,6 +6628,7 @@ fn clear_runtime_env_vars() {
          std::env::remove_var("GROK_CLAUDE_SKILLS_ENABLED");
          std::env::remove_var("GROK_CLAUDE_RULES_ENABLED");
          std::env::remove_var("GROK_CLAUDE_AGENTS_ENABLED");
@@ -59,7 +59,7 @@ index 62838381..cf032383 100644
      }
  }
  fn clear_managed_mcp_env_vars() {
-@@ -6662,6 +6663,7 @@ fn remote_settings_with(key: CompatRemoteKey, value: bool) -> crate::util::confi
+@@ -6673,6 +6674,7 @@ fn remote_settings_with(key: CompatRemoteKey, value: bool) -> crate::util::confi
          CompatRemoteKey::ClaudeMcps => remote.claude_mcps_enabled = Some(value),
          CompatRemoteKey::ClaudeHooks => remote.claude_hooks_enabled = Some(value),
          CompatRemoteKey::ClaudeSessions => remote.claude_sessions_enabled = Some(value),
@@ -106,10 +106,10 @@ index 9e1b16c7..97ab9906 100644
          Some(resolved) => {
              let mut sources: Vec<String> = resolved.sources.iter().map(|s| s.to_string()).collect();
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-index c9841b6d..39251ac0 100644
+index 69a7e63a..7e408178 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-@@ -343,6 +343,7 @@ pub(crate) async fn spawn_session_actor(
+@@ -345,6 +345,7 @@ pub(crate) async fn spawn_session_actor(
                      tool_context.cwd.as_path(),
                      project_trusted,
                      yolo_lock.as_ref(),

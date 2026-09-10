@@ -1,8 +1,8 @@
 diff --git a/crates/codegen/xai-grok-agent/src/builder.rs b/crates/codegen/xai-grok-agent/src/builder.rs
-index c6c05194..0ebb4462 100644
+index b48c4918..19c4a9f4 100644
 --- a/crates/codegen/xai-grok-agent/src/builder.rs
 +++ b/crates/codegen/xai-grok-agent/src/builder.rs
-@@ -58,6 +58,9 @@ pub struct AgentBuilder {
+@@ -60,6 +60,9 @@ pub struct AgentBuilder {
      state_path: Option<PathBuf>,
      memory_backend: Option<Arc<dyn xai_grok_tools::types::memory_backend::MemoryBackend>>,
      web_search_config: xai_grok_tools::implementations::web_search::WebSearchConfig,
@@ -12,7 +12,7 @@ index c6c05194..0ebb4462 100644
      /// When true, web search and X search go to the agentic sampler as native server-side tools instead of registering as local Function tools.
      backend_search: bool,
      web_fetch_config: xai_grok_tools::implementations::grok_build::web_fetch::WebFetchConfig,
-@@ -188,6 +191,7 @@ impl AgentBuilder {
+@@ -192,6 +195,7 @@ impl AgentBuilder {
              state_path: None,
              memory_backend: None,
              web_search_config: Default::default(),
@@ -20,7 +20,7 @@ index c6c05194..0ebb4462 100644
              backend_search: false,
              web_fetch_config: Default::default(),
              lsp: None,
-@@ -370,6 +374,15 @@ impl AgentBuilder {
+@@ -387,6 +391,15 @@ impl AgentBuilder {
          self.web_search_config = config;
          self
      }
@@ -36,7 +36,7 @@ index c6c05194..0ebb4462 100644
      /// Per-model gating is applied at request time, not here.
      pub fn with_backend_search(mut self, enabled: bool) -> Self {
          self.backend_search = enabled;
-@@ -980,7 +993,6 @@ impl AgentBuilder {
+@@ -997,7 +1010,6 @@ impl AgentBuilder {
              });
          }
          let use_backend_search = self.backend_search;
@@ -44,7 +44,7 @@ index c6c05194..0ebb4462 100644
          let tool_bridge = ToolBridge::finalize_builder(
              tool_bridge_builder,
              tool_config,
-@@ -1161,7 +1173,7 @@ impl AgentBuilder {
+@@ -1182,7 +1194,7 @@ impl AgentBuilder {
          }
          let mut hosted_tools = Vec::new();
          if use_backend_search {
@@ -53,7 +53,7 @@ index c6c05194..0ebb4462 100644
                  hosted_tools.push(xai_grok_sampling_types::HostedTool::WebSearch { options: None });
              }
              if definition.hosted_tool_allowed("x_search") {
-@@ -2548,9 +2560,10 @@ mod tests {
+@@ -2569,9 +2581,10 @@ mod tests {
              "no full-toolset fallback — Edit must be excluded; got: {names:?}"
          );
      }
@@ -65,7 +65,7 @@ index c6c05194..0ebb4462 100644
          disallowed_tools: &[&str],
          tool_overrides: Option<xai_grok_sampling_types::ToolOverrides>,
      ) -> crate::agent::Agent {
-@@ -2580,11 +2593,27 @@ mod tests {
+@@ -2601,11 +2614,27 @@ mod tests {
          )
          .from_definition(def)
          .with_web_search_config(web_search_config)
@@ -93,7 +93,7 @@ index c6c05194..0ebb4462 100644
      #[tokio::test]
      async fn disallowed_web_search_strips_function_and_hosted_tools() {
          let agent = build_with_web_search(true, true, &["web_search"], None).await;
-@@ -2629,15 +2658,18 @@ mod tests {
+@@ -2650,15 +2679,18 @@ mod tests {
              "expected XSearch hosted tool, got: {hosted:?}"
          );
      }
@@ -115,7 +115,7 @@ index c6c05194..0ebb4462 100644
          );
          assert!(
              hosted
-@@ -2646,6 +2678,61 @@ mod tests {
+@@ -2667,6 +2699,61 @@ mod tests {
              "expected XSearch hosted tool, got: {hosted:?}"
          );
      }
@@ -178,24 +178,24 @@ index c6c05194..0ebb4462 100644
      async fn hosted_tools_empty_when_backend_search_disabled() {
          let agent = build_with_web_search(true, false, &[], None).await;
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-index 7b546316..c9841b6d 100644
+index ecff35a3..69a7e63a 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-@@ -1014,6 +1014,7 @@ pub(crate) async fn spawn_session_actor(
-             .map(|s| s.workspace_memory_file().to_string_lossy().into_owned()),
+@@ -1102,6 +1102,7 @@ pub(crate) async fn spawn_session_actor(
          memory_backend: memory_backend_for_spec,
+         memory_v2_access,
          web_search_config: web_search_config.clone(),
 +        hosted_web_search_disabled: disable_web_search,
          web_search_domains,
          backend_search: backend_tools_enabled,
          web_fetch_config: web_fetch_config.clone(),
 diff --git a/crates/codegen/xai-grok-shell/src/session/agent_rebuild.rs b/crates/codegen/xai-grok-shell/src/session/agent_rebuild.rs
-index 951231fb..da94468b 100644
+index 002f95ae..6bd07be1 100644
 --- a/crates/codegen/xai-grok-shell/src/session/agent_rebuild.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/agent_rebuild.rs
-@@ -78,6 +78,9 @@ pub(crate) struct AgentRebuildSpec {
-     pub memory_workspace_path: Option<String>,
+@@ -79,6 +79,9 @@ pub(crate) struct AgentRebuildSpec {
      pub memory_backend: Option<Arc<dyn MemoryBackend>>,
+     pub memory_v2_access: Option<xai_grok_tools::types::memory_v2::MemoryV2AccessResource>,
      pub web_search_config: WebSearchConfig,
 +    /// When true, hosted web_search is suppressed even when backend_search is true.
 +    /// Threaded from the CLI/config `disable_web_search` kill-switch.
@@ -203,15 +203,15 @@ index 951231fb..da94468b 100644
      /// `[toolset.web_search]` domain policy, resolved once at spawn.
      /// It is applied to both search paths (the hosted `tool_overrides` merge and the client-side `WebSearchConfig`) so they never diverge.
      pub web_search_domains: Option<xai_grok_sampling_types::WebSearchOptions>,
-@@ -175,6 +178,7 @@ impl AgentRebuildSpec {
-             memory_workspace_path,
+@@ -177,6 +180,7 @@ impl AgentRebuildSpec {
              memory_backend,
+             memory_v2_access,
              web_search_config,
 +            hosted_web_search_disabled,
              web_search_domains,
              backend_search,
              web_fetch_config,
-@@ -249,6 +253,7 @@ impl AgentRebuildSpec {
+@@ -252,6 +256,7 @@ impl AgentRebuildSpec {
          .with_session_env(session_env.clone())
          .with_state_path(bridge_state_path.clone())
          .with_web_search_config(web_search_config.clone())
@@ -219,9 +219,9 @@ index 951231fb..da94468b 100644
          .with_backend_search(*backend_search)
          .with_image_gen_config(image_gen_config.clone())
          .with_video_gen_config(video_gen_config.clone())
-@@ -418,6 +423,7 @@ pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
-         memory_workspace_path: None,
+@@ -422,6 +427,7 @@ pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
          memory_backend: None,
+         memory_v2_access: None,
          web_search_config: WebSearchConfig::default(),
 +        hosted_web_search_disabled: false,
          web_search_domains: None,
