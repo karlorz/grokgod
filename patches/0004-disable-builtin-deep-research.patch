@@ -1418,25 +1418,7 @@ index 1ddc17f7..ecff35a3 100644
      subagents_enabled: bool,
      subagents_max_depth: u32,
      workflow_max_concurrent_agents: usize,
-@@ -2621,6 +2626,17 @@ pub(crate) async fn spawn_session_on_thread(
-                         start_type = if initial_prompt_texts.is_empty() { "new" } else { "resumed" },
-                     )
-                     }
-+                };
-+                    )
-+                    }
-+                    None => {
-+                        tracing::info_span!(
-+                        "session.spawn",
-+                        session_id = %session_info.id.0,
-+                        client_type = ?client_type,
-+                        start_type = if initial_prompt_texts.is_empty() { "new" } else { "resumed" },
-+                    )
-+                    }
-                 };
-                 let actor_fut = spawn_session_actor(
-                     session_info,
-@@ -2699,6 +2715,7 @@ pub(crate) async fn spawn_session_on_thread(
+@@ -2699,6 +2704,7 @@ pub(crate) async fn spawn_session_on_thread(
                      active_agent_messages_enabled,
                      goal_enabled,
                      background_workflows_enabled,
