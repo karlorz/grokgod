@@ -11,7 +11,7 @@ on `grok update` / `grokgod update`. Current set: `0001-normalize-plugin-skill-j
 `0002-plan-mode-extra-writable`, `0003-session-persist-single`, `0004-disable-builtin-deep-research`,
 `0005-model-tools-deny-allow`, `0006-web-search-call-tolerant-parse`, `0007-hosted-web-search-splice-decouple`,
 `0008-claude-permissions-import-gate`, `0009-deepseek-chat-fix`,
-`0010-deepseek-chat-compact-lenient`.
+`0010-deepseek-chat-compact-lenient`, `0011-ask-question-timeout-action`.
 _Avoid_: Mach-O hex edit, plugin.json rewrite as the engine fix
 
 **Auth-decoupled hosted splice**:
@@ -38,6 +38,16 @@ with `invalid type: null, expected u32`.
 _Avoid_: folding into 0006 (Responses search-call), treating CPA stream
 intercept as the only fix, per-field `ChatChunkChoice.index` serde attrs
 (that class of compact omit/null is 0010)
+
+**Ask-Question timeout action**:
+`[toolset.ask_user_question] timeout_action` in grokgod `0011`. `"decline"`
+(default, official: timeout = Shift+X no-select) or `"recommended"` (single-select:
+first option whose label contains `(Recommended)`, else the first option;
+multi-select: every `(Recommended)` label joined with `, `; if none marked,
+first option only). Env `GROK_ASK_USER_QUESTION_TIMEOUT_ACTION`. Honest tool
+result prefix `Ask-Question timed out; auto-selected recommended`. No `/settings`
+row. Waiting-card empty `[ ]` boxes are not the tool result.
+_Avoid_: faking `User has answered`, overlay allowlist, settings UI this round
 
 **Compact chat lenient parse**:
 Chat Completions SSE deserialize in grokgod `0010`, sibling of 0006 in

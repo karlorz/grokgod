@@ -1,0 +1,721 @@
+diff --git a/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md b/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
+index 6686e0fd..910e2c92 100644
+--- a/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
++++ b/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
+@@ -213,6 +213,7 @@ output_byte_limit = 20000              # max captured output in bytes (default:
+ [toolset.ask_user_question]
+ timeout_enabled = true                 # false = wait forever for answers (default: true)
+ timeout_secs = 1800                    # seconds to wait when enabled (default: 1800 / 30 min)
++timeout_action = "decline"             # timeout = no selection (default). "recommended" auto-picks (Recommended): first match single-select, all marked multi-select
+ 
+ [toolset.web_fetch]
+ proxy_endpoint = "https://proxy.example.com"   # egress proxy URL
+@@ -230,7 +231,7 @@ allowed_domains = ["docs.x.ai", "arxiv.org"]
+ 
+ `[toolset.web_search]` constrains the `web_search` tool's domains — the allowlist/blocklist the search itself runs under (not a post-filter). `allowed_domains` and `excluded_domains` are **mutually exclusive**; if you set both, the allowlist wins and the blocklist is dropped with a warning. An empty or absent list is unbounded. This applies to both the backend-hosted search (models with server-side search) and the client-side fallback. A configured policy is **authoritative**: it cannot be bypassed by the model — the model's own per-call `allowed_domains` is ignored whenever you have set `allowed_domains` or `excluded_domains` here (so a blocklist is a real block). The model's per-call allowlist only applies when you have configured nothing. Resolution: requirements → user `config.toml` → managed → default (unset). Config is read at session start, so edit it before starting a session — changes don't apply mid-session.
+ 
+-`[toolset.ask_user_question]` is honored across **requirements.toml**, **managed config**, and your user **`config.toml`**. Precedence: requirements → env (`GROK_ASK_USER_QUESTION_TIMEOUT_ENABLED` / `GROK_ASK_USER_QUESTION_TIMEOUT_SECS`) → user config → managed → defaults. Set `timeout_enabled = false` in your user config to disable the automatic questionnaire timeout for yourself; `timeout_secs` must be a positive integer. You can also toggle `timeout_enabled` from `/settings` → **Ask-Question timeout** (under Agent & Approval); changes apply to newly started sessions.
++`[toolset.ask_user_question]` is honored across **requirements.toml**, **managed config**, and your user **`config.toml`**. Precedence: requirements → env (`GROK_ASK_USER_QUESTION_TIMEOUT_ENABLED` / `GROK_ASK_USER_QUESTION_TIMEOUT_SECS` / `GROK_ASK_USER_QUESTION_TIMEOUT_ACTION`) → user config → managed → defaults. Set `timeout_enabled = false` in your user config to disable the automatic questionnaire timeout for yourself; `timeout_secs` must be a positive integer. `timeout_action` is `"decline"` (official: timeout = Shift+X dismiss) or `"recommended"` (single-select: first option whose label contains `(Recommended)`, else the first option; multi-select: every `(Recommended)` label joined with `, `, same as a user submit; if none are marked, first option only). The tool result says it timed out and auto-selected; it does not fake a user click, and the waiting card's empty `[ ]` boxes are not the tool result. You can also toggle `timeout_enabled` from `/settings` → **Ask-Question timeout** (under Agent & Approval); `timeout_action` is config/env only. Changes apply to newly started sessions.
+ 
+ ### Authentication
+ 
+diff --git a/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md b/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md
+index 14fca9d5..45fb6aba 100644
+--- a/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md
++++ b/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md
+@@ -559,6 +559,7 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
+ 
+ | Key | Type / Values | Requirements | Managed | Details |
+ | --- | --- | --- | --- | --- |
++| `toolset.ask_user_question.timeout_action` | `decline / recommended` | `yes` | `user` | On questionnaire timeout: official no-select (`decline`, default) or auto-select `(Recommended)` option(s) — first match on single-select, all marked on multi-select. Also GROK_ASK_USER_QUESTION_TIMEOUT_ACTION. Not a `/settings` row. |
+ | `toolset.ask_user_question.timeout_secs` | `number` | `yes` | `user` | Timeout for the ask_user_question tool. |
+ | `toolset.bash.auto_background_on_timeout` | `boolean` | `yes` | `user` | Background the command when the foreground timeout fires. |
+ | `toolset.bash.login_shell_capture` | `boolean` | `yes` | `user` | Capture the user's login shell environment for bash. Overlay-allowlisted. |
+diff --git a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
+index dfa7efcd..a109a228 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
+@@ -229,6 +229,7 @@ fn parses_toolset_overrides() {
+             [toolset.ask_user_question]
+             timeout_enabled = false
+             timeout_secs = 30
++            timeout_action = "recommended"
+             "#,
+     )
+     .unwrap();
+@@ -236,6 +237,10 @@ fn parses_toolset_overrides() {
+     assert_eq!(cfg.toolset.bash.timeout_secs, Some(123.0));
+     assert_eq!(cfg.toolset.ask_user_question.timeout_enabled, Some(false));
+     assert_eq!(cfg.toolset.ask_user_question.timeout_secs, Some(30));
++    assert_eq!(
++        cfg.toolset.ask_user_question.timeout_action.as_deref(),
++        Some("recommended")
++    );
+ }
+ #[test]
+ fn parses_toolset_bash_float_timeout() {
+diff --git a/crates/codegen/xai-grok-shell/src/tools/config.rs b/crates/codegen/xai-grok-shell/src/tools/config.rs
+index 44a0d97b..5a5036d4 100644
+--- a/crates/codegen/xai-grok-shell/src/tools/config.rs
++++ b/crates/codegen/xai-grok-shell/src/tools/config.rs
+@@ -91,6 +91,8 @@ pub struct AskUserQuestionToolConfig {
+     pub timeout_enabled: Option<bool>,
+     /// Wait budget in seconds when the timer is enabled (positive integer; default: 1800 / 30 minutes).
+     pub timeout_secs: Option<u64>,
++    /// On timer expiry: `"decline"` (official, default) or `"recommended"`.
++    pub timeout_action: Option<String>,
+ }
+ 
+ /// User configurable settings for the web_fetch tool (`[toolset.web_fetch]`).
+diff --git a/crates/codegen/xai-grok-shell/src/util/config/persist.rs b/crates/codegen/xai-grok-shell/src/util/config/persist.rs
+index 7738fa84..09520443 100644
+--- a/crates/codegen/xai-grok-shell/src/util/config/persist.rs
++++ b/crates/codegen/xai-grok-shell/src/util/config/persist.rs
+@@ -192,7 +192,8 @@ fn merge_ask_user_question_section(
+     table: &mut TomlMap<String, TomlValue>,
+     ask: &crate::tools::config::AskUserQuestionToolConfig,
+ ) {
+-    if ask.timeout_enabled.is_none() && ask.timeout_secs.is_none() {
++    if ask.timeout_enabled.is_none() && ask.timeout_secs.is_none() && ask.timeout_action.is_none()
++    {
+         return;
+     }
+     let toolset = table
+diff --git a/crates/codegen/xai-grok-shell/src/util/config/resolve/toolset.rs b/crates/codegen/xai-grok-shell/src/util/config/resolve/toolset.rs
+index c9ebb27a..be795dbf 100644
+--- a/crates/codegen/xai-grok-shell/src/util/config/resolve/toolset.rs
++++ b/crates/codegen/xai-grok-shell/src/util/config/resolve/toolset.rs
+@@ -290,6 +290,7 @@ mod login_shell_capture_tests {
+ 
+ /// Env override for `[toolset.ask_user_question] timeout_enabled`. The secs env
+ /// var lives in the tools crate (`RESPONSE_TIMEOUT_ENV`), parsed once there.
++/// `timeout_action` env lives in the tools crate (`TIMEOUT_ACTION_ENV`).
+ const ENV_ASK_USER_QUESTION_TIMEOUT_ENABLED: &str = "GROK_ASK_USER_QUESTION_TIMEOUT_ENABLED";
+ 
+ fn ask_user_question_timeout_enabled_from_toml(v: Option<&TomlValue>) -> Option<bool> {
+@@ -316,6 +317,46 @@ fn ask_user_question_timeout_secs_from_toml(v: Option<&TomlValue>) -> Option<u64
+     valid
+ }
+ 
++fn ask_user_question_timeout_action_from_toml(
++    v: Option<&TomlValue>,
++) -> Option<ask_user_question::TimeoutAction> {
++    let raw = v?
++        .get("toolset")?
++        .get("ask_user_question")?
++        .get("timeout_action")?
++        .as_str()?;
++    ask_user_question::timeout_action_from_str(raw)
++}
++
++/// Pure precedence for timeout_action; default is official decline.
++fn resolve_ask_user_question_timeout_action_from_tiers(
++    requirement: Option<ask_user_question::TimeoutAction>,
++    env: Option<ask_user_question::TimeoutAction>,
++    config: Option<ask_user_question::TimeoutAction>,
++    managed: Option<ask_user_question::TimeoutAction>,
++) -> ask_user_question::TimeoutAction {
++    requirement
++        .or(env)
++        .or(config)
++        .or(managed)
++        .unwrap_or(ask_user_question::TimeoutAction::Decline)
++}
++
++fn resolve_ask_user_question_timeout_action(
++    requirements: Option<&TomlValue>,
++    user: Option<&TomlValue>,
++    managed: Option<&TomlValue>,
++    system_managed: Option<&TomlValue>,
++) -> ask_user_question::TimeoutAction {
++    resolve_ask_user_question_timeout_action_from_tiers(
++        ask_user_question_timeout_action_from_toml(requirements),
++        ask_user_question::timeout_action_from_env(),
++        ask_user_question_timeout_action_from_toml(user),
++        ask_user_question_timeout_action_from_toml(managed)
++            .or_else(|| ask_user_question_timeout_action_from_toml(system_managed)),
++    )
++}
++
+ /// Precedence: requirements > env (`GROK_ASK_USER_QUESTION_TIMEOUT_ENABLED`) > user `config.toml` > managed (user-level `managed_config.toml`
+ /// over the system-managed layer, matching `effective_config()`'s merge order) > remote settings > default `true`.
+ fn resolve_ask_user_question_timeout_enabled(
+@@ -412,6 +453,12 @@ pub(crate) fn resolve_ask_user_question_params_from_disk(
+             system_managed,
+             remote.and_then(|r| r.ask_user_question_timeout_secs),
+         )),
++        timeout_action: Some(resolve_ask_user_question_timeout_action(
++            requirements.as_ref(),
++            user,
++            managed,
++            system_managed,
++        )),
+         // AgentBuilder stamps this session state on a non-interactive spawn; it is not a config key, so the resolver must leave it unset
+         non_interactive: None,
+     }
+@@ -594,7 +641,9 @@ mod web_search_domains_tests {
+ mod ask_user_question_timeout_tests {
+     use super::*;
+     use crate::agent::config::ConfigSource;
+-    use xai_grok_tools::implementations::grok_build::ask_user_question::RESPONSE_TIMEOUT_ENV;
++    use xai_grok_tools::implementations::grok_build::ask_user_question::{
++        TimeoutAction, RESPONSE_TIMEOUT_ENV, TIMEOUT_ACTION_ENV,
++    };
+ 
+     // Both env vars are process-global (a dev exports the secs var for TUI repro); serialize and force them unset so these tests can't go flaky
+     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+@@ -602,6 +651,7 @@ mod ask_user_question_timeout_tests {
+         let g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+         unsafe { std::env::remove_var(ENV_ASK_USER_QUESTION_TIMEOUT_ENABLED) };
+         unsafe { std::env::remove_var(RESPONSE_TIMEOUT_ENV) };
++        unsafe { std::env::remove_var(TIMEOUT_ACTION_ENV) };
+         g
+     }
+ 
+@@ -726,6 +776,54 @@ mod ask_user_question_timeout_tests {
+             30
+         );
+     }
++
++    #[test]
++    fn timeout_action_tier_precedence() {
++        let _g = guard();
++        let r = resolve_ask_user_question_timeout_action_from_tiers;
++        assert_eq!(
++            r(None, None, None, None),
++            TimeoutAction::Decline,
++            "default stays official decline"
++        );
++        assert_eq!(
++            r(
++                Some(TimeoutAction::Decline),
++                Some(TimeoutAction::Recommended),
++                Some(TimeoutAction::Recommended),
++                Some(TimeoutAction::Recommended),
++            ),
++            TimeoutAction::Decline
++        );
++        assert_eq!(
++            r(
++                None,
++                Some(TimeoutAction::Recommended),
++                Some(TimeoutAction::Decline),
++                None,
++            ),
++            TimeoutAction::Recommended
++        );
++        assert_eq!(
++            r(None, None, Some(TimeoutAction::Recommended), None),
++            TimeoutAction::Recommended
++        );
++        let rec = toml_ask("timeout_action = \"recommended\"");
++        let dec = toml_ask("timeout_action = \"decline\"");
++        assert_eq!(
++            resolve_ask_user_question_timeout_action(None, Some(&rec), Some(&dec), None),
++            TimeoutAction::Recommended
++        );
++        assert_eq!(
++            resolve_ask_user_question_timeout_action(Some(&dec), Some(&rec), None, None),
++            TimeoutAction::Decline
++        );
++        let bogus = toml_ask("timeout_action = \"bogus\"");
++        assert_eq!(
++            resolve_ask_user_question_timeout_action(None, Some(&bogus), None, None),
++            TimeoutAction::Decline
++        );
++    }
+ }
+ 
+ #[cfg(test)]
+diff --git a/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/format.rs b/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/format.rs
+index 3b9edc2c..4a0baf8b 100644
+--- a/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/format.rs
++++ b/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/format.rs
+@@ -11,6 +11,7 @@ use std::collections::HashMap;
+ use indexmap::IndexMap;
+ 
+ use super::Question;
++use super::QuestionOption;
+ use super::types::QuestionAnnotation;
+ 
+ // ── Path D: Cancel ──────────────────────────────────────────────────────
+@@ -34,6 +35,63 @@ pub fn unanswered_text(non_interactive: bool) -> &'static str {
+     }
+ }
+ 
++// ── Timeout + recommended (grokgod timeout_action) ──────────────────────
++
++/// Honest prefix when timeout auto-selects the recommended option. Must not
++/// claim the user answered (`format_accepted_tool_result`).
++pub const TIMEOUT_RECOMMENDED_PREFIX: &str =
++    "Ask-Question timed out; auto-selected recommended";
++
++/// Labels timeout should auto-select.
++///
++/// Single-select: first `(Recommended)`, else the first option.
++/// Multi-select: every `(Recommended)` label; if none, the first option only.
++pub fn recommended_labels(options: &[QuestionOption], multi_select: bool) -> Vec<&str> {
++    let marked: Vec<&str> = options
++        .iter()
++        .filter(|o| o.label.contains("(Recommended)"))
++        .map(|o| o.label.as_str())
++        .collect();
++    if !marked.is_empty() {
++        if multi_select {
++            return marked;
++        }
++        return marked.into_iter().take(1).collect();
++    }
++    options
++        .first()
++        .map(|o| o.label.as_str())
++        .into_iter()
++        .collect()
++}
++
++/// First option whose label contains `(Recommended)`, else the first option.
++pub fn recommended_label(options: &[QuestionOption]) -> Option<&str> {
++    recommended_labels(options, false).into_iter().next()
++}
++
++/// Tool result for timeout + `timeout_action = "recommended"`. Questions with
++/// no options are omitted; if none remain, official cancel text is used.
++pub fn timeout_recommended_text(questions: &[Question]) -> String {
++    let entries: Vec<String> = questions
++        .iter()
++        .filter_map(|q| {
++            let labels = recommended_labels(&q.options, q.multi_select.unwrap_or(false));
++            if labels.is_empty() {
++                return None;
++            }
++            Some(format!("\"{}\"=\"{}\"", q.question, labels.join(", ")))
++        })
++        .collect();
++    if entries.is_empty() {
++        return CANCEL_TEXT.to_string();
++    }
++    format!(
++        "{TIMEOUT_RECOMMENDED_PREFIX}: {}. Continue with that choice.",
++        entries.join(", ")
++    )
++}
++
+ // ── Path A: Accepted ────────────────────────────────────────────────────
+ 
+ /// Format the tool result for Path A (user accepted and submitted answers). Only answered questions appear (unanswered are omitted by the
+@@ -625,4 +683,99 @@ mod tests {
+         // "Questions asked" line has no leading spaces
+         assert!(result.contains("\nQuestions asked and answers provided:\n"));
+     }
++
++    #[test]
++    fn recommended_label_prefers_recommended_marker() {
++        let q = make_question(
++            "Pick?",
++            &["Skip", "Yes — implement now (Recommended)", "Stop"],
++        );
++        assert_eq!(
++            recommended_label(&q.options),
++            Some("Yes — implement now (Recommended)")
++        );
++    }
++
++    #[test]
++    fn recommended_label_falls_back_to_first_option() {
++        let q = make_question("Pick?", &["Alpha", "Beta"]);
++        assert_eq!(recommended_label(&q.options), Some("Alpha"));
++    }
++
++    #[test]
++    fn recommended_label_empty_options_is_none() {
++        let q = make_question("Pick?", &[]);
++        assert_eq!(recommended_label(&q.options), None);
++    }
++
++    #[test]
++    fn timeout_recommended_text_is_honest_not_user_answered() {
++        let questions = vec![make_question(
++            "Approve this design?",
++            &["Yes — implement now (Recommended)", "Stop"],
++        )];
++        let result = timeout_recommended_text(&questions);
++        assert!(result.starts_with(TIMEOUT_RECOMMENDED_PREFIX));
++        assert!(result.contains(
++            "\"Approve this design?\"=\"Yes — implement now (Recommended)\""
++        ));
++        assert!(result.contains("Continue with that choice."));
++        assert!(
++            !result.contains("User has answered"),
++            "must not fake a user click: {result}"
++        );
++        assert_ne!(result, CANCEL_TEXT);
++    }
++
++    #[test]
++    fn timeout_recommended_text_no_options_keeps_cancel_text() {
++        let questions = vec![make_question("Nothing to pick?", &[])];
++        assert_eq!(timeout_recommended_text(&questions), CANCEL_TEXT);
++    }
++
++    #[test]
++    fn timeout_recommended_multi_select_picks_all_recommended() {
++        let mut q = make_question(
++            "Timeout multi-select probe?",
++            &[
++                "Keep A — not recommended",
++                "Keep B — auto-select this (Recommended)",
++                "Keep C — also not this",
++                "Keep D — also recommended (Recommended)",
++            ],
++        );
++        q.multi_select = Some(true);
++        let result = timeout_recommended_text(&[q]);
++        assert!(result.contains(
++            "\"Timeout multi-select probe?\"=\"Keep B — auto-select this (Recommended), Keep D — also recommended (Recommended)\""
++        ));
++        assert!(!result.contains("Keep A — not recommended"));
++        assert!(!result.contains("Keep C — also not this"));
++        assert!(!result.contains("User has answered"));
++    }
++
++    #[test]
++    fn timeout_recommended_single_select_keeps_first_recommended_only() {
++        let q = make_question(
++            "Pick one?",
++            &[
++                "A (Recommended)",
++                "B (Recommended)",
++                "C",
++            ],
++        );
++        let result = timeout_recommended_text(&[q]);
++        assert!(result.contains("\"Pick one?\"=\"A (Recommended)\""));
++        assert!(!result.contains("B (Recommended)"));
++    }
++
++    #[test]
++    fn timeout_recommended_multi_select_no_marker_falls_back_to_first_only() {
++        let mut q = make_question("Pick any?", &["Alpha", "Beta", "Gamma"]);
++        q.multi_select = Some(true);
++        let result = timeout_recommended_text(&[q]);
++        assert!(result.contains("\"Pick any?\"=\"Alpha\""));
++        assert!(!result.contains("Beta"));
++        assert!(!result.contains("Gamma"));
++    }
+ }
+diff --git a/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/mod.rs b/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/mod.rs
+index 51832e43..4cab3e49 100644
+--- a/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/mod.rs
++++ b/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/mod.rs
+@@ -60,6 +60,42 @@ pub const DEFAULT_ASK_USER_QUESTION_TIMEOUT_ENABLED: bool = true;
+ /// Env var: override [`RESPONSE_TIMEOUT`] with a duration in **seconds**.
+ pub const RESPONSE_TIMEOUT_ENV: &str = "GROK_ASK_USER_QUESTION_TIMEOUT_SECS";
+ 
++/// Env var: override `[toolset.ask_user_question] timeout_action`.
++pub const TIMEOUT_ACTION_ENV: &str = "GROK_ASK_USER_QUESTION_TIMEOUT_ACTION";
++
++/// What the questionnaire timer does on expiry. Default stays official decline
++/// (same text as Shift+X). `Recommended` auto-selects marked `(Recommended)`
++/// labels: first match on single-select, every marked label on multi-select.
++#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
++#[serde(rename_all = "lowercase")]
++pub enum TimeoutAction {
++    #[default]
++    Decline,
++    Recommended,
++}
++
++/// Parse `decline` / `recommended` (case-insensitive). Invalid values warn and
++/// are treated as unset so the layer falls through.
++pub fn timeout_action_from_str(raw: &str) -> Option<TimeoutAction> {
++    match raw.trim().to_ascii_lowercase().as_str() {
++        "decline" => Some(TimeoutAction::Decline),
++        "recommended" => Some(TimeoutAction::Recommended),
++        "" => None,
++        _ => {
++            tracing::warn!(
++                value = %raw,
++                "invalid ask_user_question timeout_action; ignoring"
++            );
++            None
++        }
++    }
++}
++
++/// Parse [`TIMEOUT_ACTION_ENV`]. Invalid or empty values are unset.
++pub fn timeout_action_from_env() -> Option<TimeoutAction> {
++    timeout_action_from_str(&std::env::var(TIMEOUT_ACTION_ENV).ok()?)
++}
++
+ /// Parse the [`RESPONSE_TIMEOUT_ENV`] override (positive integer seconds). Invalid or non-positive
+ /// values are warned and treated as unset. Single source for this parse — the shell's env tier
+ /// calls it too, so the two resolutions can't drift.
+@@ -98,6 +134,10 @@ pub struct AskUserQuestionParams {
+     /// `None` falls back to the env override / [`RESPONSE_TIMEOUT`].
+     #[serde(default)]
+     pub timeout_secs: Option<u64>,
++    /// On timer expiry: official decline, or auto-select recommended.
++    /// `None` falls back to the env override / [`TimeoutAction::Decline`].
++    #[serde(default)]
++    pub timeout_action: Option<TimeoutAction>,
+     /// Session state stamped by the agent builder for non-interactive
+     /// sessions (headless `-p`, SDK) — NOT a user config key. `Some(true)`
+     /// switches the cancel/timeout result to [`format::NO_OPERATOR_TEXT`].
+@@ -129,6 +169,13 @@ impl AskUserQuestionParams {
+             None => Some(response_timeout()),
+         }
+     }
++
++    /// Effective timeout action: params, else env, else official decline.
++    pub fn resolved_timeout_action(&self) -> TimeoutAction {
++        self.timeout_action
++            .or_else(timeout_action_from_env)
++            .unwrap_or(TimeoutAction::Decline)
++    }
+ }
+ 
+ /// A single option within a question.
+@@ -440,13 +487,20 @@ impl xai_tool_runtime::Tool for AskUserQuestionTool {
+                 tracing::info!(
+                     question_count,
+                     timeout_secs = ?wait.map(|d| d.as_secs()),
++                    timeout_action = ?params.resolved_timeout_action(),
+                     "User question timed out; continuing without answers"
+                 );
+                 // Drop the oneshot receiver on return. The shell coordinator races `result_tx.closed()` against ACP so it unblocks and
+-                // can open the next questionnaire (stale UI is cancelled when a new ext_method arrives). Same model text as cancel.
+-                return Ok(AskUserQuestionOutput::UserAnswered {
+-                    message: unanswered.to_string(),
+-                });
++                // can open the next questionnaire (stale UI is cancelled when a new ext_method arrives).
++                // Non-interactive stays unanswered (no operator). Interactive `recommended` auto-selects.
++                let message = if params.non_interactive.unwrap_or(false) {
++                    unanswered.to_string()
++                } else if params.resolved_timeout_action() == TimeoutAction::Recommended {
++                    format::timeout_recommended_text(&input.questions)
++                } else {
++                    unanswered.to_string()
++                };
++                return Ok(AskUserQuestionOutput::UserAnswered { message });
+             }
+         };
+ 
+@@ -867,6 +921,7 @@ mod tests {
+         let (shared, mut rx) = resources_with_sender_and_params(AskUserQuestionParams {
+             timeout_enabled: Some(true),
+             timeout_secs: Some(5),
++            timeout_action: None,
+             non_interactive: Some(true),
+         });
+         let tool = AskUserQuestionTool;
+@@ -1015,12 +1070,14 @@ mod tests {
+         let disabled = AskUserQuestionParams {
+             timeout_enabled: Some(false),
+             timeout_secs: Some(30),
++            timeout_action: None,
+             non_interactive: None,
+         };
+         assert_eq!(disabled.wait_budget(), None, "disabled timer waits forever");
+         let zero = AskUserQuestionParams {
+             timeout_enabled: Some(true),
+             timeout_secs: Some(0),
++            timeout_action: None,
+             non_interactive: None,
+         };
+         assert_eq!(
+@@ -1037,6 +1094,7 @@ mod tests {
+         let (shared, mut rx) = resources_with_sender_and_params(AskUserQuestionParams {
+             timeout_enabled: Some(true),
+             timeout_secs: Some(5),
++            timeout_action: None,
+             non_interactive: None,
+         });
+         let tool = AskUserQuestionTool;
+@@ -1073,6 +1131,7 @@ mod tests {
+         let (shared, mut rx) = resources_with_sender_and_params(AskUserQuestionParams {
+             timeout_enabled: Some(false),
+             timeout_secs: Some(1),
++            timeout_action: None,
+             non_interactive: None,
+         });
+         let tool = AskUserQuestionTool;
+@@ -1117,6 +1176,179 @@ mod tests {
+         }
+     }
+ 
++    #[test]
++    fn timeout_action_from_str_parses_and_rejects() {
++        assert_eq!(
++            timeout_action_from_str("recommended"),
++            Some(TimeoutAction::Recommended)
++        );
++        assert_eq!(
++            timeout_action_from_str("Decline"),
++            Some(TimeoutAction::Decline)
++        );
++        assert_eq!(timeout_action_from_str(""), None);
++        assert_eq!(timeout_action_from_str("bogus"), None);
++    }
++
++    /// `timeout_action = recommended` on expiry auto-selects the marked option
++    /// with honest text, not official decline and not "User has answered".
++    #[tokio::test(start_paused = true)]
++    async fn short_params_timeout_recommended_auto_selects() {
++        let (shared, mut rx) = resources_with_sender_and_params(AskUserQuestionParams {
++            timeout_enabled: Some(true),
++            timeout_secs: Some(5),
++            timeout_action: Some(TimeoutAction::Recommended),
++            non_interactive: None,
++        });
++        let tool = AskUserQuestionTool;
++
++        let input = AskUserQuestionInput {
++            questions: vec![make_question(
++                "Approve?",
++                &["Yes — implement now (Recommended)", "Stop"],
++            )],
++            use_id_keyed_format: false,
++        };
++
++        let handle = tokio::spawn({
++            let shared = shared.clone();
++            async move {
++                xai_tool_runtime::Tool::run(
++                    &tool,
++                    test_ctx_with_call_id(shared, "tc-rec"),
++                    input,
++                )
++                .await
++            }
++        });
++
++        let _request = rx.recv().await.expect("should receive request");
++        tokio::time::advance(std::time::Duration::from_secs(6)).await;
++
++        let result = handle.await.unwrap().unwrap();
++        match result {
++            AskUserQuestionOutput::UserAnswered { message } => {
++                assert_eq!(
++                    message,
++                    format::timeout_recommended_text(&[make_question(
++                        "Approve?",
++                        &["Yes — implement now (Recommended)", "Stop"],
++                    )])
++                );
++                assert!(message.contains("auto-selected recommended"));
++                assert!(!message.contains("User has answered"));
++                assert_ne!(message, format::CANCEL_TEXT);
++            }
++            other => panic!("Expected UserAnswered with recommended text, got {:?}", other),
++        }
++    }
++
++    /// Multi-select + recommended timeout picks every `(Recommended)` label,
++    /// joined with `, `, not first-match only.
++    #[tokio::test(start_paused = true)]
++    async fn short_params_timeout_recommended_multi_select_picks_all() {
++        let (shared, mut rx) = resources_with_sender_and_params(AskUserQuestionParams {
++            timeout_enabled: Some(true),
++            timeout_secs: Some(5),
++            timeout_action: Some(TimeoutAction::Recommended),
++            non_interactive: None,
++        });
++        let tool = AskUserQuestionTool;
++
++        let mut question = make_question(
++            "Timeout multi-select probe?",
++            &[
++                "Keep A — not recommended",
++                "Keep B — auto-select this (Recommended)",
++                "Keep C — also not this",
++                "Keep D — also recommended (Recommended)",
++            ],
++        );
++        question.multi_select = Some(true);
++        let input = AskUserQuestionInput {
++            questions: vec![question.clone()],
++            use_id_keyed_format: false,
++        };
++
++        let handle = tokio::spawn({
++            let shared = shared.clone();
++            async move {
++                xai_tool_runtime::Tool::run(
++                    &tool,
++                    test_ctx_with_call_id(shared, "tc-rec-ms"),
++                    input,
++                )
++                .await
++            }
++        });
++
++        let _request = rx.recv().await.expect("should receive request");
++        tokio::time::advance(std::time::Duration::from_secs(6)).await;
++
++        let result = handle.await.unwrap().unwrap();
++        match result {
++            AskUserQuestionOutput::UserAnswered { message } => {
++                assert_eq!(
++                    message,
++                    format::timeout_recommended_text(&[question])
++                );
++                assert!(message.contains(
++                    "Keep B — auto-select this (Recommended), Keep D — also recommended (Recommended)"
++                ));
++                assert!(!message.contains("Keep A — not recommended"));
++                assert!(!message.contains("Keep C — also not this"));
++                assert!(!message.contains("User has answered"));
++            }
++            other => panic!(
++                "Expected UserAnswered with all recommended labels, got {:?}",
++                other
++            ),
++        }
++    }
++
++    /// Non-interactive timeout stays no-operator even if recommended is set.
++    #[tokio::test(start_paused = true)]
++    async fn non_interactive_timeout_ignores_recommended_action() {
++        let (shared, mut rx) = resources_with_sender_and_params(AskUserQuestionParams {
++            timeout_enabled: Some(true),
++            timeout_secs: Some(5),
++            timeout_action: Some(TimeoutAction::Recommended),
++            non_interactive: Some(true),
++        });
++        let tool = AskUserQuestionTool;
++
++        let input = AskUserQuestionInput {
++            questions: vec![make_question("Q?", &["A (Recommended)", "B"])],
++            use_id_keyed_format: false,
++        };
++
++        let handle = tokio::spawn({
++            let shared = shared.clone();
++            async move {
++                xai_tool_runtime::Tool::run(
++                    &tool,
++                    test_ctx_with_call_id(shared, "tc-ni-rec"),
++                    input,
++                )
++                .await
++            }
++        });
++
++        let _request = rx.recv().await.expect("should receive request");
++        tokio::time::advance(std::time::Duration::from_secs(6)).await;
++
++        let result = handle.await.unwrap().unwrap();
++        match result {
++            AskUserQuestionOutput::UserAnswered { message } => {
++                assert_eq!(message, format::NO_OPERATOR_TEXT);
++            }
++            other => panic!(
++                "Expected UserAnswered with no-operator text, got {:?}",
++                other
++            ),
++        }
++    }
++
+     // ── Failure path tests ───────────────────────────────────────────────
+ 
+     #[tokio::test]
