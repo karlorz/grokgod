@@ -39,15 +39,18 @@ _Avoid_: folding into 0006 (Responses search-call), treating CPA stream
 intercept as the only fix, per-field `ChatChunkChoice.index` serde attrs
 (that class of compact omit/null is 0010)
 
-**Ask-Question timeout action**:
+**Ask-Question timeout action and idle-reset**:
 `[toolset.ask_user_question] timeout_action` in grokgod `0011`. `"decline"`
 (default, official: timeout = Shift+X no-select) or `"recommended"` (single-select:
 first option whose label contains `(Recommended)`, else the first option;
 multi-select: every `(Recommended)` label joined with `, `; if none marked,
 first option only). Env `GROK_ASK_USER_QUESTION_TIMEOUT_ACTION`. Honest tool
-result prefix `Ask-Question timed out; auto-selected recommended`. No `/settings`
-row. Waiting-card empty `[ ]` boxes are not the tool result.
-_Avoid_: faking `User has answered`, overlay allowlist, settings UI this round
+result prefix `Ask-Question timed out; auto-selected recommended`.
+Idle-reset via `timeout_reset_on_activity` (default `true`, env `GROK_ASK_USER_QUESTION_TIMEOUT_IDLE_RESET`):
+any click, key, or focus-regain restarts timeout_secs; timer only expires after
+last activity + timeout_secs. Pager emits `x.ai/ask_user_question_activity` ExtNotification
+to coordinator. No `/settings` row. Waiting-card empty `[ ]` boxes are not the tool result.
+_Avoid_: disable-once, faking `User has answered`, overlay allowlist, settings UI this round
 
 **Compact chat lenient parse**:
 Chat Completions SSE deserialize in grokgod `0010`, sibling of 0006 in

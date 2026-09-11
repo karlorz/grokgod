@@ -34,6 +34,10 @@ grep -q "GROK_ASK_USER_QUESTION_TIMEOUT_ACTION" "$PATCH_0011" || { echo "FAIL: M
 grep -q "timeout_recommended_text" "$PATCH_0011" || { echo "FAIL: Missing timeout_recommended_text in 0011"; exit 1; }
 grep -q "recommended_labels" "$PATCH_0011" || { echo "FAIL: Missing recommended_labels (multi-select all marked) in 0011"; exit 1; }
 grep -q "timeout_recommended_multi_select_picks_all" "$PATCH_0011" || { echo "FAIL: Missing multi-select all-recommended tests in 0011"; exit 1; }
+grep -q "timeout_reset_on_activity" "$PATCH_0011" || { echo "FAIL: Missing timeout_reset_on_activity in 0011"; exit 1; }
+grep -q "GROK_ASK_USER_QUESTION_TIMEOUT_IDLE_RESET" "$PATCH_0011" || { echo "FAIL: Missing GROK_ASK_USER_QUESTION_TIMEOUT_IDLE_RESET env in 0011"; exit 1; }
+grep -q "ask_user_question_activity" "$PATCH_0011" || { echo "FAIL: Missing ask_user_question_activity in 0011"; exit 1; }
+grep -q "activity_tx" "$PATCH_0011" || { echo "FAIL: Missing activity_tx in 0011"; exit 1; }
 grep -q "crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/mod.rs" "$PATCH_0011" || { echo "FAIL: Missing ask_user_question/mod.rs diff in 0011"; exit 1; }
 grep -q "crates/codegen/xai-grok-shell/src/util/config/resolve/toolset.rs" "$PATCH_0011" || { echo "FAIL: Missing toolset resolver diff in 0011"; exit 1; }
 if grep -q "SetAskUserQuestionTimeoutAction" "$PATCH_0011"; then

@@ -1,49 +1,202 @@
 diff --git a/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md b/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
-index 6686e0fd..910e2c92 100644
+index 6686e0fd..b4ae7281 100644
 --- a/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
 +++ b/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
-@@ -213,6 +213,7 @@ output_byte_limit = 20000              # max captured output in bytes (default:
+@@ -213,6 +213,8 @@ output_byte_limit = 20000              # max captured output in bytes (default:
  [toolset.ask_user_question]
  timeout_enabled = true                 # false = wait forever for answers (default: true)
  timeout_secs = 1800                    # seconds to wait when enabled (default: 1800 / 30 min)
 +timeout_action = "decline"             # timeout = no selection (default). "recommended" auto-picks (Recommended): first match single-select, all marked multi-select
++timeout_reset_on_activity = true       # true = key/click/focus activity restarts timeout (default: true)
  
  [toolset.web_fetch]
  proxy_endpoint = "https://proxy.example.com"   # egress proxy URL
-@@ -230,7 +231,7 @@ allowed_domains = ["docs.x.ai", "arxiv.org"]
+@@ -230,7 +232,7 @@ allowed_domains = ["docs.x.ai", "arxiv.org"]
  
  `[toolset.web_search]` constrains the `web_search` tool's domains — the allowlist/blocklist the search itself runs under (not a post-filter). `allowed_domains` and `excluded_domains` are **mutually exclusive**; if you set both, the allowlist wins and the blocklist is dropped with a warning. An empty or absent list is unbounded. This applies to both the backend-hosted search (models with server-side search) and the client-side fallback. A configured policy is **authoritative**: it cannot be bypassed by the model — the model's own per-call `allowed_domains` is ignored whenever you have set `allowed_domains` or `excluded_domains` here (so a blocklist is a real block). The model's per-call allowlist only applies when you have configured nothing. Resolution: requirements → user `config.toml` → managed → default (unset). Config is read at session start, so edit it before starting a session — changes don't apply mid-session.
  
 -`[toolset.ask_user_question]` is honored across **requirements.toml**, **managed config**, and your user **`config.toml`**. Precedence: requirements → env (`GROK_ASK_USER_QUESTION_TIMEOUT_ENABLED` / `GROK_ASK_USER_QUESTION_TIMEOUT_SECS`) → user config → managed → defaults. Set `timeout_enabled = false` in your user config to disable the automatic questionnaire timeout for yourself; `timeout_secs` must be a positive integer. You can also toggle `timeout_enabled` from `/settings` → **Ask-Question timeout** (under Agent & Approval); changes apply to newly started sessions.
-+`[toolset.ask_user_question]` is honored across **requirements.toml**, **managed config**, and your user **`config.toml`**. Precedence: requirements → env (`GROK_ASK_USER_QUESTION_TIMEOUT_ENABLED` / `GROK_ASK_USER_QUESTION_TIMEOUT_SECS` / `GROK_ASK_USER_QUESTION_TIMEOUT_ACTION`) → user config → managed → defaults. Set `timeout_enabled = false` in your user config to disable the automatic questionnaire timeout for yourself; `timeout_secs` must be a positive integer. `timeout_action` is `"decline"` (official: timeout = Shift+X dismiss) or `"recommended"` (single-select: first option whose label contains `(Recommended)`, else the first option; multi-select: every `(Recommended)` label joined with `, `, same as a user submit; if none are marked, first option only). The tool result says it timed out and auto-selected; it does not fake a user click, and the waiting card's empty `[ ]` boxes are not the tool result. You can also toggle `timeout_enabled` from `/settings` → **Ask-Question timeout** (under Agent & Approval); `timeout_action` is config/env only. Changes apply to newly started sessions.
++`[toolset.ask_user_question]` is honored across **requirements.toml**, **managed config**, and your user **`config.toml`**. Precedence: requirements → env (`GROK_ASK_USER_QUESTION_TIMEOUT_ENABLED` / `GROK_ASK_USER_QUESTION_TIMEOUT_SECS` / `GROK_ASK_USER_QUESTION_TIMEOUT_ACTION` / `GROK_ASK_USER_QUESTION_TIMEOUT_IDLE_RESET`) → user config → managed → defaults. Set `timeout_enabled = false` in your user config to disable the automatic questionnaire timeout for yourself; `timeout_secs` must be a positive integer. `timeout_action` is `"decline"` (official: timeout = Shift+X dismiss) or `"recommended"` (single-select: first option whose label contains `(Recommended)`, else the first option; multi-select: every `(Recommended)` label joined with `, `, same as a user submit; if none are marked, first option only). `timeout_reset_on_activity` defaults to `true`, restarting the timeout upon user interaction (clicks, keys, tab/overlay focus regain). The tool result says it timed out and auto-selected; it does not fake a user click, and the waiting card's empty `[ ]` boxes are not the tool result. You can also toggle `timeout_enabled` from `/settings` → **Ask-Question timeout** (under Agent & Approval); `timeout_action` and `timeout_reset_on_activity` are config/env only. Changes apply to newly started sessions.
  
  ### Authentication
  
 diff --git a/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md b/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md
-index 14fca9d5..45fb6aba 100644
+index 14fca9d5..109528df 100644
 --- a/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md
 +++ b/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md
-@@ -559,6 +559,7 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
+@@ -559,6 +559,8 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
  
  | Key | Type / Values | Requirements | Managed | Details |
  | --- | --- | --- | --- | --- |
 +| `toolset.ask_user_question.timeout_action` | `decline / recommended` | `yes` | `user` | On questionnaire timeout: official no-select (`decline`, default) or auto-select `(Recommended)` option(s) — first match on single-select, all marked on multi-select. Also GROK_ASK_USER_QUESTION_TIMEOUT_ACTION. Not a `/settings` row. |
++| `toolset.ask_user_question.timeout_reset_on_activity` | `boolean` | `yes` | `user` | When true (default), user interactions (keys, clicks, focus regain) reset the timeout. Also GROK_ASK_USER_QUESTION_TIMEOUT_IDLE_RESET. Not a `/settings` row. |
  | `toolset.ask_user_question.timeout_secs` | `number` | `yes` | `user` | Timeout for the ask_user_question tool. |
  | `toolset.bash.auto_background_on_timeout` | `boolean` | `yes` | `user` | Background the command when the foreground timeout fires. |
  | `toolset.bash.login_shell_capture` | `boolean` | `yes` | `user` | Capture the user's login shell environment for bash. Overlay-allowlisted. |
+diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs
+index 2476c5e1..c5c5fe15 100644
+--- a/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs
++++ b/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs
+@@ -23,7 +23,45 @@ enum QuestionSwitch {
+     Next,
+     Prev,
+ }
++
++const QUESTION_ACTIVITY_COALESCE_MS: u128 = 250;
++
+ impl AgentView {
++    /// Emit an activity ping to the coordinator if an ACP questionnaire is open and coalescing permits.
++    pub(crate) fn maybe_send_question_activity_ping(&mut self) {
++        let Some(ref qv) = self.question_view else {
++            return;
++        };
++        if qv.local_kind.is_some() {
++            return;
++        }
++        let Some(ref session_id) = self.session.session_id else {
++            return;
++        };
++        let now = Instant::now();
++        if let Some(last) = self.last_activity_ping {
++            if now.duration_since(last).as_millis() < QUESTION_ACTIVITY_COALESCE_MS {
++                return;
++            }
++        }
++        self.last_activity_ping = Some(now);
++        let params = serde_json::json!({
++            "sessionId": session_id.0.as_ref(),
++            "toolCallId": qv.tool_call_id.as_str(),
++        });
++        let notification = agent_client_protocol::ExtNotification::new(
++            "x.ai/ask_user_question_activity",
++            serde_json::value::to_raw_value(&params)
++                .expect("serialize ask_user_question_activity params")
++                .into(),
++        );
++        let (response_tx, _response_rx) = tokio::sync::oneshot::channel();
++        let args = xai_acp_lib::AcpArgs {
++            request: notification,
++            response_tx,
++        };
++        let _ = self.session.acp_tx.send(args.into());
++    }
+     /// Handle key input for the permission card.
+     /// Like the question card it has an option-row mode and text modes (a followup message to the agent, and a hand-written always-allow pattern).
+     /// `Esc` steps back down through them ([`AgentView::card_esc`]) and `Ctrl+C` is the only cancel.
+@@ -325,6 +363,14 @@ impl AgentView {
+     /// **Navigation**: j/k move the cursor between answers and Tab/Shift+Tab walk the same rows in a loop.
+     /// Space toggles, Enter advances or edits freeform, h/l/[/] cycle questions, 1-9/a-f jump and toggle.
+     pub(super) fn handle_question_key(&mut self, key: &KeyEvent) -> InputOutcome {
++        let outcome = self.handle_question_key_inner(key);
++        if matches!(outcome, InputOutcome::Changed) && self.question_view.is_some() {
++            self.maybe_send_question_activity_ping();
++        }
++        outcome
++    }
++
++    fn handle_question_key_inner(&mut self, key: &KeyEvent) -> InputOutcome {
+         use crate::views::question_view::{CursorMotion, QuestionFocus};
+         if key.code == KeyCode::Esc {
+             return self.handle_card_esc();
+@@ -575,6 +621,20 @@ impl AgentView {
+     /// Scroll wheel scrolls the options list. Clicks on option rows move the cursor and toggle or select.
+     /// Everything else is consumed (modal-ish).
+     pub(super) fn handle_question_mouse(&mut self, mouse: &MouseEvent) -> InputOutcome {
++        let outcome = self.handle_question_mouse_inner(mouse);
++        let is_action_mouse = matches!(
++            mouse.kind,
++            MouseEventKind::Down(MouseButton::Left)
++                | MouseEventKind::ScrollDown
++                | MouseEventKind::ScrollUp
++        );
++        if is_action_mouse && matches!(outcome, InputOutcome::Changed) && self.question_view.is_some() {
++            self.maybe_send_question_activity_ping();
++        }
++        outcome
++    }
++
++    fn handle_question_mouse_inner(&mut self, mouse: &MouseEvent) -> InputOutcome {
+         if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+             for &(key_ch, rect) in &self.question_nav_buttons {
+                 if rect.contains((mouse.column, mouse.row).into()) {
+diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
+index f6c4d54e..1d2afebf 100644
+--- a/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
++++ b/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
+@@ -1065,6 +1065,8 @@ pub struct AgentView {
+     pub hit_goal_close: HitArea,
+     pub hit_bg_button: HitArea,
+     pub(crate) last_bg_click: Option<Instant>,
++    /// Last activity ping emitted to the shell coordinator for ask_user_question idle-reset.
++    pub last_activity_ping: Option<Instant>,
+     pub hit_queue_close: HitArea,
+     pub hit_plan_button: HitArea,
+     pub hit_plan_approval_status: HitArea,
+diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
+index a1435578..5974aecd 100644
+--- a/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
++++ b/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
+@@ -320,6 +320,7 @@ impl AgentView {
+             hovered_question_item: None,
+             question_scrollbar_dragging: false,
+             last_question_click: None,
++            last_activity_ping: None,
+             inline_prompt_area: None,
+             question_nav_buttons: Vec::new(),
+             hovered_question_button: None,
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/ctx.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/ctx.rs
+index 6e15252e..f522128c 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/ctx.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/ctx.rs
+@@ -273,6 +273,10 @@ pub(crate) fn switch_to_agent(app: &mut AppView, target: AgentId, cause: SwitchC
+     app.sync_permission_mode_slash_gate();
+     surface_yolo_launch_block_notice(app, target);
+ 
++    if let Some(agent) = app.agents.get_mut(&target) {
++        agent.maybe_send_question_activity_ping();
++    }
++
+     if matches!(cause, SwitchCause::New | SwitchCause::Fork)
+         && let Some(previous) = previous_top_level
+         && let Some(d) = app.dashboard.as_mut()
+diff --git a/crates/codegen/xai-grok-pager/src/app/event_loop.rs b/crates/codegen/xai-grok-pager/src/app/event_loop.rs
+index fb893364..0850d45a 100644
+--- a/crates/codegen/xai-grok-pager/src/app/event_loop.rs
++++ b/crates/codegen/xai-grok-pager/src/app/event_loop.rs
+@@ -3786,12 +3786,13 @@ async fn drain_and_process(
+                 // Restore Prompt on refocus: needs-input overlay always, else idle non-vim.
+                 match app.active_view {
+                     ActiveView::Agent(id) => {
+-                        if let Some(agent) = app.agents.get_mut(&id)
+-                            && agent.should_restore_prompt_on_focus_gained()
+-                        {
+-                            agent.set_active_pane(crate::views::agent::ActivePane::Prompt, false);
+-                            needs_draw = true;
+-                            had_non_resize_change = true;
++                        if let Some(agent) = app.agents.get_mut(&id) {
++                            agent.maybe_send_question_activity_ping();
++                            if agent.should_restore_prompt_on_focus_gained() {
++                                agent.set_active_pane(crate::views::agent::ActivePane::Prompt, false);
++                                needs_draw = true;
++                                had_non_resize_change = true;
++                            }
+                         }
+ 
+                         // Automatic "where was I" recap: the user just returned after being away long enough
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
-index dfa7efcd..a109a228 100644
+index dfa7efcd..506d3da7 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
-@@ -229,6 +229,7 @@ fn parses_toolset_overrides() {
+@@ -229,6 +229,8 @@ fn parses_toolset_overrides() {
              [toolset.ask_user_question]
              timeout_enabled = false
              timeout_secs = 30
 +            timeout_action = "recommended"
++            timeout_reset_on_activity = false
              "#,
      )
      .unwrap();
-@@ -236,6 +237,10 @@ fn parses_toolset_overrides() {
+@@ -236,6 +238,14 @@ fn parses_toolset_overrides() {
      assert_eq!(cfg.toolset.bash.timeout_secs, Some(123.0));
      assert_eq!(cfg.toolset.ask_user_question.timeout_enabled, Some(false));
      assert_eq!(cfg.toolset.ask_user_question.timeout_secs, Some(30));
@@ -51,49 +204,222 @@ index dfa7efcd..a109a228 100644
 +        cfg.toolset.ask_user_question.timeout_action.as_deref(),
 +        Some("recommended")
 +    );
++    assert_eq!(
++        cfg.toolset.ask_user_question.timeout_reset_on_activity,
++        Some(false)
++    );
  }
  #[test]
  fn parses_toolset_bash_float_timeout() {
+diff --git a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs
+index fecaa5ce..ed02a3d3 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs
+@@ -2502,6 +2502,29 @@ impl acp::Agent for MvpAgent {
+                 }
+             }
+         }
++        if args.method.as_ref() == "x.ai/ask_user_question_activity"
++            && let Ok(params) = serde_json::from_str::<
++                serde_json::Value,
++            >(args.params.get())
++        {
++            let session_id_str = params
++                .get("sessionId")
++                .and_then(|v| v.as_str())
++                .unwrap_or("");
++            let tool_call_id = params
++                .get("toolCallId")
++                .and_then(|v| v.as_str())
++                .unwrap_or("");
++            if let Some(handle) = self.resident_handle(&acp::SessionId::new(session_id_str)) {
++                let map = handle
++                    .question_activity_senders
++                    .lock()
++                    .unwrap_or_else(|e| e.into_inner());
++                if let Some(tx) = map.get(tool_call_id) {
++                    let _ = tx.send(());
++                }
++            }
++        }
+         if args.method.as_ref() == "x.ai/terminal/pty/input"
+             && let Ok(params) = serde_json::from_str::<
+                 serde_json::Value,
+diff --git a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests.rs b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests.rs
+index 462fbeef..a9d84737 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests.rs
+@@ -1197,6 +1197,9 @@ fn make_test_handle(
+         pending_interactions: std::sync::Arc::new(std::sync::Mutex::new(
+             std::collections::HashMap::new(),
+         )),
++        question_activity_senders: std::sync::Arc::new(std::sync::Mutex::new(
++            std::collections::HashMap::new(),
++        )),
+         active_work: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+         info: crate::session::info::Info {
+             id: acp::SessionId::new("test"),
+diff --git a/crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs b/crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs
+index 859d7a67..48abbbfd 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs
+@@ -225,6 +225,7 @@ fn wedged_child_handle() -> (
+         current_prompt_id: std::sync::Arc::new(std::sync::Mutex::new(None)),
+         active_work: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+         pending_interactions: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
++        question_activity_senders: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
+         info: SessionInfo {
+             id: acp::SessionId::new("test"),
+             cwd: "/tmp".to_string(),
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session.rs b/crates/codegen/xai-grok-shell/src/session/acp_session.rs
+index 694bf9a1..e64344aa 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session.rs
+@@ -758,6 +758,10 @@ pub(crate) struct SessionActor {
+     /// Shared with `SessionHandle` so the roster can read it synchronously to report `NeedsInput`.
+     /// Mutated by `PendingInteractionGuard` at each reverse-request site. Never persisted.
+     pub(crate) pending_interactions: crate::session::pending_interaction::PendingInteractions,
++    /// Open `ask_user_question` activity channels keyed by tool_call_id.
++    pub(crate) question_activity_senders: std::sync::Arc<
++        std::sync::Mutex<std::collections::HashMap<String, tokio::sync::mpsc::UnboundedSender<()>>>,
++    >,
+     /// Gates product analytics, not trace uploads.
+     /// Resolved at spawn as `is_telemetry_enabled() && !is_zdr()`; ZDR teams always have this false.
+     pub(crate) telemetry_enabled: bool,
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
+index 61f9ca79..39a4a9e9 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
+@@ -1433,6 +1433,9 @@ pub(crate) async fn spawn_session_actor(
+     let current_prompt_id = std::sync::Arc::new(std::sync::Mutex::new(None));
+     let pending_interactions: crate::session::pending_interaction::PendingInteractions =
+         std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
++    let question_activity_senders: std::sync::Arc<
++        std::sync::Mutex<std::collections::HashMap<String, tokio::sync::mpsc::UnboundedSender<()>>>,
++    > = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+     let permissions_for_handle = permissions.clone();
+     let (event_tx, event_rx) = mpsc::unbounded_channel::<SessionEvent>();
+     let mut sampler_config_initial = sampling_config.clone();
+@@ -1749,6 +1752,7 @@ pub(crate) async fn spawn_session_actor(
+         current_prompt_id: current_prompt_id.clone(),
+         active_work: active_work.clone(),
+         pending_interactions: pending_interactions.clone(),
++        question_activity_senders: question_activity_senders.clone(),
+         telemetry_enabled,
+         supports_backend_search: std::cell::Cell::new(sampling_config.supports_backend_search),
+         tool_overrides: std::cell::RefCell::new(None),
+@@ -2223,6 +2227,7 @@ pub(crate) async fn spawn_session_actor(
+         let session_id = session.session_info.id.clone();
+         let current_prompt_mode = session.current_prompt_mode.clone();
+         let pending_interactions = session.pending_interactions.clone();
++        let question_activity_senders = session.question_activity_senders.clone();
+         let session_for_hooks = session.clone();
+         let mut user_question_rx = user_question_rx;
+         tokio::task::spawn_local(async move {
+@@ -2267,6 +2272,34 @@ pub(crate) async fn spawn_session_actor(
+                             tool_call_id.clone(),
+                             crate::session::pending_interaction::PendingKind::Question,
+                         );
++                    {
++                        let mut map = question_activity_senders
++                            .lock()
++                            .unwrap_or_else(|e| e.into_inner());
++                        map.insert(tool_call_id.clone(), request.activity_tx.clone());
++                    }
++                    struct ActivityCleanupGuard {
++                        map: std::sync::Arc<
++                            std::sync::Mutex<
++                                std::collections::HashMap<
++                                    String,
++                                    tokio::sync::mpsc::UnboundedSender<()>,
++                                >,
++                            >,
++                        >,
++                        tool_call_id: String,
++                    }
++                    impl Drop for ActivityCleanupGuard {
++                        fn drop(&mut self) {
++                            if let Ok(mut map) = self.map.lock() {
++                                map.remove(&self.tool_call_id);
++                            }
++                        }
++                    }
++                    let _activity_guard = ActivityCleanupGuard {
++                        map: question_activity_senders.clone(),
++                        tool_call_id: tool_call_id.clone(),
++                    };
+                     tokio::select! {
+                         biased;
+                         () = request.result_tx.closed() => {
+@@ -2353,6 +2386,7 @@ pub(crate) async fn spawn_session_actor(
+             current_prompt_id,
+             registry_write_order: Default::default(),
+             pending_interactions,
++            question_activity_senders,
+             active_work: active_work.clone(),
+             info: session_info,
+             max_turns,
+diff --git a/crates/codegen/xai-grok-shell/src/session/handle.rs b/crates/codegen/xai-grok-shell/src/session/handle.rs
+index 1ae4595f..6a746950 100644
+--- a/crates/codegen/xai-grok-shell/src/session/handle.rs
++++ b/crates/codegen/xai-grok-shell/src/session/handle.rs
+@@ -57,6 +57,10 @@ pub struct SessionHandle {
+     pub current_prompt_id: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+     /// Shared `Arc` with the actor (insert on issue, remove on resolve); never persisted.
+     pub pending_interactions: crate::session::pending_interaction::PendingInteractions,
++    /// Open `ask_user_question` activity channels keyed by tool_call_id.
++    pub question_activity_senders: std::sync::Arc<
++        std::sync::Mutex<std::collections::HashMap<String, tokio::sync::mpsc::UnboundedSender<()>>>,
++    >,
+     pub(crate) active_work: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+     pub info: crate::session::info::Info,
+     /// `None` means unlimited.
 diff --git a/crates/codegen/xai-grok-shell/src/tools/config.rs b/crates/codegen/xai-grok-shell/src/tools/config.rs
-index 44a0d97b..5a5036d4 100644
+index 44a0d97b..f34feaa8 100644
 --- a/crates/codegen/xai-grok-shell/src/tools/config.rs
 +++ b/crates/codegen/xai-grok-shell/src/tools/config.rs
-@@ -91,6 +91,8 @@ pub struct AskUserQuestionToolConfig {
+@@ -91,6 +91,10 @@ pub struct AskUserQuestionToolConfig {
      pub timeout_enabled: Option<bool>,
      /// Wait budget in seconds when the timer is enabled (positive integer; default: 1800 / 30 minutes).
      pub timeout_secs: Option<u64>,
 +    /// On timer expiry: `"decline"` (official, default) or `"recommended"`.
 +    pub timeout_action: Option<String>,
++    /// Whether user activity restarts the timeout (default: `true`).
++    pub timeout_reset_on_activity: Option<bool>,
  }
  
  /// User configurable settings for the web_fetch tool (`[toolset.web_fetch]`).
 diff --git a/crates/codegen/xai-grok-shell/src/util/config/persist.rs b/crates/codegen/xai-grok-shell/src/util/config/persist.rs
-index 7738fa84..09520443 100644
+index 7738fa84..a4672dc3 100644
 --- a/crates/codegen/xai-grok-shell/src/util/config/persist.rs
 +++ b/crates/codegen/xai-grok-shell/src/util/config/persist.rs
-@@ -192,7 +192,8 @@ fn merge_ask_user_question_section(
+@@ -192,7 +192,11 @@ fn merge_ask_user_question_section(
      table: &mut TomlMap<String, TomlValue>,
      ask: &crate::tools::config::AskUserQuestionToolConfig,
  ) {
 -    if ask.timeout_enabled.is_none() && ask.timeout_secs.is_none() {
-+    if ask.timeout_enabled.is_none() && ask.timeout_secs.is_none() && ask.timeout_action.is_none()
++    if ask.timeout_enabled.is_none()
++        && ask.timeout_secs.is_none()
++        && ask.timeout_action.is_none()
++        && ask.timeout_reset_on_activity.is_none()
 +    {
          return;
      }
      let toolset = table
 diff --git a/crates/codegen/xai-grok-shell/src/util/config/resolve/toolset.rs b/crates/codegen/xai-grok-shell/src/util/config/resolve/toolset.rs
-index c9ebb27a..be795dbf 100644
+index c9ebb27a..d36ab2c4 100644
 --- a/crates/codegen/xai-grok-shell/src/util/config/resolve/toolset.rs
 +++ b/crates/codegen/xai-grok-shell/src/util/config/resolve/toolset.rs
-@@ -290,6 +290,7 @@ mod login_shell_capture_tests {
+@@ -290,6 +290,8 @@ mod login_shell_capture_tests {
  
  /// Env override for `[toolset.ask_user_question] timeout_enabled`. The secs env
  /// var lives in the tools crate (`RESPONSE_TIMEOUT_ENV`), parsed once there.
 +/// `timeout_action` env lives in the tools crate (`TIMEOUT_ACTION_ENV`).
++/// `timeout_reset_on_activity` env lives in the tools crate (`TIMEOUT_IDLE_RESET_ENV`).
  const ENV_ASK_USER_QUESTION_TIMEOUT_ENABLED: &str = "GROK_ASK_USER_QUESTION_TIMEOUT_ENABLED";
  
  fn ask_user_question_timeout_enabled_from_toml(v: Option<&TomlValue>) -> Option<bool> {
-@@ -316,6 +317,46 @@ fn ask_user_question_timeout_secs_from_toml(v: Option<&TomlValue>) -> Option<u64
+@@ -316,6 +318,89 @@ fn ask_user_question_timeout_secs_from_toml(v: Option<&TomlValue>) -> Option<u64
      valid
  }
  
@@ -106,6 +432,49 @@ index c9ebb27a..be795dbf 100644
 +        .get("timeout_action")?
 +        .as_str()?;
 +    ask_user_question::timeout_action_from_str(raw)
++}
++
++fn ask_user_question_timeout_reset_on_activity_from_toml(
++    v: Option<&TomlValue>,
++) -> Option<bool> {
++    let raw = v?
++        .get("toolset")?
++        .get("ask_user_question")?
++        .get("timeout_reset_on_activity")?;
++    match raw {
++        TomlValue::Boolean(b) => Some(*b),
++        TomlValue::String(s) => ask_user_question::timeout_reset_on_activity_from_str(s),
++        _ => None,
++    }
++}
++
++/// Pure precedence for timeout_reset_on_activity; default is true.
++fn resolve_ask_user_question_timeout_reset_on_activity_from_tiers(
++    requirement: Option<bool>,
++    env: Option<bool>,
++    config: Option<bool>,
++    managed: Option<bool>,
++) -> bool {
++    requirement
++        .or(env)
++        .or(config)
++        .or(managed)
++        .unwrap_or(ask_user_question::DEFAULT_ASK_USER_QUESTION_TIMEOUT_RESET_ON_ACTIVITY)
++}
++
++fn resolve_ask_user_question_timeout_reset_on_activity(
++    requirements: Option<&TomlValue>,
++    user: Option<&TomlValue>,
++    managed: Option<&TomlValue>,
++    system_managed: Option<&TomlValue>,
++) -> bool {
++    resolve_ask_user_question_timeout_reset_on_activity_from_tiers(
++        ask_user_question_timeout_reset_on_activity_from_toml(requirements),
++        ask_user_question::timeout_reset_on_activity_from_env(),
++        ask_user_question_timeout_reset_on_activity_from_toml(user),
++        ask_user_question_timeout_reset_on_activity_from_toml(managed)
++            .or_else(|| ask_user_question_timeout_reset_on_activity_from_toml(system_managed)),
++    )
 +}
 +
 +/// Pure precedence for timeout_action; default is official decline.
@@ -140,7 +509,7 @@ index c9ebb27a..be795dbf 100644
  /// Precedence: requirements > env (`GROK_ASK_USER_QUESTION_TIMEOUT_ENABLED`) > user `config.toml` > managed (user-level `managed_config.toml`
  /// over the system-managed layer, matching `effective_config()`'s merge order) > remote settings > default `true`.
  fn resolve_ask_user_question_timeout_enabled(
-@@ -412,6 +453,12 @@ pub(crate) fn resolve_ask_user_question_params_from_disk(
+@@ -412,6 +497,18 @@ pub(crate) fn resolve_ask_user_question_params_from_disk(
              system_managed,
              remote.and_then(|r| r.ask_user_question_timeout_secs),
          )),
@@ -150,10 +519,16 @@ index c9ebb27a..be795dbf 100644
 +            managed,
 +            system_managed,
 +        )),
++        timeout_reset_on_activity: Some(resolve_ask_user_question_timeout_reset_on_activity(
++            requirements.as_ref(),
++            user,
++            managed,
++            system_managed,
++        )),
          // AgentBuilder stamps this session state on a non-interactive spawn; it is not a config key, so the resolver must leave it unset
          non_interactive: None,
      }
-@@ -594,7 +641,9 @@ mod web_search_domains_tests {
+@@ -594,7 +691,9 @@ mod web_search_domains_tests {
  mod ask_user_question_timeout_tests {
      use super::*;
      use crate::agent::config::ConfigSource;
@@ -164,15 +539,16 @@ index c9ebb27a..be795dbf 100644
  
      // Both env vars are process-global (a dev exports the secs var for TUI repro); serialize and force them unset so these tests can't go flaky
      static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-@@ -602,6 +651,7 @@ mod ask_user_question_timeout_tests {
+@@ -602,6 +701,8 @@ mod ask_user_question_timeout_tests {
          let g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
          unsafe { std::env::remove_var(ENV_ASK_USER_QUESTION_TIMEOUT_ENABLED) };
          unsafe { std::env::remove_var(RESPONSE_TIMEOUT_ENV) };
 +        unsafe { std::env::remove_var(TIMEOUT_ACTION_ENV) };
++        unsafe { std::env::remove_var(xai_grok_tools::implementations::grok_build::ask_user_question::TIMEOUT_IDLE_RESET_ENV) };
          g
      }
  
-@@ -726,6 +776,54 @@ mod ask_user_question_timeout_tests {
+@@ -726,6 +827,87 @@ mod ask_user_question_timeout_tests {
              30
          );
      }
@@ -222,6 +598,39 @@ index c9ebb27a..be795dbf 100644
 +        assert_eq!(
 +            resolve_ask_user_question_timeout_action(None, Some(&bogus), None, None),
 +            TimeoutAction::Decline
++        );
++    }
++
++    #[test]
++    fn timeout_reset_on_activity_tier_precedence() {
++        let _g = guard();
++        let r = resolve_ask_user_question_timeout_reset_on_activity_from_tiers;
++        assert!(
++            r(None, None, None, None),
++            "default is true"
++        );
++        assert!(
++            !r(Some(false), Some(true), Some(true), Some(true)),
++            "requirement false wins"
++        );
++        assert!(
++            !r(None, Some(false), Some(true), Some(true)),
++            "env false wins over config"
++        );
++        assert!(
++            !r(None, None, Some(false), Some(true)),
++            "config false wins over managed"
++        );
++        let off = toml_ask("timeout_reset_on_activity = false");
++        let on = toml_ask("timeout_reset_on_activity = true");
++        assert!(
++            !resolve_ask_user_question_timeout_reset_on_activity(None, Some(&off), Some(&on), None),
++            "user config false wins over managed"
++        );
++        let bogus = toml_ask("timeout_reset_on_activity = \"invalid_bool\"");
++        assert!(
++            resolve_ask_user_question_timeout_reset_on_activity(None, Some(&bogus), None, None),
++            "bogus config falls through to default true"
 +        );
 +    }
  }
@@ -404,15 +813,21 @@ index 3b9edc2c..4a0baf8b 100644
 +    }
  }
 diff --git a/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/mod.rs b/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/mod.rs
-index 51832e43..4cab3e49 100644
+index 51832e43..7baa6877 100644
 --- a/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/mod.rs
 +++ b/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/mod.rs
-@@ -60,6 +60,42 @@ pub const DEFAULT_ASK_USER_QUESTION_TIMEOUT_ENABLED: bool = true;
+@@ -60,6 +60,69 @@ pub const DEFAULT_ASK_USER_QUESTION_TIMEOUT_ENABLED: bool = true;
  /// Env var: override [`RESPONSE_TIMEOUT`] with a duration in **seconds**.
  pub const RESPONSE_TIMEOUT_ENV: &str = "GROK_ASK_USER_QUESTION_TIMEOUT_SECS";
  
 +/// Env var: override `[toolset.ask_user_question] timeout_action`.
 +pub const TIMEOUT_ACTION_ENV: &str = "GROK_ASK_USER_QUESTION_TIMEOUT_ACTION";
++
++/// Env var: override `[toolset.ask_user_question] timeout_reset_on_activity`.
++pub const TIMEOUT_IDLE_RESET_ENV: &str = "GROK_ASK_USER_QUESTION_TIMEOUT_IDLE_RESET";
++
++/// Default for `timeout_reset_on_activity`: user interactions restart the timeout.
++pub const DEFAULT_ASK_USER_QUESTION_TIMEOUT_RESET_ON_ACTIVITY: bool = true;
 +
 +/// What the questionnaire timer does on expiry. Default stays official decline
 +/// (same text as Shift+X). `Recommended` auto-selects marked `(Recommended)`
@@ -447,10 +862,31 @@ index 51832e43..4cab3e49 100644
 +    timeout_action_from_str(&std::env::var(TIMEOUT_ACTION_ENV).ok()?)
 +}
 +
++/// Parse boolean string for timeout idle-reset. Invalid values warn and are treated as unset.
++pub fn timeout_reset_on_activity_from_str(raw: &str) -> Option<bool> {
++    match raw.trim().to_ascii_lowercase().as_str() {
++        "1" | "true" | "yes" | "on" | "enabled" => Some(true),
++        "0" | "false" | "no" | "off" | "disabled" => Some(false),
++        "" => None,
++        _ => {
++            tracing::warn!(
++                value = %raw,
++                "invalid ask_user_question timeout_reset_on_activity; ignoring"
++            );
++            None
++        }
++    }
++}
++
++/// Parse [`TIMEOUT_IDLE_RESET_ENV`]. Invalid or empty values are unset.
++pub fn timeout_reset_on_activity_from_env() -> Option<bool> {
++    timeout_reset_on_activity_from_str(&std::env::var(TIMEOUT_IDLE_RESET_ENV).ok()?)
++}
++
  /// Parse the [`RESPONSE_TIMEOUT_ENV`] override (positive integer seconds). Invalid or non-positive
  /// values are warned and treated as unset. Single source for this parse — the shell's env tier
  /// calls it too, so the two resolutions can't drift.
-@@ -98,6 +134,10 @@ pub struct AskUserQuestionParams {
+@@ -98,6 +161,14 @@ pub struct AskUserQuestionParams {
      /// `None` falls back to the env override / [`RESPONSE_TIMEOUT`].
      #[serde(default)]
      pub timeout_secs: Option<u64>,
@@ -458,10 +894,14 @@ index 51832e43..4cab3e49 100644
 +    /// `None` falls back to the env override / [`TimeoutAction::Decline`].
 +    #[serde(default)]
 +    pub timeout_action: Option<TimeoutAction>,
++    /// Whether user activity restarts the timeout (default `true`).
++    /// `None` falls back to env override / [`DEFAULT_ASK_USER_QUESTION_TIMEOUT_RESET_ON_ACTIVITY`].
++    #[serde(default)]
++    pub timeout_reset_on_activity: Option<bool>,
      /// Session state stamped by the agent builder for non-interactive
      /// sessions (headless `-p`, SDK) — NOT a user config key. `Some(true)`
      /// switches the cancel/timeout result to [`format::NO_OPERATOR_TEXT`].
-@@ -129,6 +169,13 @@ impl AskUserQuestionParams {
+@@ -129,6 +200,20 @@ impl AskUserQuestionParams {
              None => Some(response_timeout()),
          }
      }
@@ -472,47 +912,145 @@ index 51832e43..4cab3e49 100644
 +            .or_else(timeout_action_from_env)
 +            .unwrap_or(TimeoutAction::Decline)
 +    }
++
++    /// Effective idle-reset behavior: params, else env, else default true.
++    pub fn resolved_timeout_reset_on_activity(&self) -> bool {
++        self.timeout_reset_on_activity
++            .or_else(timeout_reset_on_activity_from_env)
++            .unwrap_or(DEFAULT_ASK_USER_QUESTION_TIMEOUT_RESET_ON_ACTIVITY)
++    }
  }
  
  /// A single option within a question.
-@@ -440,13 +487,20 @@ impl xai_tool_runtime::Tool for AskUserQuestionTool {
-                 tracing::info!(
-                     question_count,
-                     timeout_secs = ?wait.map(|d| d.as_secs()),
-+                    timeout_action = ?params.resolved_timeout_action(),
-                     "User question timed out; continuing without answers"
-                 );
-                 // Drop the oneshot receiver on return. The shell coordinator races `result_tx.closed()` against ACP so it unblocks and
+@@ -378,14 +463,16 @@ impl xai_tool_runtime::Tool for AskUserQuestionTool {
+             }
+         };
+ 
+-        // ── Step 3: Create oneshot ──────────────────────────────────────
++        // ── Step 3: Create oneshot and activity channel ────────────────
+         let (result_tx, result_rx) = tokio::sync::oneshot::channel();
++        let (activity_tx, mut activity_rx) = tokio::sync::mpsc::unbounded_channel();
+ 
+         // ── Step 4: Send UserQuestionRequest ────────────────────────────
+         let request = types::UserQuestionRequest {
+             tool_call_id: ctx.call_id.as_str().to_owned(),
+             questions: input.questions.clone(),
+             result_tx,
++            activity_tx,
+         };
+ 
+         if sender.0.send(request).is_err() {
+@@ -423,30 +510,71 @@ impl xai_tool_runtime::Tool for AskUserQuestionTool {
+ 
+         // ── Step 6: Block on the oneshot result (whole batch, one timer) ─ A single pending-decision timeout covers the
+         // questionnaire, not per question: N questions in one call share one wait. A `None` budget (`timeout_enabled = false`)
+-        // runs the same await with no timer, normalized into the timed shape so one match handles both.
+-        let outcome = match wait {
+-            Some(dur) => tokio::time::timeout(dur, result_rx).await,
+-            None => Ok(result_rx.await),
+-        };
+-        let result = match outcome {
+-            Ok(Ok(r)) => r,
+-            Ok(Err(_recv_error)) => {
+-                return Err(xai_tool_runtime::ToolError::execution(
+-                    xai_tool_protocol::ToolId::new("ask_user_question").expect("valid"),
+-                    "User question session ended unexpectedly (client may have disconnected)",
+-                ));
+-            }
+-            Err(_elapsed) => {
+-                tracing::info!(
+-                    question_count,
+-                    timeout_secs = ?wait.map(|d| d.as_secs()),
+-                    "User question timed out; continuing without answers"
+-                );
+-                // Drop the oneshot receiver on return. The shell coordinator races `result_tx.closed()` against ACP so it unblocks and
 -                // can open the next questionnaire (stale UI is cancelled when a new ext_method arrives). Same model text as cancel.
 -                return Ok(AskUserQuestionOutput::UserAnswered {
 -                    message: unanswered.to_string(),
 -                });
-+                // can open the next questionnaire (stale UI is cancelled when a new ext_method arrives).
-+                // Non-interactive stays unanswered (no operator). Interactive `recommended` auto-selects.
-+                let message = if params.non_interactive.unwrap_or(false) {
-+                    unanswered.to_string()
-+                } else if params.resolved_timeout_action() == TimeoutAction::Recommended {
-+                    format::timeout_recommended_text(&input.questions)
-+                } else {
-+                    unanswered.to_string()
-+                };
-+                return Ok(AskUserQuestionOutput::UserAnswered { message });
++        // runs the same await with no timer. When armed, user activity resets the sleep deadline unless disabled.
++        let reset_enabled = params.resolved_timeout_reset_on_activity()
++            && !params.non_interactive.unwrap_or(false);
++
++        let result = match wait {
++            None => match result_rx.await {
++                Ok(r) => r,
++                Err(_recv_error) => {
++                    return Err(xai_tool_runtime::ToolError::execution(
++                        xai_tool_protocol::ToolId::new("ask_user_question").expect("valid"),
++                        "User question session ended unexpectedly (client may have disconnected)",
++                    ));
++                }
++            },
++            Some(dur) => {
++                tokio::pin!(result_rx);
++                let mut sleep_fut = tokio::time::sleep(dur);
++                tokio::pin!(sleep_fut);
++                let mut activity_closed = false;
++
++                loop {
++                    tokio::select! {
++                        biased;
++                        res = &mut result_rx => {
++                            match res {
++                                Ok(r) => break r,
++                                Err(_recv_error) => {
++                                    return Err(xai_tool_runtime::ToolError::execution(
++                                        xai_tool_protocol::ToolId::new("ask_user_question").expect("valid"),
++                                        "User question session ended unexpectedly (client may have disconnected)",
++                                    ));
++                                }
++                            }
++                        }
++                        maybe_act = activity_rx.recv(), if reset_enabled && !activity_closed => {
++                            match maybe_act {
++                                Some(()) => {
++                                    sleep_fut.as_mut().reset(tokio::time::Instant::now() + dur);
++                                }
++                                None => {
++                                    activity_closed = true;
++                                }
++                            }
++                        }
++                        () = &mut sleep_fut => {
++                            tracing::info!(
++                                question_count,
++                                timeout_secs = ?wait.map(|d| d.as_secs()),
++                                timeout_action = ?params.resolved_timeout_action(),
++                                "User question timed out; continuing without answers"
++                            );
++                            // Drop the oneshot receiver on return. The shell coordinator races `result_tx.closed()` against ACP so it unblocks and
++                            // can open the next questionnaire (stale UI is cancelled when a new ext_method arrives).
++                            // Non-interactive stays unanswered (no operator). Interactive `recommended` auto-selects.
++                            let message = if params.non_interactive.unwrap_or(false) {
++                                unanswered.to_string()
++                            } else if params.resolved_timeout_action() == TimeoutAction::Recommended {
++                                format::timeout_recommended_text(&input.questions)
++                            } else {
++                                unanswered.to_string()
++                            };
++                            return Ok(AskUserQuestionOutput::UserAnswered { message });
++                        }
++                    }
++                }
              }
          };
  
-@@ -867,6 +921,7 @@ mod tests {
+@@ -867,6 +995,8 @@ mod tests {
          let (shared, mut rx) = resources_with_sender_and_params(AskUserQuestionParams {
              timeout_enabled: Some(true),
              timeout_secs: Some(5),
 +            timeout_action: None,
++            timeout_reset_on_activity: None,
              non_interactive: Some(true),
          });
          let tool = AskUserQuestionTool;
-@@ -1015,12 +1070,14 @@ mod tests {
+@@ -1015,12 +1145,16 @@ mod tests {
          let disabled = AskUserQuestionParams {
              timeout_enabled: Some(false),
              timeout_secs: Some(30),
 +            timeout_action: None,
++            timeout_reset_on_activity: None,
              non_interactive: None,
          };
          assert_eq!(disabled.wait_budget(), None, "disabled timer waits forever");
@@ -520,26 +1058,29 @@ index 51832e43..4cab3e49 100644
              timeout_enabled: Some(true),
              timeout_secs: Some(0),
 +            timeout_action: None,
++            timeout_reset_on_activity: None,
              non_interactive: None,
          };
          assert_eq!(
-@@ -1037,6 +1094,7 @@ mod tests {
+@@ -1037,6 +1171,8 @@ mod tests {
          let (shared, mut rx) = resources_with_sender_and_params(AskUserQuestionParams {
              timeout_enabled: Some(true),
              timeout_secs: Some(5),
 +            timeout_action: None,
++            timeout_reset_on_activity: None,
              non_interactive: None,
          });
          let tool = AskUserQuestionTool;
-@@ -1073,6 +1131,7 @@ mod tests {
+@@ -1073,6 +1209,8 @@ mod tests {
          let (shared, mut rx) = resources_with_sender_and_params(AskUserQuestionParams {
              timeout_enabled: Some(false),
              timeout_secs: Some(1),
 +            timeout_action: None,
++            timeout_reset_on_activity: None,
              non_interactive: None,
          });
          let tool = AskUserQuestionTool;
-@@ -1117,6 +1176,179 @@ mod tests {
+@@ -1117,6 +1255,388 @@ mod tests {
          }
      }
  
@@ -565,6 +1106,7 @@ index 51832e43..4cab3e49 100644
 +            timeout_enabled: Some(true),
 +            timeout_secs: Some(5),
 +            timeout_action: Some(TimeoutAction::Recommended),
++            timeout_reset_on_activity: None,
 +            non_interactive: None,
 +        });
 +        let tool = AskUserQuestionTool;
@@ -618,6 +1160,7 @@ index 51832e43..4cab3e49 100644
 +            timeout_enabled: Some(true),
 +            timeout_secs: Some(5),
 +            timeout_action: Some(TimeoutAction::Recommended),
++            timeout_reset_on_activity: None,
 +            non_interactive: None,
 +        });
 +        let tool = AskUserQuestionTool;
@@ -680,6 +1223,7 @@ index 51832e43..4cab3e49 100644
 +            timeout_enabled: Some(true),
 +            timeout_secs: Some(5),
 +            timeout_action: Some(TimeoutAction::Recommended),
++            timeout_reset_on_activity: None,
 +            non_interactive: Some(true),
 +        });
 +        let tool = AskUserQuestionTool;
@@ -716,6 +1260,225 @@ index 51832e43..4cab3e49 100644
 +        }
 +    }
 +
++    #[test]
++    fn timeout_reset_on_activity_from_str_parses_and_rejects() {
++        assert_eq!(timeout_reset_on_activity_from_str("true"), Some(true));
++        assert_eq!(timeout_reset_on_activity_from_str("1"), Some(true));
++        assert_eq!(timeout_reset_on_activity_from_str("yes"), Some(true));
++        assert_eq!(timeout_reset_on_activity_from_str("false"), Some(false));
++        assert_eq!(timeout_reset_on_activity_from_str("0"), Some(false));
++        assert_eq!(timeout_reset_on_activity_from_str("no"), Some(false));
++        assert_eq!(timeout_reset_on_activity_from_str(""), None);
++        assert_eq!(timeout_reset_on_activity_from_str("bogus"), None);
++    }
++
++    /// Idle-reset: timeout_secs=5, activity ping at 4s restarts the 5s timer,
++    /// so an answer at total 8s still succeeds (would have elapsed at 5s).
++    #[tokio::test(start_paused = true)]
++    async fn idle_reset_activity_ping_restarts_timeout() {
++        let (shared, mut rx) = resources_with_sender_and_params(AskUserQuestionParams {
++            timeout_enabled: Some(true),
++            timeout_secs: Some(5),
++            timeout_action: None,
++            timeout_reset_on_activity: Some(true),
++            non_interactive: None,
++        });
++        let tool = AskUserQuestionTool;
++
++        let input = AskUserQuestionInput {
++            questions: vec![make_question("Which database?", &["Redis", "Postgres"])],
++            use_id_keyed_format: false,
++        };
++
++        let handle = tokio::spawn({
++            let shared = shared.clone();
++            async move {
++                xai_tool_runtime::Tool::run(
++                    &tool,
++                    test_ctx_with_call_id(shared, "tc-idle-reset"),
++                    input,
++                )
++                .await
++            }
++        });
++
++        let request = rx.recv().await.expect("should receive request");
++        // Advance 4s (under 5s timeout)
++        tokio::time::advance(std::time::Duration::from_secs(4)).await;
++        // User activity ping restarts the 5s timer
++        request.activity_tx.send(()).unwrap();
++        tokio::task::yield_now().await;
++        // Advance another 4s (total 8s from start; would have expired without reset)
++        tokio::time::advance(std::time::Duration::from_secs(4)).await;
++
++        let mut answers = IndexMap::new();
++        answers.insert("Which database?".to_string(), vec!["Redis".to_string()]);
++        request
++            .result_tx
++            .send(Ok(UserQuestionResponse::Accepted {
++                answers,
++                annotations: None,
++            }))
++            .unwrap();
++
++        let result = handle.await.unwrap().unwrap();
++        match result {
++            AskUserQuestionOutput::UserAnswered { message } => {
++                assert!(message.contains("\"Which database?\"=\"Redis\""));
++            }
++            other => panic!("Expected UserAnswered, got {:?}", other),
++        }
++    }
++
++    /// No activity: advance past timeout_secs -> existing 0011 timeout_action fires.
++    #[tokio::test(start_paused = true)]
++    async fn idle_reset_no_activity_times_out_with_recommended() {
++        let (shared, mut rx) = resources_with_sender_and_params(AskUserQuestionParams {
++            timeout_enabled: Some(true),
++            timeout_secs: Some(5),
++            timeout_action: Some(TimeoutAction::Recommended),
++            timeout_reset_on_activity: Some(true),
++            non_interactive: None,
++        });
++        let tool = AskUserQuestionTool;
++
++        let input = AskUserQuestionInput {
++            questions: vec![make_question(
++                "Approve?",
++                &["Yes — implement now (Recommended)", "Stop"],
++            )],
++            use_id_keyed_format: false,
++        };
++
++        let handle = tokio::spawn({
++            let shared = shared.clone();
++            async move {
++                xai_tool_runtime::Tool::run(
++                    &tool,
++                    test_ctx_with_call_id(shared, "tc-no-act"),
++                    input,
++                )
++                .await
++            }
++        });
++
++        let _request = rx.recv().await.expect("should receive request");
++        tokio::time::advance(std::time::Duration::from_secs(6)).await;
++
++        let result = handle.await.unwrap().unwrap();
++        match result {
++            AskUserQuestionOutput::UserAnswered { message } => {
++                assert!(message.contains("auto-selected recommended"));
++            }
++            other => panic!("Expected UserAnswered with recommended text, got {:?}", other),
++        }
++    }
++
++    /// `timeout_reset_on_activity = false`: activity ping does NOT reset; 6s still times out.
++    #[tokio::test(start_paused = true)]
++    async fn idle_reset_disabled_ignores_activity_ping() {
++        let (shared, mut rx) = resources_with_sender_and_params(AskUserQuestionParams {
++            timeout_enabled: Some(true),
++            timeout_secs: Some(5),
++            timeout_action: None,
++            timeout_reset_on_activity: Some(false),
++            non_interactive: None,
++        });
++        let tool = AskUserQuestionTool;
++
++        let input = AskUserQuestionInput {
++            questions: vec![make_question("Q?", &["A", "B"])],
++            use_id_keyed_format: false,
++        };
++
++        let handle = tokio::spawn({
++            let shared = shared.clone();
++            async move {
++                xai_tool_runtime::Tool::run(
++                    &tool,
++                    test_ctx_with_call_id(shared, "tc-reset-off"),
++                    input,
++                )
++                .await
++            }
++        });
++
++        let request = rx.recv().await.expect("should receive request");
++        tokio::time::advance(std::time::Duration::from_secs(4)).await;
++        request.activity_tx.send(()).unwrap();
++        tokio::task::yield_now().await;
++        // Advance 2 more seconds (total 6s past initial 5s timeout)
++        tokio::time::advance(std::time::Duration::from_secs(2)).await;
++
++        let result = handle.await.unwrap().unwrap();
++        match result {
++            AskUserQuestionOutput::UserAnswered { message } => {
++                assert_eq!(message, format::CANCEL_TEXT);
++            }
++            other => panic!("Expected UserAnswered with cancel text, got {:?}", other),
++        }
++    }
++
++    /// Non-interactive + recommended + activity ping: still returns no-operator text on timeout.
++    #[tokio::test(start_paused = true)]
++    async fn non_interactive_ignores_activity_ping_and_returns_no_operator() {
++        let (shared, mut rx) = resources_with_sender_and_params(AskUserQuestionParams {
++            timeout_enabled: Some(true),
++            timeout_secs: Some(5),
++            timeout_action: Some(TimeoutAction::Recommended),
++            timeout_reset_on_activity: Some(true),
++            non_interactive: Some(true),
++        });
++        let tool = AskUserQuestionTool;
++
++        let input = AskUserQuestionInput {
++            questions: vec![make_question("Q?", &["A (Recommended)", "B"])],
++            use_id_keyed_format: false,
++        };
++
++        let handle = tokio::spawn({
++            let shared = shared.clone();
++            async move {
++                xai_tool_runtime::Tool::run(
++                    &tool,
++                    test_ctx_with_call_id(shared, "tc-ni-act"),
++                    input,
++                )
++                .await
++            }
++        });
++
++        let request = rx.recv().await.expect("should receive request");
++        tokio::time::advance(std::time::Duration::from_secs(4)).await;
++        request.activity_tx.send(()).unwrap();
++        tokio::task::yield_now().await;
++        tokio::time::advance(std::time::Duration::from_secs(2)).await;
++
++        let result = handle.await.unwrap().unwrap();
++        match result {
++            AskUserQuestionOutput::UserAnswered { message } => {
++                assert_eq!(message, format::NO_OPERATOR_TEXT);
++            }
++            other => panic!(
++                "Expected UserAnswered with no-operator text, got {:?}",
++                other
++            ),
++        }
++    }
++
      // ── Failure path tests ───────────────────────────────────────────────
  
      #[tokio::test]
+diff --git a/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/types.rs b/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/types.rs
+index ada456cd..b2ff53f1 100644
+--- a/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/types.rs
++++ b/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/types.rs
+@@ -169,6 +169,8 @@ pub struct UserQuestionRequest {
+     pub questions: Vec<Question>,
+     #[educe(Debug(ignore))]
+     pub result_tx: oneshot::Sender<UserQuestionResult>,
++    #[educe(Debug(ignore))]
++    pub activity_tx: mpsc::UnboundedSender<()>,
+ }
+ 
+ // ── Resource type ────────────────────────────────────────────────────────
