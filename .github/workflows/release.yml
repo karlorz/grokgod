@@ -50,8 +50,24 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
-      # grok-build vendors bin/protoc as a dotslash file; without dotslash on
-      # PATH the xai-grok-tools-api build script panics ("protoc not found").
+      # grok-build's dotslash manifest does not include macos-x86_64 or Windows.
+      # Pin the same protoc version as bin/protoc and select it explicitly.
+      - name: Install protoc 29.3
+        id: protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify protoc
+        shell: bash
+        run: |
+          protoc_path="$(command -v protoc)"
+          test -n "$protoc_path"
+          echo "PROTOC=$protoc_path" >> "$GITHUB_ENV"
+          echo "Using protoc: $protoc_path"
+          "$protoc_path" --version
+
       - name: Install dotslash
         uses: taiki-e/install-action@v2
         with:
