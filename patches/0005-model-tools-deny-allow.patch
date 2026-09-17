@@ -1,5 +1,5 @@
 diff --git a/crates/codegen/xai-grok-agent/src/config.rs b/crates/codegen/xai-grok-agent/src/config.rs
-index 715ba28af027e76a9e3fedb9473e75137caa2971..541728b7e16b24adde230f4abc600dd56d1f94fc 100644
+index 715ba28a..541728b7 100644
 --- a/crates/codegen/xai-grok-agent/src/config.rs
 +++ b/crates/codegen/xai-grok-agent/src/config.rs
 @@ -1209,6 +1209,20 @@ fn default_output_byte_limit() -> usize {
@@ -80,7 +80,7 @@ index 715ba28af027e76a9e3fedb9473e75137caa2971..541728b7e16b24adde230f4abc600dd5
              return false;
          }
 diff --git a/crates/codegen/xai-grok-agent/src/lib.rs b/crates/codegen/xai-grok-agent/src/lib.rs
-index 398cb185d69abc889ca326d77427db0f5f7d8b68..532dbf91658effa7bad8150dacf918ad68736637 100644
+index 398cb185..532dbf91 100644
 --- a/crates/codegen/xai-grok-agent/src/lib.rs
 +++ b/crates/codegen/xai-grok-agent/src/lib.rs
 @@ -21,6 +21,7 @@ pub use builder::AgentBuilder;
@@ -92,7 +92,7 @@ index 398cb185d69abc889ca326d77427db0f5f7d8b68..532dbf91658effa7bad8150dacf918ad
  pub use config::toolset_for_preset;
  pub use config::workspace_grok_build_toolset;
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
-index 621fe35243eb647cd3cf1af5aff6d52375f4a9f5..d9927750ccaa9b3ab03bfa41d173f3f57d12044e 100644
+index 621fe352..9d87cecf 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
 @@ -3679,6 +3679,7 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
@@ -113,7 +113,15 @@ index 621fe35243eb647cd3cf1af5aff6d52375f4a9f5..d9927750ccaa9b3ab03bfa41d173f3f5
      /// Per-model config for the `x-compactions-remaining` header; `None` disables it.
      #[serde(default, skip_serializing_if = "Option::is_none")]
      pub compactions_remaining: Option<CompactionsRemaining>,
-@@ -3915,6 +3919,7 @@ pub struct ConfigModelOverride {
+@@ -3849,6 +3853,7 @@ impl Default for ModelEntryConfig {
+             hidden: false,
+             supported_in_api: true,
+             supports_backend_search: false,
++            tools: None,
+             compactions_remaining: None,
+             compaction_at_tokens: None,
+             show_model_fingerprint: false,
+@@ -3915,6 +3920,7 @@ pub struct ConfigModelOverride {
      pub supports_reasoning_effort: Option<bool>,
      pub reasoning_efforts: Vec<ReasoningEffortOption>,
      pub supports_backend_search: Option<bool>,
@@ -121,7 +129,7 @@ index 621fe35243eb647cd3cf1af5aff6d52375f4a9f5..d9927750ccaa9b3ab03bfa41d173f3f5
      /// Aliases must be registered in `config_model_override_parse::ALIASES`; serde rejects a table that contains both spellings otherwise.
      #[serde(alias = "send_compactions_remaining")]
      pub compactions_remaining: Option<CompactionsRemaining>,
-@@ -4016,6 +4021,9 @@ impl ConfigModelOverride {
+@@ -4016,6 +4022,9 @@ impl ConfigModelOverride {
          if let Some(v) = self.supports_backend_search {
              entry.info.supports_backend_search = v;
          }
@@ -131,7 +139,7 @@ index 621fe35243eb647cd3cf1af5aff6d52375f4a9f5..d9927750ccaa9b3ab03bfa41d173f3f5
          if self.compactions_remaining.is_some() {
              entry.info.compactions_remaining = self.compactions_remaining;
          }
-@@ -4117,6 +4125,9 @@ pub struct ModelInfo {
+@@ -4117,6 +4126,9 @@ pub struct ModelInfo {
      #[serde(default, skip_serializing_if = "Vec::is_empty")]
      pub variants: Vec<ModelVariant>,
      pub supports_backend_search: bool,
@@ -141,7 +149,7 @@ index 621fe35243eb647cd3cf1af5aff6d52375f4a9f5..d9927750ccaa9b3ab03bfa41d173f3f5
      /// Per-model config for the `x-compactions-remaining` header; `None` disables it.
      pub compactions_remaining: Option<CompactionsRemaining>,
      /// Per-model config for the `x-compaction-at` header; `None` disables it.
-@@ -4176,6 +4187,7 @@ impl ModelInfo {
+@@ -4176,6 +4188,7 @@ impl ModelInfo {
              reasoning_efforts: Vec::new(),
              variants: Vec::new(),
              supports_backend_search: false,
@@ -149,7 +157,7 @@ index 621fe35243eb647cd3cf1af5aff6d52375f4a9f5..d9927750ccaa9b3ab03bfa41d173f3f5
              compactions_remaining: None,
              compaction_at_tokens: None,
              show_model_fingerprint: false,
-@@ -4217,6 +4229,7 @@ impl ModelInfo {
+@@ -4217,6 +4230,7 @@ impl ModelInfo {
              reasoning_efforts: entry.reasoning_efforts.clone(),
              variants: entry.variants.clone(),
              supports_backend_search: entry.supports_backend_search,
@@ -157,7 +165,7 @@ index 621fe35243eb647cd3cf1af5aff6d52375f4a9f5..d9927750ccaa9b3ab03bfa41d173f3f5
              compactions_remaining: entry.compactions_remaining,
              compaction_at_tokens: entry.compaction_at_tokens,
              show_model_fingerprint: entry.show_model_fingerprint,
-@@ -4926,6 +4939,7 @@ pub(crate) fn resolve_aux_model_sampling_config(
+@@ -4926,6 +4940,7 @@ pub(crate) fn resolve_aux_model_sampling_config(
                  reasoning_efforts: Vec::new(),
                  variants: Vec::new(),
                  supports_backend_search: false,
@@ -165,7 +173,7 @@ index 621fe35243eb647cd3cf1af5aff6d52375f4a9f5..d9927750ccaa9b3ab03bfa41d173f3f5
                  compactions_remaining: None,
                  compaction_at_tokens: None,
                  show_model_fingerprint: false,
-@@ -5153,6 +5167,7 @@ fn resolve_hidden_default_web_search_sampling_config(
+@@ -5153,6 +5168,7 @@ fn resolve_hidden_default_web_search_sampling_config(
              reasoning_efforts: Vec::new(),
              variants: Vec::new(),
              supports_backend_search: false,
@@ -174,7 +182,7 @@ index 621fe35243eb647cd3cf1af5aff6d52375f4a9f5..d9927750ccaa9b3ab03bfa41d173f3f5
              compaction_at_tokens: None,
              show_model_fingerprint: false,
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config_model_override_parse.rs b/crates/codegen/xai-grok-shell/src/agent/config_model_override_parse.rs
-index 7431aef3f8b1c9f6b8aa37b3ef2cf36125d9494c..22fadad7d603196df7ee20ac392079fad446ed43 100644
+index 7431aef3..22fadad7 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config_model_override_parse.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config_model_override_parse.rs
 @@ -760,6 +760,10 @@ mod tests {
@@ -189,7 +197,7 @@ index 7431aef3f8b1c9f6b8aa37b3ef2cf36125d9494c..22fadad7d603196df7ee20ac392079fa
              compaction_at_tokens: Some(CompactionAtTokens::Fixed(100_000)),
              show_model_fingerprint: Some(true),
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
-index 557eca9682cd661c4d8588da8c6ff026d03ff96e..5bfa302a686642d4b274ec9974c312ac44e7eaf2 100644
+index 557eca96..5bfa302a 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
 @@ -8473,3 +8473,184 @@ async fn process_key_from_model_env_key() {
@@ -378,7 +386,7 @@ index 557eca9682cd661c4d8588da8c6ff026d03ff96e..5bfa302a686642d4b274ec9974c312ac
 +    assert!(!child_def.session_tools_allowed("grep"));
 +}
 diff --git a/crates/codegen/xai-grok-shell/src/agent/handlers/model_switch.rs b/crates/codegen/xai-grok-shell/src/agent/handlers/model_switch.rs
-index 67c4c44abe8fae2652ddba0e3fd45f8a32c3b096..b4a14bbc2953f1c91633f638f3abd58f2c1ee724 100644
+index 67c4c44a..b4a14bbc 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/handlers/model_switch.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/handlers/model_switch.rs
 @@ -127,7 +127,12 @@ pub(crate) async fn apply(
@@ -396,7 +404,7 @@ index 67c4c44abe8fae2652ddba0e3fd45f8a32c3b096..b4a14bbc2953f1c91633f638f3abd58f
                          session_id = %session_id.0,
                          model_id = %model_id.0,
 diff --git a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs
-index 7458c9af8229fdc8d9252c834664bd46b2ae3168..3f9132443031660612e50c7419cf11233fe72760 100644
+index 7458c9af..3f913244 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs
 @@ -4568,6 +4568,9 @@ impl MvpAgent {
@@ -410,7 +418,7 @@ index 7458c9af8229fdc8d9252c834664bd46b2ae3168..3f9132443031660612e50c7419cf1123
              .apply_supported_effort(
                  &mut sampling_config,
 diff --git a/crates/codegen/xai-grok-shell/src/agent/remote_config/manager/mod.rs b/crates/codegen/xai-grok-shell/src/agent/remote_config/manager/mod.rs
-index 0754fb6769dfacd21d6ad5cea2ad638afe0979f3..635cc00abb916d0071d29c67c3825d42b90e0f1d 100644
+index 0754fb67..635cc00a 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/remote_config/manager/mod.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/remote_config/manager/mod.rs
 @@ -540,6 +540,14 @@ impl ModelsManager {
@@ -429,7 +437,7 @@ index 0754fb6769dfacd21d6ad5cea2ad638afe0979f3..635cc00abb916d0071d29c67c3825d42
          &self,
          model_id: &str,
 diff --git a/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs b/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs
-index a7cdd818372bd29664c017a949164c60ce7bc417..2d4cf726f8e887ed756e550f90b118d37bc4b283 100644
+index a7cdd818..2d4cf726 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs
 @@ -840,6 +840,12 @@ pub(crate) async fn run_shell_child(
@@ -446,7 +454,7 @@ index a7cdd818372bd29664c017a949164c60ce7bc417..2d4cf726f8e887ed756e550f90b118d3
      let child_session_id = acp::SessionId::new(subagent_id.clone());
      let override_cwd = select_override_cwd(resume_source.as_ref(), request.cwd.as_deref());
 diff --git a/crates/codegen/xai-grok-shell/src/remote/client.rs b/crates/codegen/xai-grok-shell/src/remote/client.rs
-index be95f3a87c106a83c560b53fd6b875a2e67afb9c..7fd48e4e658475fa28c887c13f5f8adae5fc39ce 100644
+index be95f3a8..7fd48e4e 100644
 --- a/crates/codegen/xai-grok-shell/src/remote/client.rs
 +++ b/crates/codegen/xai-grok-shell/src/remote/client.rs
 @@ -766,6 +766,18 @@ pub(crate) fn parse_remote_model_value(
