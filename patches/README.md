@@ -15,10 +15,11 @@ This directory contains upstream source patches applied to `grok-build` for `gro
 - `0009-deepseek-chat-fix.patch`: Chat Completions usage `u32` fields accept JSON `null` as 0 via `deserialize_null_default`, so DeepSeek/Poe/CPA trailers with `reasoning_tokens: null` (and sibling usage ints) do not abort the turn.
 - `0010-deepseek-chat-compact-lenient.patch`: Chat Completions SSE compact-JSON lenient parse (sibling of 0006 in `client.rs`). Allowlisted retry for missing/`null` `choices[].index` (and empty `delta` / usage ints) so CPA/Poe wrappers cannot force a new patch per omitted key. Does not invent `id`/`model`/`created`. Stacked after 0001–0009.
 - `0011-ask-question-timeout-action.patch`: `[toolset.ask_user_question] timeout_action = "decline" | "recommended"` (default `decline`) plus env `GROK_ASK_USER_QUESTION_TIMEOUT_ACTION`. Timeout + `recommended` auto-selects `(Recommended)` labels (first match on single-select, all marked on multi-select) with honest auto-select tool text. Also includes idle-reset: `[toolset.ask_user_question] timeout_reset_on_activity = true` (default `true`, env `GROK_ASK_USER_QUESTION_TIMEOUT_IDLE_RESET`), restarting timeout on user key/click/focus-regain activity via ACP `x.ai/ask_user_question_activity`. No `/settings` row. Stacked after 0001–0010 because docs/persist/config_tests already carry earlier patches.
+- `0012-protoc-dependency-output-portable.patch`: Makes `xai-proto-build` protoc dependency discovery portable by replacing Unix-only `/dev/stdout` and `/dev/null` output paths with temporary files. Parses the Make dependency target separator without breaking Windows drive letters, allowing native Windows release builds.
 
 ## Target Commit
 
-- Base commit: `grok-build` commit `48271133` (`482711333c7195dc16a272777f86086d615e2afb`) — origin/main 1.0.32; patches 0001–0011 are authored/rebased against this base.
+- Base commit: `grok-build` commit `48271133` (`482711333c7195dc16a272777f86086d615e2afb`) — origin/main 1.0.32; patches 0001–0012 are authored/rebased against this base.
 
 ## Verification
 

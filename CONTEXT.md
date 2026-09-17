@@ -11,7 +11,8 @@ on `grok update` / `grokgod update`. Current set: `0001-normalize-plugin-skill-j
 `0002-plan-mode-extra-writable`, `0003-session-persist-single`, `0004-disable-builtin-deep-research`,
 `0005-model-tools-deny-allow`, `0006-web-search-call-tolerant-parse`, `0007-hosted-web-search-splice-decouple`,
 `0008-claude-permissions-import-gate`, `0009-deepseek-chat-fix`,
-`0010-deepseek-chat-compact-lenient`, `0011-ask-question-timeout-action`.
+`0010-deepseek-chat-compact-lenient`, `0011-ask-question-timeout-action`,
+`0012-protoc-dependency-output-portable`.
 _Avoid_: Mach-O hex edit, plugin.json rewrite as the engine fix
 
 **Auth-decoupled hosted splice**:

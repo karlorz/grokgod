@@ -1,0 +1,49 @@
+diff --git a/crates/build/xai-proto-build/src/lib.rs b/crates/build/xai-proto-build/src/lib.rs
+index 60fbc0ac..4bce1311 100644
+--- a/crates/build/xai-proto-build/src/lib.rs
++++ b/crates/build/xai-proto-build/src/lib.rs
+@@ -152,10 +152,20 @@ impl XaiProtoBuilder {
+ 
+         // Can only process one input file when using --dependency_out=FILE.
+         for proto in protos {
++            let dependency_file = tempfile::NamedTempFile::new()
++                .context("failed to create protoc dependency file")?;
++            let descriptor_file = tempfile::NamedTempFile::new()
++                .context("failed to create protoc descriptor file")?;
+             let mut command = Command::new(protoc.unwrap_or(Path::new("protoc")));
+             command
+-                .arg("--dependency_out=/dev/stdout")
+-                .arg("--descriptor_set_out=/dev/null");
++                .arg(format!(
++                    "--dependency_out={}",
++                    dependency_file.path().to_string_lossy()
++                ))
++                .arg(format!(
++                    "--descriptor_set_out={}",
++                    descriptor_file.path().to_string_lossy()
++                ));
+ 
+             // Add protoc's well-known types include directory first (if found).
+             // This is needed for Bazel sandboxed builds where protoc and its
+@@ -181,14 +191,15 @@ impl XaiProtoBuilder {
+                 return Err(anyhow::anyhow!("protoc command failed"));
+             }
+ 
+-            let output =
+-                String::from_utf8(output.stdout).context("protoc command output not UTF-8")?;
++            let output = fs::read_to_string(dependency_file.path())
++                .context("failed to read protoc dependency file")?;
+ 
+             let mut lines = output.lines();
+-            let first_line = lines.next().context("protoc command output is empty")?;
+-            let prefix = "/dev/null:";
+-            let rem = first_line.strip_prefix(prefix).with_context(|| {
+-                format!("protoc command output must start with /dev/null: {output:?}")
++            let first_line = lines.next().context("protoc dependency file is empty")?;
++            // Make dependency output separates its target from dependencies with
++            // `: `. Splitting on that sequence preserves Windows drive letters.
++            let (_, rem) = first_line.split_once(": ").with_context(|| {
++                format!("protoc dependency file has no target separator: {output:?}")
+             })?;
+             for line in iter::once(rem).chain(lines) {
+                 let line = line.trim();
