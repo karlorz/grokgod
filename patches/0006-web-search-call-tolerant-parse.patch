@@ -1,17 +1,17 @@
 diff --git a/crates/codegen/xai-grok-sampler/src/client.rs b/crates/codegen/xai-grok-sampler/src/client.rs
-index 977e94d2..bf8f4fa0 100644
+index 7cd1fa6727c567dd353d387c3b3cfbfaaf1b1e45..2275f996468cd7aa3662ef7385ba622b73c843f9 100644
 --- a/crates/codegen/xai-grok-sampler/src/client.rs
 +++ b/crates/codegen/xai-grok-sampler/src/client.rs
-@@ -20,7 +20,7 @@ use indexmap::IndexMap;
- use reqwest::header::{
-     ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, USER_AGENT,
+@@ -21,7 +21,7 @@ use reqwest::header::{
+     ACCEPT, AUTHORIZATION, CONTENT_ENCODING, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue,
+     USER_AGENT,
  };
 -use serde::Serialize;
 +use serde::{Deserialize, Serialize};
  use tracing::Instrument;
  
  use xai_grok_sampling_types::error::{
-@@ -87,12 +87,32 @@ impl GrokRequestHeaders<'_> {
+@@ -89,12 +89,32 @@ impl GrokRequestHeaders<'_> {
      }
  }
  
@@ -45,7 +45,7 @@ index 977e94d2..bf8f4fa0 100644
              if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(data) {
                  // Strip tools that async_openai's rs::Tool can't deserialize (e.g., xAI-specific "x_search")
                  // Instead of maintaining a hardcoded allowlist, try deserializing each tool entry; if it fails, drop it
-@@ -102,10 +122,90 @@ pub(crate) fn deserialize_response_event(data: &str) -> Result<rs::ResponseStrea
+@@ -104,10 +124,90 @@ pub(crate) fn deserialize_response_event(data: &str) -> Result<rs::ResponseStrea
                  {
                      tools.retain(|t| serde_json::from_value::<rs::Tool>(t.clone()).is_ok());
                  }
@@ -137,11 +137,10 @@ index 977e94d2..bf8f4fa0 100644
              }
              tracing::error!(
                  error = %first_err,
-@@ -3164,4 +3264,171 @@ mod tests {
-             rs::ResponseStreamEvent::ResponseOutputTextDelta(_)
-         ));
-     }
-+
+@@ -3546,5 +3646,170 @@ mod tests {
+         let mut request = CreateResponseWrapper::new(rs::CreateResponse::default());
+         without.apply_response_defaults(&mut request).unwrap();
+         assert_eq!(request.inner.reasoning, None);
 +    /// Test 1: output_item.added with web_search_call missing action (exact probe frame).
 +    /// Deserializes successfully and item survives with default Search action.
 +    #[test]
@@ -307,5 +306,5 @@ index 977e94d2..bf8f4fa0 100644
 +        // "x_search" was stripped, "web_search" retained
 +        assert_eq!(tools.len(), 1);
 +        assert!(matches!(tools[0], rs::Tool::WebSearch(_)));
-+    }
+     }
  }

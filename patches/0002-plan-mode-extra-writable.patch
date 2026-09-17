@@ -1,8 +1,8 @@
 diff --git a/crates/codegen/xai-grok-config-types/src/lib.rs b/crates/codegen/xai-grok-config-types/src/lib.rs
-index d6047d31..9ebf1bd6 100644
+index e4f0bca3e4b1c7a900081207da07684fcddab3be..1d46a34a2765d737d73fe5a9a759c02a46e581cb 100644
 --- a/crates/codegen/xai-grok-config-types/src/lib.rs
 +++ b/crates/codegen/xai-grok-config-types/src/lib.rs
-@@ -30,6 +30,45 @@ pub struct CampaignOverride {
+@@ -31,6 +31,45 @@ pub struct CampaignOverride {
      #[serde(flatten, default)]
      pub patch: serde_json::Map<String, serde_json::Value>,
  }
@@ -49,10 +49,10 @@ index d6047d31..9ebf1bd6 100644
  /// Every field is `Option` with a per-field default, so a partial object parses and unknown future keys are ignored.
  /// Unset fields fall through per-field in `resolve_doom_loop_recovery`: env, then TOML, then remote, then default.
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
-index 6dc094ce..66df4bf7 100644
+index cadd350125b028e8a12ee3695262a397ca4cbee4..4cfec97c83d53d580ae7b7c35db9b381b0a6baf8 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
-@@ -1207,6 +1207,9 @@ pub struct Config {
+@@ -1199,6 +1199,9 @@ pub struct Config {
      /// See [`crate::util::config::DoomLoopRecoverySettings`].
      #[serde(default)]
      pub doom_loop_recovery: crate::util::config::DoomLoopRecoverySettings,
@@ -62,7 +62,7 @@ index 6dc094ce..66df4bf7 100644
      /// `[worktree]` section (currently `[worktree.auto_gc]` only).
      #[serde(default)]
      pub worktree: WorktreeConfigSection,
-@@ -1599,6 +1602,7 @@ impl Default for Config {
+@@ -1596,6 +1599,7 @@ impl Default for Config {
              goal: GoalConfig::default(),
              workflows: WorkflowsConfig::default(),
              doom_loop_recovery: crate::util::config::DoomLoopRecoverySettings::default(),
@@ -70,7 +70,7 @@ index 6dc094ce..66df4bf7 100644
              worktree: WorktreeConfigSection::default(),
              auto_mode: AutoModeConfig::default(),
              prompt_suggestions: crate::util::config::PromptSuggestConfig::default(),
-@@ -2471,6 +2475,15 @@ impl Config {
+@@ -2475,6 +2479,15 @@ impl Config {
                  ),
          })
      }
@@ -87,10 +87,10 @@ index 6dc094ce..66df4bf7 100644
      /// Precedence: env kill/dry-run > `[worktree.auto_gc]` TOML > remote `worktree_auto_gc` > defaults.
      /// Platform age-expiry (`process_cwd_scan_available`: linux+macos) is enforced inside `xai_fast_worktree::maybe_auto_gc`, not here.
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
-index d498c720..8ab45db8 100644
+index 79f180801eee19f4302614ad74a00f4948fcf0a0..fa690c324f736bf8658380814e95c2970857f3ca 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
-@@ -260,10 +260,21 @@ impl SessionActor {
+@@ -318,10 +318,21 @@ impl SessionActor {
              if let Some(client) = self.rebuild_spec.managed_gateway_tool_client.clone() {
                  bridge.update_resource(client).await;
              }
@@ -114,7 +114,7 @@ index d498c720..8ab45db8 100644
                  bridge
                      .set_display_cwd(std::path::PathBuf::from(display_cwd))
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/session_mode.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/session_mode.rs
-index 31ec21ff..80faf233 100644
+index 31ec21ff2ebf6771c15140b972d57bbb8b4c9777..80faf233e28566983b00d2cad33fdf07af831bc3 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/session_mode.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/session_mode.rs
 @@ -344,9 +344,21 @@ impl SessionActor {
@@ -140,10 +140,10 @@ index 31ec21ff..80faf233 100644
          self.agent
              .borrow()
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-index 818e085d..d4b42ae1 100644
+index 128cff4a89a0fa967bb18998187335d6201e8e2c..a7270835acf5d0f4acb7f949c54979693fa8f024 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-@@ -1700,6 +1700,13 @@ pub(crate) async fn spawn_session_actor(
+@@ -1713,6 +1713,13 @@ pub(crate) async fn spawn_session_actor(
          }
      };
      let doom_loop_recovery = effective_config.resolve_doom_loop_recovery();
@@ -157,7 +157,7 @@ index 818e085d..d4b42ae1 100644
      let resolved_tool_overrides: std::sync::Arc<
          arc_swap::ArcSwapOption<xai_grok_sampling_types::ToolOverrides>,
      > = std::sync::Arc::new(arc_swap::ArcSwapOption::empty());
-@@ -2077,19 +2084,32 @@ pub(crate) async fn spawn_session_actor(
+@@ -2128,19 +2135,33 @@ pub(crate) async fn spawn_session_actor(
                  .await;
          }
          {
@@ -187,19 +187,18 @@ index 818e085d..d4b42ae1 100644
          session.inject_deny_read_globs().await;
          if session.permissions.is_auto_mode() {
              session.wire_permission_auto_llm_classifier().await;
--        }
--        session
-+        }        session
+         }
+         session
              .agent
              .borrow()
              .tool_bridge()
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
-index b15a7fa9..93b65d37 100644
+index 9cc23a3bc53da57b1bf0a1c39a08993cc7099e75..80dc732e2227dd782ff02e1956af71dbe7065c1f 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
-@@ -214,6 +214,12 @@ pub(super) enum PlanEditGate {
+@@ -207,6 +207,12 @@ pub(super) enum PlanEditGate {
  /// Compat-toolset `Delete` is not on the markdown carve-out: it maps to `AccessKind::Edit` and is plan-file-only (same as grok edits).
- /// `apply_patch` maps to a placeholder `AccessKind::Edit("apply_patch")` and therefore never matches the plan file.
+ /// `apply_patch` is `AccessKind::Tool` (its files are named inside the patch text) and is always rejected: it could touch anything.
  /// `enter_plan_mode` / `exit_plan_mode` map to `AccessKind::Read` and are likewise never gated.
 +fn extra_glob_edit_tool(tool_input: &ToolInput) -> bool {
 +    matches!(
@@ -210,8 +209,8 @@ index b15a7fa9..93b65d37 100644
  fn access_kind_for_resolved_tool(tool_name: &str, tool_input: &ToolInput) -> AccessKind {
      if tool_name == xai_grok_tools::implementations::grok_build::SEND_FEEDBACK_TOOL_NAME {
          return match tool_input {
-@@ -237,8 +243,15 @@ pub(super) fn plan_mode_edit_gate(
-         return PlanEditGate::Allow;
+@@ -233,8 +239,15 @@ pub(super) fn plan_mode_edit_gate(
+         return PlanEditGate::RejectNonPlanFile;
      }
      match access_kind {
 -        AccessKind::Edit(path) if !tracker.should_auto_approve_edit(Path::new(path)) => {
@@ -228,7 +227,7 @@ index b15a7fa9..93b65d37 100644
          }
          _ => PlanEditGate::Allow,
      }
-@@ -3419,6 +3432,74 @@ mod plan_mode_edit_gate_tests {
+@@ -3463,6 +3476,74 @@ mod plan_mode_edit_gate_tests {
              "Pending means the model has no plan-mode instructions yet — don't gate"
          );
      }
@@ -304,7 +303,7 @@ index b15a7fa9..93b65d37 100644
  #[cfg(test)]
  mod plan_approval_helper_tests {
 diff --git a/crates/codegen/xai-grok-shell/src/session/plan_mode.rs b/crates/codegen/xai-grok-shell/src/session/plan_mode.rs
-index 499cf506..45598489 100644
+index a1a37a11691406e5452c1d7d82e96389141e490b..395f7cfe58884c91bef6eb5b4e27235a62f0fd73 100644
 --- a/crates/codegen/xai-grok-shell/src/session/plan_mode.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/plan_mode.rs
 @@ -43,6 +43,12 @@ pub struct PlanModeTracker {
@@ -445,7 +444,7 @@ index 499cf506..45598489 100644
  /// Whether the path's final component ends with a markdown suffix (case-insensitive).
  /// Suffixes align with client / workspace `MARKDOWN_SUFFIXES`: `.md`, `.markdown`, `.mdown`, `.mkd`, `.mkdn`, `.mdx`.
  /// In plan mode the shell rejects `Write` and `StrReplace` when this is false.
-@@ -705,6 +783,21 @@ mod tests {
+@@ -709,6 +787,21 @@ mod tests {
          assert!(!text.contains("${{"));
      }
      #[test]
@@ -467,7 +466,7 @@ index 499cf506..45598489 100644
      fn edit_rejected_template_renders() {
          let r = test_renderer();
          let text = render(
-@@ -755,6 +848,27 @@ mod tests {
+@@ -759,6 +852,27 @@ mod tests {
          assert!(!is_plan_file_write(target, plan));
      }
      #[test]
@@ -496,7 +495,7 @@ index 499cf506..45598489 100644
          assert!(is_markdown_file_path(Path::new("/x/plan.md")));
          assert!(is_markdown_file_path(Path::new("notes.MDX")));
 diff --git a/crates/codegen/xai-grok-shell/src/util/config/mod.rs b/crates/codegen/xai-grok-shell/src/util/config/mod.rs
-index 8f85bf8f..0de700db 100644
+index 8f85bf8f38869f39a5b2317abb32e7bd0bf52118..0de700dbfa7c2f5e3c6694fa6610572f3eb0dff4 100644
 --- a/crates/codegen/xai-grok-shell/src/util/config/mod.rs
 +++ b/crates/codegen/xai-grok-shell/src/util/config/mod.rs
 @@ -34,6 +34,6 @@ pub use tips::*;
@@ -509,7 +508,7 @@ index 8f85bf8f..0de700db 100644
 +    WorktreeAutoGcSettings, WorktreeKindMaxAge, deserialize_tolerant,
  };
 diff --git a/crates/codegen/xai-grok-tools/src/implementations/grok_build/exit_plan_mode/mod.rs b/crates/codegen/xai-grok-tools/src/implementations/grok_build/exit_plan_mode/mod.rs
-index f0a62c78..f7ed0b60 100644
+index f0a62c78d9fd9433057367a8f31f38526eff4a81..f7ed0b609e6ae68963a8d566c60951ff2554714a 100644
 --- a/crates/codegen/xai-grok-tools/src/implementations/grok_build/exit_plan_mode/mod.rs
 +++ b/crates/codegen/xai-grok-tools/src/implementations/grok_build/exit_plan_mode/mod.rs
 @@ -26,7 +26,9 @@ pub use types::{ExitPlanModeExtRequest, ExitPlanModeExtResponse};
@@ -709,7 +708,7 @@ index f0a62c78..f7ed0b60 100644
      async fn reads_from_plan_file_path_resource() {
          let tmp = TempDir::new().unwrap();
 diff --git a/crates/codegen/xai-grok-tools/src/types/resources.rs b/crates/codegen/xai-grok-tools/src/types/resources.rs
-index 22052272..e38e8a27 100644
+index 61910fedb7dffe8b2b75e85cc0215070f4fa14e2..bad1095385d9ab051e284003770bd9ad94f45494 100644
 --- a/crates/codegen/xai-grok-tools/src/types/resources.rs
 +++ b/crates/codegen/xai-grok-tools/src/types/resources.rs
 @@ -355,6 +355,10 @@ pub struct Cwd(pub PathBuf);

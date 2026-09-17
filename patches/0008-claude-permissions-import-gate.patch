@@ -1,8 +1,8 @@
 diff --git a/crates/codegen/xai-grok-config-types/src/lib.rs b/crates/codegen/xai-grok-config-types/src/lib.rs
-index 55ce4f58..4213c43c 100644
+index c6a0740d6b99d58f578cbbe864d5c363d599136f..21c90639aab864763a5dc8ad7c53968e172e71bd 100644
 --- a/crates/codegen/xai-grok-config-types/src/lib.rs
 +++ b/crates/codegen/xai-grok-config-types/src/lib.rs
-@@ -532,6 +532,8 @@ pub struct RemoteSettings {
+@@ -537,6 +537,8 @@ pub struct RemoteSettings {
      #[serde(default)]
      pub claude_sessions_enabled: Option<bool>,
      #[serde(default)]
@@ -12,10 +12,10 @@ index 55ce4f58..4213c43c 100644
      /// When `Some(true)`, enable goal mode remotely.
      /// When `Some(false)`, force-disable it (kill-switch).
 diff --git a/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md b/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
-index e4d11f9f..6686e0fd 100644
+index 3443f9f2df63c84cd54c8aacb1311958d5bac039..56659d443012442ee0ea329082f1d5b1058266b3 100644
 --- a/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
 +++ b/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
-@@ -402,6 +402,7 @@ agents = true     # scan ~/.claude/ and <dir>/.claude/CLAUDE*.md
+@@ -410,6 +410,7 @@ agents = true     # scan ~/.claude/ and <dir>/.claude/CLAUDE*.md
  mcps = true       # scan ~/.claude.json for MCP servers
  hooks = true      # scan ~/.claude/settings.json for hooks
  sessions = true   # staged; no scanner consumer yet
@@ -24,10 +24,10 @@ index e4d11f9f..6686e0fd 100644
  [compat.codex]
  sessions = true   # staged; no scanner consumer yet
 diff --git a/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md b/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md
-index ab1dbe2d..14fca9d5 100644
+index ac4c5d85d9ea55cbb5be393e11e82b32316c567b..6a1833680301b2824204e1f60902fe2a4b3e7e79 100644
 --- a/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md
 +++ b/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md
-@@ -119,6 +119,7 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
+@@ -120,6 +120,7 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
  | `compat.claude.agents` | `boolean` | `yes` | `user` | Scan CLAUDE.md. Also GROK_CLAUDE_AGENTS_ENABLED. |
  | `compat.claude.hooks` | `boolean` | `yes` | `user` | Scan Claude hooks. Also GROK_CLAUDE_HOOKS_ENABLED. |
  | `compat.claude.mcps` | `boolean` | `yes` | `user` | Scan Claude MCP config. Also GROK_CLAUDE_MCPS_ENABLED. |
@@ -36,7 +36,7 @@ index ab1dbe2d..14fca9d5 100644
  | `compat.claude.skills` | `boolean` | `yes` | `user` | Scan Claude skills. Also GROK_CLAUDE_SKILLS_ENABLED. |
  | `compat.codex.hooks` | `boolean` | `yes` | `user` | Scan Codex hooks when present. |
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
-index d8044ae8..34ab35e0 100644
+index d9927750ccaa9b3ab03bfa41d173f3f57d12044e..9c55a4b777072aaf30bd69f7c6db022cbe6cb960 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
 @@ -702,6 +702,7 @@ fn remote_compat_value(
@@ -48,10 +48,10 @@ index d8044ae8..34ab35e0 100644
      }
  }
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
-index f3df69c1..dfa7efcd 100644
+index 5bfa302a686642d4b274ec9974c312ac44e7eaf2..cae8aefdd366153c0d05ef43d15fef781e7902ad 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
-@@ -6628,6 +6628,7 @@ fn clear_runtime_env_vars() {
+@@ -6638,6 +6638,7 @@ fn clear_runtime_env_vars() {
          std::env::remove_var("GROK_CLAUDE_SKILLS_ENABLED");
          std::env::remove_var("GROK_CLAUDE_RULES_ENABLED");
          std::env::remove_var("GROK_CLAUDE_AGENTS_ENABLED");
@@ -59,7 +59,7 @@ index f3df69c1..dfa7efcd 100644
      }
  }
  fn clear_managed_mcp_env_vars() {
-@@ -6673,6 +6674,7 @@ fn remote_settings_with(key: CompatRemoteKey, value: bool) -> crate::util::confi
+@@ -6683,6 +6684,7 @@ fn remote_settings_with(key: CompatRemoteKey, value: bool) -> crate::util::confi
          CompatRemoteKey::ClaudeMcps => remote.claude_mcps_enabled = Some(value),
          CompatRemoteKey::ClaudeHooks => remote.claude_hooks_enabled = Some(value),
          CompatRemoteKey::ClaudeSessions => remote.claude_sessions_enabled = Some(value),
@@ -68,10 +68,10 @@ index f3df69c1..dfa7efcd 100644
      }
      remote
 diff --git a/crates/codegen/xai-grok-shell/src/claude_import.rs b/crates/codegen/xai-grok-shell/src/claude_import.rs
-index 54ef06c0..0e17b28d 100644
+index 0c502454b8ab2c0527f7207ca828fbd3d2adb309..11a60761ab8e2a0d8f7b39d62a697ad081471f0d 100644
 --- a/crates/codegen/xai-grok-shell/src/claude_import.rs
 +++ b/crates/codegen/xai-grok-shell/src/claude_import.rs
-@@ -1965,6 +1965,7 @@ extra_rule_dirs = ["/c/rules"]
+@@ -2065,6 +2065,7 @@ extra_rule_dirs = ["/c/rules"]
              xai_grok_workspace::permission::resolution::resolve_permissions_with_provenance(
                  dir.path(),
                  true,
@@ -80,7 +80,7 @@ index 54ef06c0..0e17b28d 100644
              .await
              .resolved;
 diff --git a/crates/codegen/xai-grok-shell/src/inspect/compat.rs b/crates/codegen/xai-grok-shell/src/inspect/compat.rs
-index ed01b12b..56639b6f 100644
+index a1a11531737e61d8b114dcb7139ae7c35f5dbc08..28e5c0e6b091feab66a2c14b090303da268773f5 100644
 --- a/crates/codegen/xai-grok-shell/src/inspect/compat.rs
 +++ b/crates/codegen/xai-grok-shell/src/inspect/compat.rs
 @@ -199,7 +199,7 @@ mod tests {
@@ -93,10 +93,10 @@ index ed01b12b..56639b6f 100644
              report
                  .cells
 diff --git a/crates/codegen/xai-grok-shell/src/inspect/mod.rs b/crates/codegen/xai-grok-shell/src/inspect/mod.rs
-index 9e1b16c7..97ab9906 100644
+index a760a2ab04891e9d1c34868f286bd0184a4dc1d6..fe0d1640e5b3f23aa9971c389e411c8accd4af17 100644
 --- a/crates/codegen/xai-grok-shell/src/inspect/mod.rs
 +++ b/crates/codegen/xai-grok-shell/src/inspect/mod.rs
-@@ -712,7 +712,7 @@ async fn list_permissions(cwd: &Path, project_trusted: bool) -> PermissionsRepor
+@@ -696,7 +696,7 @@ async fn list_permissions(cwd: &Path, project_trusted: bool) -> PermissionsRepor
      let resolution::ProvenanceResolution {
          yolo_lock,
          resolved,
@@ -106,10 +106,10 @@ index 9e1b16c7..97ab9906 100644
          Some(resolved) => {
              let mut sources: Vec<String> = resolved.sources.iter().map(|s| s.to_string()).collect();
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-index 69a7e63a..7e408178 100644
+index ed72c9ac9d997e9790e80d4511101d1422617837..403b4d841b6d2d9061aed751e9aede0576d8d029 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-@@ -345,6 +345,7 @@ pub(crate) async fn spawn_session_actor(
+@@ -348,6 +348,7 @@ pub(crate) async fn spawn_session_actor(
                      tool_context.cwd.as_path(),
                      project_trusted,
                      yolo_lock.as_ref(),
@@ -118,7 +118,7 @@ index 69a7e63a..7e408178 100644
                  .instrument(tracing::info_span!("spawn.permission_config_load"))
                  .await;
 diff --git a/crates/codegen/xai-grok-tools/src/types/compat.rs b/crates/codegen/xai-grok-tools/src/types/compat.rs
-index 833a6292..f6a2edad 100644
+index 833a6292f5a8d8a80ea6afd4266f88628ac7463b..f6a2edad7c219eb5e02aa5c7b596f4968a795f5d 100644
 --- a/crates/codegen/xai-grok-tools/src/types/compat.rs
 +++ b/crates/codegen/xai-grok-tools/src/types/compat.rs
 @@ -31,6 +31,7 @@ pub enum CompatSurface {
@@ -247,10 +247,10 @@ index 833a6292..f6a2edad 100644
          assert_eq!(parsed.codex, VendorCompatToml::default());
      }
 diff --git a/crates/codegen/xai-grok-workspace/src/discovery.rs b/crates/codegen/xai-grok-workspace/src/discovery.rs
-index 7fa794c3..6243e6e3 100644
+index c579920eaa06eff6a2d4304d0ed42573e32fed8a..7cc2f6324290902af1bb217759894f86f196efaf 100644
 --- a/crates/codegen/xai-grok-workspace/src/discovery.rs
 +++ b/crates/codegen/xai-grok-workspace/src/discovery.rs
-@@ -199,7 +199,7 @@ fn toml_to_json(v: &toml::Value) -> Value {
+@@ -181,7 +181,7 @@ fn toml_to_json(v: &toml::Value) -> Value {
  pub async fn load_permissions(root_cwd: &Path, project_trusted: bool) -> Value {
      use crate::permission::resolution;
  
@@ -260,7 +260,7 @@ index 7fa794c3..6243e6e3 100644
          .resolved
      else {
 diff --git a/crates/codegen/xai-grok-workspace/src/permission/resolution.rs b/crates/codegen/xai-grok-workspace/src/permission/resolution.rs
-index e3b5c77d..1177fe71 100644
+index e3b5c77deba4fff49c4ff6b92ff8ab92714c94e9..1177fe71cb44ea0ecc0a45797905b99c1f0e62e0 100644
 --- a/crates/codegen/xai-grok-workspace/src/permission/resolution.rs
 +++ b/crates/codegen/xai-grok-workspace/src/permission/resolution.rs
 @@ -268,8 +268,9 @@ fn managed_config_permissions(
@@ -350,10 +350,10 @@ index e3b5c77d..1177fe71 100644
          None
      } else {
 diff --git a/crates/codegen/xai-grok-workspace/src/permission/resolution_tests.rs b/crates/codegen/xai-grok-workspace/src/permission/resolution_tests.rs
-index f2eef5e8..47a1802e 100644
+index f30e30db7a620e2559458c4fe88768b80f474ae3..0e695517efe6d14c093ca09cc7bf94613db1cb3c 100644
 --- a/crates/codegen/xai-grok-workspace/src/permission/resolution_tests.rs
 +++ b/crates/codegen/xai-grok-workspace/src/permission/resolution_tests.rs
-@@ -1208,6 +1208,7 @@ fn inputs_trusted(
+@@ -1364,6 +1364,7 @@ fn inputs_trusted(
          managed: DEFAULT_MANAGED.get_or_init(ManagedSettings::default),
          managed_config_rules: Vec::new(),
          project_trusted,
@@ -361,7 +361,7 @@ index f2eef5e8..47a1802e 100644
      }
  }
  
-@@ -1221,6 +1222,7 @@ fn inputs_with_managed<'a>(
+@@ -1377,6 +1378,7 @@ fn inputs_with_managed<'a>(
          managed,
          managed_config_rules: Vec::new(),
          project_trusted: true,
@@ -369,7 +369,7 @@ index f2eef5e8..47a1802e 100644
      }
  }
  
-@@ -1836,7 +1838,7 @@ async fn fallback_pinned_lock_param_controls_catchall_drop() {
+@@ -2034,7 +2036,7 @@ async fn fallback_pinned_lock_param_controls_catchall_drop() {
      )
      .unwrap();
  
@@ -378,7 +378,7 @@ index f2eef5e8..47a1802e 100644
          .await
          .expect("rules resolve");
      assert!(
-@@ -1845,7 +1847,7 @@ async fn fallback_pinned_lock_param_controls_catchall_drop() {
+@@ -2043,7 +2045,7 @@ async fn fallback_pinned_lock_param_controls_catchall_drop() {
      );
  
      let lock = pin_lock();
@@ -387,7 +387,7 @@ index f2eef5e8..47a1802e 100644
          .await
          .expect("skip-only resolution survives");
      assert!(
-@@ -1865,7 +1867,7 @@ async fn dont_ask_sets_prompt_policy_through_public_api() {
+@@ -2063,7 +2065,7 @@ async fn dont_ask_sets_prompt_policy_through_public_api() {
      )
      .unwrap();
  
@@ -396,7 +396,7 @@ index f2eef5e8..47a1802e 100644
          .await
          .unwrap();
      assert_eq!(cfg.prompt_policy, PromptPolicy::Deny);
-@@ -1884,7 +1886,7 @@ async fn dont_ask_nested_under_permissions_sets_prompt_policy() {
+@@ -2082,7 +2084,7 @@ async fn dont_ask_nested_under_permissions_sets_prompt_policy() {
      )
      .unwrap();
  
@@ -405,7 +405,7 @@ index f2eef5e8..47a1802e 100644
          .await
          .unwrap();
      assert_eq!(
-@@ -1905,7 +1907,7 @@ async fn auto_nested_under_permissions_sets_prompt_policy() {
+@@ -2103,7 +2105,7 @@ async fn auto_nested_under_permissions_sets_prompt_policy() {
      )
      .unwrap();
  
@@ -414,7 +414,7 @@ index f2eef5e8..47a1802e 100644
          .await
          .unwrap();
      assert_eq!(
-@@ -2169,7 +2171,7 @@ async fn nested_dont_ask_with_allow_rules_preserves_allow_and_deny_policy() {
+@@ -2367,7 +2369,7 @@ async fn nested_dont_ask_with_allow_rules_preserves_allow_and_deny_policy() {
      )
      .unwrap();
  
@@ -423,7 +423,7 @@ index f2eef5e8..47a1802e 100644
          .await
          .unwrap();
      assert_eq!(cfg.prompt_policy, PromptPolicy::Deny);
-@@ -2620,3 +2622,63 @@ fn explicit_default_mode_blocks_permission_mode_hint() {
+@@ -2844,3 +2846,63 @@ fn explicit_default_mode_blocks_permission_mode_hint() {
          );
      }
  }

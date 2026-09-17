@@ -21,7 +21,7 @@ inventory. Persist status is exposed via the `grok status` persist block
 | `0010` | `patches/0010-deepseek-chat-compact-lenient.patch` | Chat Completions SSE choke point: allowlisted compact-JSON retry for missing/`null` choice `index` (and sibling defaultable structural fields) | Same wrapper class as 0009; search/tool turns omit `choices[].index` (`missing field index`). Sibling of 0006 in `client.rs`; not a per-field serde attr. Identity fields stay fail-closed. |
 | `0011` | `patches/0011-ask-question-timeout-action.patch` | `[toolset.ask_user_question] timeout_action` `decline`/`recommended` (default decline) + env `GROK_ASK_USER_QUESTION_TIMEOUT_ACTION`; idle-reset `timeout_reset_on_activity = true` (default true) + env `GROK_ASK_USER_QUESTION_TIMEOUT_IDLE_RESET` with ACP `x.ai/ask_user_question_activity` notification; honest auto-select on timeout (single-select first `(Recommended)`, multi-select all marked) | Official timeout = Shift+X decline. Burn-mode needs config to auto-pick Recommended without faking a user click. Idle-reset restarts timer on user interaction so reading/typing does not abort unexpectedly. No `/settings` row. |
 
-Base SHA: see `patches/README.md` (`37949780`). Fail closed on `git apply --check`. Daily CI `.github/workflows/compat-daily.yml` runs `git apply --check` of `patches/*.patch` against latest `xai-org/grok-build` `origin/main`.
+Base SHA: see `patches/README.md` (`48271133`). Fail closed on `git apply --check`. Daily CI `.github/workflows/compat-daily.yml` runs `git apply --check` of `patches/*.patch` against latest `xai-org/grok-build` `origin/main`.
 
 ## Keep — wrapper, not a source patch
 

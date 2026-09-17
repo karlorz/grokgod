@@ -1,8 +1,8 @@
 diff --git a/crates/codegen/xai-grok-sampler/src/client.rs b/crates/codegen/xai-grok-sampler/src/client.rs
-index bf8f4fa0..a5b73123 100644
+index 2275f996468cd7aa3662ef7385ba622b73c843f9..6a0b7ba32b61156ecf153f8c6c306d02e0519953 100644
 --- a/crates/codegen/xai-grok-sampler/src/client.rs
 +++ b/crates/codegen/xai-grok-sampler/src/client.rs
-@@ -219,6 +219,112 @@ pub(crate) fn deserialize_response_event(data: &str) -> Result<rs::ResponseStrea
+@@ -221,6 +221,112 @@ pub(crate) fn deserialize_response_event(data: &str) -> Result<rs::ResponseStrea
      Ok(event)
  }
  
@@ -115,7 +115,7 @@ index bf8f4fa0..a5b73123 100644
  /// On `response.completed` / `response.incomplete`, rewrite `usage.total_tokens` to the live context length from `context_details`.
  /// Billing fields stay on the cumulative wire values, so telemetry is unaffected.
  fn apply_terminal_event_overrides(event: &mut rs::ResponseStreamEvent, data: &str) {
-@@ -1237,16 +1343,7 @@ impl SamplingClient {
+@@ -1297,16 +1403,7 @@ impl SamplingClient {
                          if let Some(stream_error) = try_parse_stream_error(data) {
                              Some(Err(stream_error))
                          } else {
@@ -133,7 +133,7 @@ index bf8f4fa0..a5b73123 100644
                          }
                      }
                      Err(e) => {
-@@ -3431,4 +3528,91 @@ mod tests {
+@@ -3812,4 +3909,91 @@ mod tests {
          assert_eq!(tools.len(), 1);
          assert!(matches!(tools[0], rs::Tool::WebSearch(_)));
      }
