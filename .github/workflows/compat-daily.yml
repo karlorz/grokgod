@@ -70,18 +70,22 @@ jobs:
               failed_patches+=("$pname")
 
               manifest_file="grok-build/crates/codegen/xai-grok-agent/src/plugins/manifest.rs"
-              upstream_diag="upstream status unknown"
-              if [ -f "$manifest_file" ]; then
-                if grep -q 'Component::CurDir' "$manifest_file" || grep -q 'fn normalize_path' "$manifest_file"; then
-                  echo "  note: possible FIXED-UPSTREAM; do not auto-drop"
-                  upstream_diag="possible FIXED-UPSTREAM (CurDir / fn normalize_path present in manifest.rs); do not auto-drop"
+              upstream_diag="upstream drift/refactor (fixed-upstream heuristic is patch-specific to 0001-normalize-plugin-skill-join.patch); regenerate patch"
+              if [ "$pname" = "0001-normalize-plugin-skill-join.patch" ]; then
+                if [ -f "$manifest_file" ]; then
+                  if grep -q 'Component::CurDir' "$manifest_file" || grep -q 'fn normalize_path' "$manifest_file"; then
+                    echo "  note: possible FIXED-UPSTREAM; do not auto-drop"
+                    upstream_diag="possible FIXED-UPSTREAM (CurDir / fn normalize_path present in manifest.rs); do not auto-drop"
+                  else
+                    echo "  note: upstream likely drifted; regenerate patch"
+                    upstream_diag="upstream likely drifted (CurDir / fn normalize_path absent in manifest.rs); regenerate patch"
+                  fi
                 else
-                  echo "  note: upstream likely drifted; regenerate patch"
-                  upstream_diag="upstream likely drifted (CurDir / fn normalize_path absent in manifest.rs); regenerate patch"
+                  echo "  note: manifest.rs not found at expected path"
+                  upstream_diag="manifest.rs not found at $manifest_file"
                 fi
               else
-                echo "  note: manifest.rs not found at expected path"
-                upstream_diag="manifest.rs not found at $manifest_file"
+                echo "  note: upstream likely drifted/refactored; fixed-upstream heuristic is not applicable to $pname"
               fi
 
               trimmed_err="$(echo "$apply_err" | head -n 20)"

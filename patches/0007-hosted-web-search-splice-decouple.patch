@@ -181,21 +181,15 @@ diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
 index bfb3bd03f7db8307019f536002bd6603293ccbbf..ed72c9ac9d997e9790e80d4511101d1422617837 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-@@ -1181,6 +1181,7 @@ pub(crate) async fn spawn_session_actor(
-         memory_v2_access,
-         memory_v2_exposed: memory_v2_exposed(memory_config.as_ref()),
+@@ -1183,2 +1183,3 @@ pub(crate) async fn spawn_session_actor(
          web_search_config: web_search_config.clone(),
 +        hosted_web_search_disabled: disable_web_search,
          web_search_domains,
-         backend_search: backend_tools_enabled,
-         web_fetch_config: web_fetch_config.clone(),
 diff --git a/crates/codegen/xai-grok-shell/src/session/agent_rebuild.rs b/crates/codegen/xai-grok-shell/src/session/agent_rebuild.rs
 index a9722864ff4af1242ad2107b982b8e256d6897eb..7e6ba35bdcf302e4883c49e13153c3306567f721 100644
 --- a/crates/codegen/xai-grok-shell/src/session/agent_rebuild.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/agent_rebuild.rs
-@@ -82,6 +82,9 @@ pub(crate) struct AgentRebuildSpec {
-     pub memory_v2_access: Option<xai_grok_tools::types::memory_v2::MemoryV2AccessResource>,
-     pub memory_v2_exposed: bool,
+@@ -84,4 +84,7 @@ pub(crate) struct AgentRebuildSpec {
      pub web_search_config: WebSearchConfig,
 +    /// When true, hosted web_search is suppressed even when backend_search is true.
 +    /// Threaded from the CLI/config `disable_web_search` kill-switch.
@@ -219,11 +213,7 @@ index a9722864ff4af1242ad2107b982b8e256d6897eb..7e6ba35bdcf302e4883c49e13153c330
          .with_backend_search(*backend_search)
          .with_image_gen_config(image_gen_config.clone())
          .with_video_gen_config(video_gen_config.clone())
-@@ -465,6 +470,7 @@ pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
-         memory_v2_access: None,
-         memory_v2_exposed: false,
+@@ -467,2 +467,3 @@ pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
          web_search_config: WebSearchConfig::default(),
 +        hosted_web_search_disabled: false,
          web_search_domains: None,
-         backend_search: false,
-         web_fetch_config: WebFetchConfig::Disabled,

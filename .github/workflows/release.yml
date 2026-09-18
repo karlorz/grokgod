@@ -41,7 +41,7 @@ jobs:
           - os: windows-latest
             target: windows-x64
             ext: ".exe"
-            optional: true
+            optional: false
 
     steps:
       - name: Checkout grokgod
@@ -79,11 +79,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config cmake libssl-dev
 
-      - name: Clone grok-build origin/main
+      - name: Fetch pinned grok-build commit
         shell: bash
         run: |
-          git clone --depth 1 https://github.com/xai-org/grok-build.git grok-build
-          git -C grok-build rev-parse HEAD
+          PIN_SHA="$(grep '^PINNED_BASE_SHA=' install.sh | cut -d= -f2- | tr -d '"' | tr -d "'" || true)"
+          if [ -z "$PIN_SHA" ]; then
+            echo "::error::PINNED_BASE_SHA missing in install.sh"
+            exit 1
+          fi
+          echo "PINNED_BASE_SHA resolved: $PIN_SHA"
+          git -C grok-build init 2>/dev/null || { mkdir -p grok-build && git -C grok-build init; }
+          git -C grok-build remote add origin https://github.com/xai-org/grok-build.git 2>/dev/null || git -C grok-build remote set-url origin https://github.com/xai-org/grok-build.git
+          git -C grok-build fetch --depth 1 origin "$PIN_SHA"
+          git -C grok-build checkout --detach "$PIN_SHA"
+          actual_sha="$(git -C grok-build rev-parse HEAD)"
+          echo "grok-build checked out at: $actual_sha"
+          if [ "$actual_sha" != "$PIN_SHA" ]; then
+            echo "::error::Checked out grok-build SHA ($actual_sha) does not match pinned SHA ($PIN_SHA)"
+            exit 1
+          fi
 
       - name: Apply grokgod patches
         shell: bash
@@ -120,15 +134,30 @@ jobs:
           cp "$BIN_SRC" "$BIN_DST"
           chmod +x "$BIN_DST" || true
 
-          if [ "${{ runner.os }}" != "Windows" ]; then
-            "$BIN_DST" --version || true
-          fi
+          "$BIN_DST" --version
 
           cd dist
+          artifact="grokgod-${{ matrix.target }}${{ matrix.ext }}"
+          checksum_file="SHA256SUMS-${{ matrix.target }}"
           if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum "grokgod-${{ matrix.target }}${{ matrix.ext }}" > "SHA256SUMS-${{ matrix.target }}"
+            sha256sum "$artifact" > "$checksum_file"
           elif command -v shasum >/dev/null 2>&1; then
-            shasum -a 256 "grokgod-${{ matrix.target }}${{ matrix.ext }}" > "SHA256SUMS-${{ matrix.target }}"
+            shasum -a 256 "$artifact" > "$checksum_file"
+          else
+            echo "::error::Neither sha256sum nor shasum is available"
+            exit 1
+          fi
+
+          num_lines="$(wc -l < "$checksum_file" | tr -d '[:space:]')"
+          if [ "$num_lines" -ne 1 ]; then
+            echo "::error::Expected exactly 1 checksum line in $checksum_file, got $num_lines"
+            exit 1
+          fi
+
+          if ! grep -q "[[:space:]]${artifact}\$" "$checksum_file"; then
+            echo "::error::Checksum line in $checksum_file does not match expected artifact name $artifact"
+            cat "$checksum_file"
+            exit 1
           fi
 
       - name: Upload artifact
@@ -160,9 +189,26 @@ jobs:
         id: assemble
         run: |
           mkdir -p release-assets
-          find downloaded-artifacts -name "SHA256SUMS-*" -exec cat {} + | sort -u > release-assets/SHA256SUMS
+          find downloaded-artifacts -name "SHA256SUMS-*" -exec cat {} + > release-assets/SHA256SUMS
           find downloaded-artifacts -type f \( -name "grokgod-*" ! -name "SHA256SUMS-*" \) -exec cp {} release-assets/ \;
           cp install.sh install.ps1 release-assets/
+          cp src/shim/grok-shim.ps1 src/shim/LauncherHelpers.ps1 release-assets/
+
+          # Append checksums for runtime scripts to SHA256SUMS
+          cd release-assets
+          for script_asset in grok-shim.ps1 LauncherHelpers.ps1 install.ps1; do
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$script_asset" >> SHA256SUMS
+            elif command -v shasum >/dev/null 2>&1; then
+              shasum -a 256 "$script_asset" >> SHA256SUMS
+            else
+              echo "::error::Neither sha256sum nor shasum is available"
+              exit 1
+            fi
+          done
+          sort -u SHA256SUMS -o SHA256SUMS
+          cd ..
+
           echo "=== Release Assets ==="
           ls -la release-assets/
           echo "=== SHA256SUMS ==="
@@ -173,6 +219,20 @@ jobs:
           for t in linux-x64 linux-arm64 darwin-arm64; do
             if [ ! -s "release-assets/grokgod-$t" ]; then
               echo "::error::missing required asset release-assets/grokgod-$t"
+              exit 1
+            fi
+          done
+          if [ ! -s "release-assets/grokgod-windows-x64.exe" ]; then
+            echo "::error::missing required asset release-assets/grokgod-windows-x64.exe"
+            exit 1
+          fi
+          for runtime in grok-shim.ps1 LauncherHelpers.ps1 install.ps1; do
+            if [ ! -s "release-assets/$runtime" ]; then
+              echo "::error::missing required runtime asset release-assets/$runtime"
+              exit 1
+            fi
+            if ! grep -q "[[:space:]]${runtime}\$" release-assets/SHA256SUMS; then
+              echo "::error::missing checksum entry for runtime asset $runtime in SHA256SUMS"
               exit 1
             fi
           done
@@ -222,12 +282,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${{ steps.notes.outputs.tag }}"
-          # Find all assets in release-assets
-          ASSETS=(release-assets/*)
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" "${ASSETS[@]}" --clobber
-          else
-            gh release create "$tag" "${ASSETS[@]}" \
-              --title "grokgod $tag" \
-              --notes-file release-notes.md
+            echo "::error::Release $tag already exists; immutable release policy forbids mutating or clobbering existing releases"
+            exit 1
           fi
+          ASSETS=(release-assets/*)
+          gh release create "$tag" "${ASSETS[@]}" \
+            --title "grokgod $tag" \
+            --notes-file release-notes.md

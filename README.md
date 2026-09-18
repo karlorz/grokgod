@@ -63,10 +63,48 @@ sh install.sh --uninstall                                    # restore grok.orig
 grok update                                                  # check latest upstream origin/main; re-apply patches + rebuild; no-op "Already up to date" when current
                                                              # (release: compares release tag; source: resolved origin/main SHA+patchset)
 grok status                                                  # shim ownership + .source-version
+grokgod status [--json]                                      # detailed status & health inspection (POSIX & Windows)
 grokgod cache report                                         # disk / target size + ~/.grok/sessions age buckets
 grokgod sessions prune                                       # dry-run old sessions; --yes --max-age 7d uses grok sessions delete
 grokgod pin check [--expect-default M] [--expect-no-overlay] [--expect-orca-pin M]  # fail-closed pin precheck assertion
 ```
+
+### Windows Dispatcher & Command Matrix
+
+On Windows, `grok.cmd` and `grokgod.cmd` forward commands with positional identity to `src/shim/grok-shim.ps1` (e.g. `"%POWERSHELL_EXE%" ... -File "grok-shim.ps1" grok %*`):
+- `grok update [allowed args]` -> invokes installed updater (`install.ps1`). Allowed flags: `--version <tag>`, `--no-upgrade`, `--force`. Rejects `--uninstall`, prefix modifications, and unrecognized arguments.
+- `grok status [--json]` / `grokgod status [--json]` -> wrapper status inspection (never launches TUI).
+- `grok [args]` (including `grok sessions ...`) -> passes through arguments unchanged to the patched `grokgod.exe` with `GROK_DISABLE_AUTOUPDATER=1`.
+- `grokgod update [allowed args]` -> wrapper update.
+- `grokgod sessions`, `grokgod cache`, `grokgod run`, `grokgod pin`, or bare `grokgod` -> explicit Windows error and guidance, **never falling through to the interactive TUI**.
+
+#### Status Schema & Health States
+
+`grok status --json` or `grokgod status --json` outputs a structured JSON document:
+- `health`: `"healthy"`, `"degraded"`, or `"corrupt"`.
+- `healthDetails`: Array of diagnostic notices and health failure reasons.
+- `launcherIdentity`: `"grok"` or `"grokgod"`.
+- `resolvedCommandPath`: Path to the executing script.
+- `patchedBinaryPath`, `patchedBinaryExists`, `patchedBinaryVersion`: Wrapper executable details.
+- `officialBinaryPath`, `officialBinaryExists`, `officialBinaryVersion`: Official grok binary details when detected.
+- `versionSkewExplanation`: Explains version skew between patched and official binaries, advising how to run official directly via `directOfficialPath`.
+- `artifactSha256`, `computedSha256`, `patchset`, `sourceSha`, `mode`: Packaging metadata.
+- `freeDiskBytes`, `freeDiskGigabytes`: Free disk space available.
+
+Corrupt states (e.g. missing patched binary, hash mismatch) return a non-zero exit code while maintaining valid, well-formed JSON.
+
+### Windows Transactional Installer (`install.ps1`)
+
+The Windows installer provides transactional install, update, and uninstall semantics for Windows x64 (`PowerShell 5.1` and `PowerShell 7` compatible):
+- **Platform Check**: Fails closed immediately on Windows ARM64 before any network access (Windows x64 only).
+- **Prefix Safety**: Rejects `-Prefix` values that overlap the official `.grok` tree (`%USERPROFILE%\.grok` or child/parent directories).
+- **Official Grok Invariant**: Never opens for write, renames, replaces, or deletes official `%USERPROFILE%\.grok\bin\grok.exe`.
+- **Exact Checksum Verification**: Enforces exactly one checksum entry in `SHA256SUMS` matching `grokgod-windows-x64.exe` exactly. No regex substring matching or first-line fallback.
+- **Preflight Check**: Executes candidate `--version` prior to any live target mutation.
+- **Destination-Volume Sibling Staging**: Stages candidate binary on the target volume (`candidate-<guid>.exe`) with bounded backups of prior components.
+- **Transactional Rollback**: Reverts completely to pristine prior state if candidate preflight fails, target is locked/running, or any failure occurs.
+- **Manifest Commit Point**: Commits `.source-version` (`SHA=...`, `PATCHSET=...`, `VERSION=482711333c7195dc16a272777f86086d615e2afb`, `MODE=release`) and `manifest.json` last.
+- **Clean Uninstall**: `install.ps1 -Uninstall` restores backups recorded in the manifest, deletes manifest-owned files, and preserves unrelated files.
 
 Source mode tracks upstream `origin/main` on bare `grok update` (fetching latest,
 re-applying persist patches, and rebuilding), mirroring ClawGod's `@latest`

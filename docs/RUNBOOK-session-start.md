@@ -101,8 +101,8 @@ ls -la ~/.local/bin/grok ~/.local/bin/grok.orig
   `RUSTFLAGS` to `target-cpu=generic` for the linux-arm64 leg only (env beats
   config; empty for other legs so their config flags survive). The same
   landmine exists for `--from-source` builds on aarch64 hosts (follow-up).
-- release.yml gates on required legs (linux-x64, linux-arm64, darwin-arm64);
-  darwin-x64 + windows-x64 stay best-effort (`continue-on-error`). Do not
+- release.yml gates on required legs (linux-x64, linux-arm64, darwin-arm64,
+  windows-x64); darwin-x64 stays best-effort (`continue-on-error`). Do not
   re-add `if: always()` to the release job - it would publish releases that
   are missing required binaries.
 
