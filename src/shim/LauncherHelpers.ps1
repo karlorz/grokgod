@@ -21,12 +21,23 @@ function New-GrokgodLauncherScript {
 rem grokgod thin launcher for Windows ($Identity)
 setlocal
 
-where pwsh >nul 2>nul
-if %ERRORLEVEL% equ 0 (
-    set "POWERSHELL_EXE=pwsh"
-) else (
-    set "POWERSHELL_EXE=powershell"
-)
+set "POWERSHELL_EXE="
+pwsh.exe -NoProfile -Command "exit 0" >nul 2>&1
+if errorlevel 1 goto try_powershell
+set "POWERSHELL_EXE=pwsh.exe"
+goto powershell_ready
+
+:try_powershell
+powershell.exe -NoProfile -Command "exit 0" >nul 2>&1
+if errorlevel 1 goto powershell_unavailable
+set "POWERSHELL_EXE=powershell.exe"
+goto powershell_ready
+
+:powershell_unavailable
+>&2 echo grokgod: no runnable PowerShell engine found (pwsh.exe or powershell.exe)
+exit /b 127
+
+:powershell_ready
 
 "%POWERSHELL_EXE%" -NoProfile -ExecutionPolicy Bypass -File "$normalizedShim" $Identity %*
 exit /b %ERRORLEVEL%

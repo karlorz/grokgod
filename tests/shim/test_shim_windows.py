@@ -91,6 +91,42 @@ def main():
     grokgod_cmd_content = open(GROKGOD_CMD_TPL).read()
     launcher_helpers_content = open(LAUNCHER_HELPERS).read()
 
+    # Verify all launcher sources use the same robust engine-selection flow.
+    launcher_sources = {
+        "grok.cmd.template": grok_cmd_content,
+        "grokgod.cmd.template": grokgod_cmd_content,
+        "LauncherHelpers.ps1": launcher_helpers_content,
+    }
+    for launcher_name, launcher_src in launcher_sources.items():
+        check('set "POWERSHELL_EXE="' in launcher_src,
+              f"{launcher_name} clears POWERSHELL_EXE before probing")
+        check('pwsh.exe -NoProfile -Command "exit 0" >nul 2>&1' in launcher_src,
+              f"{launcher_name} execute-probes pwsh.exe")
+        check('powershell.exe -NoProfile -Command "exit 0" >nul 2>&1' in launcher_src,
+              f"{launcher_name} execute-probes powershell.exe")
+        check("if errorlevel 1 goto try_powershell" in launcher_src,
+              f"{launcher_name} falls back when pwsh.exe is unavailable or fails")
+        check("if errorlevel 1 goto powershell_unavailable" in launcher_src,
+              f"{launcher_name} rejects an unavailable or failing fallback engine")
+        pwsh_probe = launcher_src.index('pwsh.exe -NoProfile -Command "exit 0" >nul 2>&1')
+        fallback = launcher_src.index(":try_powershell")
+        powershell_probe = launcher_src.index('powershell.exe -NoProfile -Command "exit 0" >nul 2>&1')
+        ready = launcher_src.index(":powershell_ready")
+        check(pwsh_probe < fallback < powershell_probe < ready,
+              f"{launcher_name} keeps probes, fallback, and launch flow ordered")
+        check(launcher_src.count("if errorlevel 1 goto try_powershell") == 1,
+              f"{launcher_name} falls back when the pwsh probe fails")
+        check(launcher_src.count("if errorlevel 1 goto powershell_unavailable") == 1,
+              f"{launcher_name} fails when the powershell probe fails")
+        check(">&2 echo grokgod: no runnable PowerShell engine found" in launcher_src,
+              f"{launcher_name} reports engine failure on stderr")
+        check("exit /b 127" in launcher_src,
+              f"{launcher_name} returns 127 when no engine is runnable")
+        check("if %ERRORLEVEL%" not in launcher_src and "if \"%ERRORLEVEL%\"" not in launcher_src,
+              f"{launcher_name} avoids unsafe parse-time ERRORLEVEL conditionals")
+        check("exit /b %ERRORLEVEL%" in launcher_src,
+              f"{launcher_name} propagates the child exit code exactly")
+
     # Verify templates and helper use positional identity without -- script delimiter
     check('grok %*' in grok_cmd_content and '-Identity' not in grok_cmd_content and '-- %*' not in grok_cmd_content, "grok.cmd.template passes positional 'grok %*' without named -Identity or '--'")
     check('grokgod %*' in grokgod_cmd_content and '-Identity' not in grokgod_cmd_content and '-- %*' not in grokgod_cmd_content, "grokgod.cmd.template passes positional 'grokgod %*' without named -Identity or '--'")
