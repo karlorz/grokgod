@@ -115,6 +115,9 @@ with open('$RELEASE_YML', 'r') as f:
 assert 'Neither sha256sum nor shasum is available' in content, 'Missing fail-closed checksum tooling check'
 assert 'Expected exactly 1 checksum line' in content, 'Missing single checksum line assertion'
 assert 'Checksum line in' in content and 'does not match expected artifact name' in content, 'Missing checksum filename assertion'
+assert content.count('awk -v expected=') >= 2, 'Missing exact checksum-field parsers'
+assert 'matches == 1' in content, 'Checksum parser must require one exact filename match'
+assert 'sub(/^' in content and '"", name)' in content, 'Missing checksum marker normalization'
 "
 
 # Test 6b: Simulation of checksum verification logic in bash
@@ -131,9 +134,48 @@ TMP_SIM="$(mktemp -d)"
   else
     exit 1
   fi
-  num_lines="$(wc -l < "$checksum_file" | tr -d '[:space:]')"
-  test "$num_lines" -eq 1
-  grep -q "[[:space:]]${artifact}\$" "$checksum_file"
+
+  validate_single_checksum() {
+    candidate_file="$1"
+    expected="$2"
+    num_lines="$(wc -l < "$candidate_file" | tr -d '[:space:]')"
+    test "$num_lines" -eq 1 || return 1
+    awk -v expected="$expected" '
+      NF == 2 {
+        name = $2
+        sub(/^\*/, "", name)
+        if (name == expected) matches++
+      }
+      END { exit matches == 1 ? 0 : 1 }
+    ' "$candidate_file"
+  }
+
+  validate_single_checksum "$checksum_file" "$artifact"
+
+  hash="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  printf '%s  %s\n' "$hash" "$artifact" > "$checksum_file"
+  validate_single_checksum "$checksum_file" "$artifact"
+
+  printf '%s *%s\n' "$hash" "$artifact" > "$checksum_file"
+  validate_single_checksum "$checksum_file" "$artifact"
+
+  printf '%s *%s.bak\n' "$hash" "$artifact" > "$checksum_file"
+  if validate_single_checksum "$checksum_file" "$artifact"; then
+    echo "FAIL: accepted a near-match checksum filename"
+    exit 1
+  fi
+
+  printf '%s *%s extra\n' "$hash" "$artifact" > "$checksum_file"
+  if validate_single_checksum "$checksum_file" "$artifact"; then
+    echo "FAIL: accepted an extra checksum field"
+    exit 1
+  fi
+
+  printf '%s *%s\n%s *other.exe\n' "$hash" "$artifact" "$hash" > "$checksum_file"
+  if validate_single_checksum "$checksum_file" "$artifact"; then
+    echo "FAIL: accepted multiple checksum lines"
+    exit 1
+  fi
 )
 rm -rf "$TMP_SIM"
 echo "PASS: Test 6"
@@ -150,6 +192,8 @@ assert 'LauncherHelpers.ps1' in content, 'release.yml missing LauncherHelpers.ps
 assert 'install.ps1' in content, 'release.yml missing install.ps1 runtime asset'
 assert 'release-assets/\$runtime' in content, 'release.yml missing runtime asset existence check'
 assert 'SHA256SUMS' in content, 'release.yml missing SHA256SUMS check'
+assert 'sort SHA256SUMS -o SHA256SUMS' in content, 'Release assembly must preserve duplicate checksum entries for validation'
+assert 'sort -u SHA256SUMS' not in content, 'Release assembly must not erase duplicate checksum evidence'
 "
 echo "PASS: Test 7"
 
