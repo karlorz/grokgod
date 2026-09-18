@@ -154,7 +154,14 @@ jobs:
             exit 1
           fi
 
-          if ! grep -q "[[:space:]]${artifact}\$" "$checksum_file"; then
+          if ! awk -v expected="$artifact" '
+            NF == 2 {
+              name = $2
+              sub(/^\*/, "", name)
+              if (name == expected) matches++
+            }
+            END { exit matches == 1 ? 0 : 1 }
+          ' "$checksum_file"; then
             echo "::error::Checksum line in $checksum_file does not match expected artifact name $artifact"
             cat "$checksum_file"
             exit 1
@@ -206,7 +213,7 @@ jobs:
               exit 1
             fi
           done
-          sort -u SHA256SUMS -o SHA256SUMS
+          sort SHA256SUMS -o SHA256SUMS
           cd ..
 
           echo "=== Release Assets ==="
@@ -231,8 +238,15 @@ jobs:
               echo "::error::missing required runtime asset release-assets/$runtime"
               exit 1
             fi
-            if ! grep -q "[[:space:]]${runtime}\$" release-assets/SHA256SUMS; then
-              echo "::error::missing checksum entry for runtime asset $runtime in SHA256SUMS"
+            if ! awk -v expected="$runtime" '
+              NF == 2 {
+                name = $2
+                sub(/^\*/, "", name)
+                if (name == expected) matches++
+              }
+              END { exit matches == 1 ? 0 : 1 }
+            ' release-assets/SHA256SUMS; then
+              echo "::error::missing or duplicate checksum entry for runtime asset $runtime in SHA256SUMS"
               exit 1
             fi
           done
