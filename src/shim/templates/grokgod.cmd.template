@@ -1,0 +1,25 @@
+@echo off
+rem grokgod thin launcher for Windows (grokgod)
+setlocal
+set "GROKGOD_SHIM_DIR=%~dp0"
+if exist "%GROKGOD_SHIM_DIR%grok-shim.ps1" (
+    set "GROKGOD_SHIM_PATH=%GROKGOD_SHIM_DIR%grok-shim.ps1"
+) else if exist "%GROKGOD_SHIM_DIR%..\grokgod\src\shim\grok-shim.ps1" (
+    set "GROKGOD_SHIM_PATH=%GROKGOD_SHIM_DIR%..\grokgod\src\shim\grok-shim.ps1"
+) else if exist "%USERPROFILE%\.grokgod\src\shim\grok-shim.ps1" (
+    set "GROKGOD_SHIM_PATH=%USERPROFILE%\.grokgod\src\shim\grok-shim.ps1"
+) else if exist "%USERPROFILE%\.grokgod\grok-shim.ps1" (
+    set "GROKGOD_SHIM_PATH=%USERPROFILE%\.grokgod\grok-shim.ps1"
+) else (
+    set "GROKGOD_SHIM_PATH=grok-shim.ps1"
+)
+
+where pwsh >nul 2>nul
+if %ERRORLEVEL% equ 0 (
+    set "POWERSHELL_EXE=pwsh"
+) else (
+    set "POWERSHELL_EXE=powershell"
+)
+
+"%POWERSHELL_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%GROKGOD_SHIM_PATH%" grokgod %*
+exit /b %ERRORLEVEL%
