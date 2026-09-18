@@ -38,6 +38,35 @@ grep -q "crates/codegen/xai-grok-shell/src/agent/config.rs" "$PATCH_0003" || { e
 grep -q "crates/codegen/xai-grok-shell/src/util/config/persist_tests.rs" "$PATCH_0003" || { echo "FAIL: Missing persist_tests in 0003"; exit 1; }
 echo "PASS: Patch 0003 touches expected files"
 
+# 2a. The persistence hunk must be patch-neutral: anchor on the shared noop
+# tuple so upstream's optional SessionSetupPhase::PersistenceInit line is
+# preserved when present on newer bases.
+python3 - "$PATCH_0003" <<'PY'
+import re
+import sys
+
+patch = open(sys.argv[1], encoding="utf-8").read()
+match = re.search(
+    r"diff --git a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/session_setup\.rs.*?(?=^diff --git |\Z)",
+    patch,
+    re.MULTILINE | re.DOTALL,
+)
+assert match, "missing mvp_agent/session_setup.rs hunk"
+hunk = match.group(0)
+removed = "\n".join(line for line in hunk.splitlines() if line.startswith("-") and not line.startswith("---"))
+assert "SessionSetupPhase::PersistenceInit" not in removed, (
+    "0003 must not remove upstream PersistenceInit reporting"
+)
+assert "self.cfg.borrow().resolve_persist_single()" in hunk, (
+    "0003 session_setup hunk missing persist_single guard"
+)
+assert re.search(
+    r"\n\s+\(crate::session::persistence::PersistenceHandle::noop\(\), None\)\n\+\s+\} else if",
+    hunk,
+), "0003 session_setup hunk must anchor insertion after the shared noop tuple"
+print("PASS: session_setup persistence hunk preserves optional upstream setup phase")
+PY
+
 TMP_ROOT="$(mktemp -d)"
 GB_WORKTREE="$TMP_ROOT/gb_worktree"
 

@@ -28,8 +28,81 @@ if [ ! -s "$PATCH_0007" ]; then
 fi
 echo "PASS: Patch 0007 file exists and is non-empty"
 
-grep -q "hosted_web_search_disabled" "$PATCH_0007" || { echo "FAIL: Missing hosted_web_search_disabled in 0007"; exit 1; }
-grep -q "crates/codegen/xai-grok-agent/src/builder.rs" "$PATCH_0007" || { echo "FAIL: Missing builder.rs diff in 0007"; exit 1; }
+# Keep the three insertion hunks narrow so upstream memory-v2 reshaping does not
+# make this patch reject. Parse the patch once and require shared anchors to be
+# actual space-prefixed context lines, not unrelated additions or removals.
+python3 - "$PATCH_0007" <<'PY'
+from pathlib import Path
+import sys
+
+patch_path = Path(sys.argv[1])
+lines = patch_path.read_text(encoding="utf-8").splitlines()
+hunks = []
+current_file = None
+current_hunk = None
+
+for line in lines:
+    if line.startswith("diff --git "):
+        current_file = line.split(" b/", 1)[1]
+        current_hunk = None
+    elif current_file is not None and line.startswith("@@ "):
+        current_hunk = {"file": current_file, "lines": []}
+        hunks.append(current_hunk)
+    elif current_hunk is not None:
+        current_hunk["lines"].append(line)
+
+targets = [
+    (
+        "crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs",
+        "+        hosted_web_search_disabled: disable_web_search,",
+        (
+            "        web_search_config: web_search_config.clone(),",
+            "        web_search_domains,",
+        ),
+    ),
+    (
+        "crates/codegen/xai-grok-shell/src/session/agent_rebuild.rs",
+        "+    pub hosted_web_search_disabled: bool,",
+        (
+            "    pub web_search_config: WebSearchConfig,",
+            "    pub web_search_domains: Option<xai_grok_sampling_types::WebSearchOptions>,",
+        ),
+    ),
+    (
+        "crates/codegen/xai-grok-shell/src/session/agent_rebuild.rs",
+        "+        hosted_web_search_disabled: false,",
+        (
+            "        web_search_config: WebSearchConfig::default(),",
+            "        web_search_domains: None,",
+        ),
+    ),
+]
+
+for file_name, expected_added, anchors in targets:
+    matches = [
+        hunk
+        for hunk in hunks
+        if hunk["file"] == file_name and expected_added in hunk["lines"]
+    ]
+    if len(matches) != 1:
+        raise AssertionError(
+            f"expected exactly one {file_name} hunk containing {expected_added!r}; "
+            f"found {len(matches)}"
+        )
+
+    context = [line[1:] for line in matches[0]["lines"] if line.startswith(" ")]
+    missing = [anchor for anchor in anchors if anchor not in context]
+    if missing:
+        raise AssertionError(
+            f"{file_name} insertion lost space-prefixed context anchor(s): {missing!r}"
+        )
+    if any("memory_v2_access" in line for line in context):
+        raise AssertionError(
+            f"{file_name} insertion hunk must not use memory_v2_access context"
+        )
+
+print("PASS: 0007 insertion hunks preserve shared anchors without memory_v2_access context")
+PY
 
 if [ -d "$REAL_GROK_BUILD/.git" ]; then
   echo "Testing patch application against real grok-build checkout..."

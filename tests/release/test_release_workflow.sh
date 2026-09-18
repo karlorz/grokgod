@@ -63,8 +63,17 @@ with open('$COMPAT_YML', 'r') as f:
 
 assert 'git clone --depth 1 https://github.com/xai-org/grok-build.git grok-build' in content, 'compat-daily must clone upstream'
 assert 'origin/main' in content, 'compat-daily must reference origin/main'
+guard = 'if [ \"\$pname\" = \"0001-normalize-plugin-skill-join.patch\" ]; then'
+assert guard in content, 'manifest heuristic must be guarded to patch 0001'
+assert 'fixed-upstream heuristic is patch-specific to 0001-normalize-plugin-skill-join.patch' in content, 'missing patch-specific fallback diagnostic'
+assert 'upstream likely drifted/refactored; fixed-upstream heuristic is not applicable to \$pname' in content, 'other failures must report drift/refactor without fixed-upstream claim'
+heuristic_start = content.index(guard)
+heuristic_end = content.index('else\n                echo \"  note: upstream likely drifted/refactored;', heuristic_start)
+heuristic = content[heuristic_start:heuristic_end]
+assert 'Component::CurDir' in heuristic and 'fn normalize_path' in heuristic, '0001 heuristic must retain CurDir/normalize_path checks'
 "
 echo "PASS: Test 3"
+echo "PASS: Test 3b (compat-daily fixed-upstream diagnostic is patch-specific)"
 
 # Test 4: windows-x64 is required in release.yml matrix (optional: false)
 echo "Test 4: windows-x64 required leg in release matrix"

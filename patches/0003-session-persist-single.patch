@@ -90,9 +90,7 @@ diff --git a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/session_setup.rs 
 index b6f4df92e2f0260a6a418162803961c3afc829f5..a6445ee8f7dbf32a71cb22092952d5048cfe437d 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/session_setup.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/session_setup.rs
-@@ -510,6 +510,10 @@ impl MvpAgent {
-         let session_model_id = model_id.clone();
-         let (persistence, root_identity) = if is_chat_kind {
+@@ -512,2 +512,6 @@ impl MvpAgent {
              (crate::session::persistence::PersistenceHandle::noop(), None)
 +        } else if self.cfg.borrow().mode == crate::agent::config::AgentMode::Headless
 +            && !self.cfg.borrow().resolve_persist_single()
