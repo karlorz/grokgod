@@ -42,7 +42,7 @@ try {
 } catch {}
 
 # Constants
-$PINNED_BASE_SHA = "482711333c7195dc16a272777f86086d615e2afb"
+$PINNED_BASE_SHA = "4247f661689354b831191f11eeeac8424993fe3d"
 $REPO_DEFAULT    = "karlorz/grokgod"
 $TARGET_ASSET    = "grokgod-windows-x64.exe"
 

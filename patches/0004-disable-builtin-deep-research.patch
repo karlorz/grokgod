@@ -1,5 +1,5 @@
 diff --git a/crates/codegen/xai-grok-config/src/config_override.rs b/crates/codegen/xai-grok-config/src/config_override.rs
-index dcf14aa50b1bb34330a8efc1fd10deba3af18332..e8cea220e2e41babe5a23c55478af8b31c9227a9 100644
+index dcf14aa5..e8cea220 100644
 --- a/crates/codegen/xai-grok-config/src/config_override.rs
 +++ b/crates/codegen/xai-grok-config/src/config_override.rs
 @@ -118,6 +118,7 @@ pub const OVERLAY_ALLOW_PATHS: &[&[&str]] = &[
@@ -27,10 +27,10 @@ index dcf14aa50b1bb34330a8efc1fd10deba3af18332..e8cea220e2e41babe5a23c55478af8b3
               [toolset.bash]\nlogin_shell_capture = false\n\
               [toolset.web_search]\nallowed_domains = [\"docs.x.ai\"]\n",
 diff --git a/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md b/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
-index 136272960131bc3ad6aef083c95cb5beb9d9710d..3443f9f2df63c84cd54c8aacb1311958d5bac039 100644
+index 6d2f3363..dfecf360 100644
 --- a/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
 +++ b/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md
-@@ -370,8 +370,13 @@ Background workflows — the `workflow` tool, named `.grok/workflows/*.rhai` scr
+@@ -381,8 +381,13 @@ Background workflows — the `workflow` tool, named `.grok/workflows/*.rhai` scr
  ```toml
  [workflows]
  enabled = false                       # disable background workflows (or GROK_WORKFLOWS=0)
@@ -45,10 +45,10 @@ index 136272960131bc3ad6aef083c95cb5beb9d9710d..3443f9f2df63c84cd54c8aacb1311958
  
  Each launch gets a session-unique display handle such as `deep-research-2`. That handle is what you see in the `/workflow runs` dashboard and pass to `/workflow pause`, `resume`, or `stop` — the internal run IDs never surface in commands. A numbered handle isn't a reusable definition name, so the dashboard disables **save** until you pick a new unique `meta.name` and save the edited script yourself. See [Slash Commands](04-slash-commands.md) for examples.
 diff --git a/crates/codegen/xai-grok-pager/src/app/actions.rs b/crates/codegen/xai-grok-pager/src/app/actions.rs
-index 60687638faf32647e64900857e76067e0c803b6d..8053a6d733b63f747235ce40226ec0c40aeb4fa7 100644
+index f1602289..45310d26 100644
 --- a/crates/codegen/xai-grok-pager/src/app/actions.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/actions.rs
-@@ -455,6 +455,9 @@ pub enum Action {
+@@ -458,6 +458,9 @@ pub enum Action {
      SetRememberToolApprovals(bool),
      /// Toggle the ask_user_question timeout. SHELL-owned; persisted to `[toolset.ask_user_question].timeout_enabled`. Applies to new sessions.
      SetAskUserQuestionTimeoutEnabled(bool),
@@ -59,7 +59,7 @@ index 60687638faf32647e64900857e76067e0c803b6d..8053a6d733b63f747235ce40226ec0c4
      SetKeepTextSelection(crate::appearance::TextSelection),
      /// Set the mouse-wheel scroll speed multiplier (1-100).
 diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/modals.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/modals.rs
-index 84a153836431ecb95d792925562aa74360b55849..b67d6d13f173555de3eb4f322e0baa5b70f1475b 100644
+index 84a15383..b67d6d13 100644
 --- a/crates/codegen/xai-grok-pager/src/app/agent_view/modals.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/agent_view/modals.rs
 @@ -489,6 +489,7 @@ impl AgentView {
@@ -162,10 +162,10 @@ index 84a153836431ecb95d792925562aa74360b55849..b67d6d13f173555de3eb4f322e0baa5b
      fn mcp_toggle_auth_remove_resolve_server_name() {
          let mut modal = ExtensionsModalState::new(ExtensionsTab::McpServers);
 diff --git a/crates/codegen/xai-grok-pager/src/app/app_view.rs b/crates/codegen/xai-grok-pager/src/app/app_view.rs
-index 01e2d3c0d9973cb09b064670f137bd10b4863050..cb686e0155b019d6563b92c0efba2c119b077b4e 100644
+index fc9a4553..f52809b8 100644
 --- a/crates/codegen/xai-grok-pager/src/app/app_view.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/app_view.rs
-@@ -1023,6 +1023,8 @@ pub struct AppView {
+@@ -1040,6 +1040,8 @@ pub struct AppView {
      /// Persisted `[toolset.ask_user_question].timeout_enabled` mirror, seeded from the effective TOML merge like `show_tips`.
      /// `None` means unset in TOML (default `true`); toggles write the user layer.
      pub ask_user_question_timeout_enabled: Option<bool>,
@@ -174,7 +174,7 @@ index 01e2d3c0d9973cb09b064670f137bd10b4863050..cb686e0155b019d6563b92c0efba2c11
      /// Whether ZDR users are allowed to use the product.
      /// Server-controlled via RemoteSettings (remote settings). Default `false` (blocked) during beta.
      pub zdr_access_enabled: bool,
-@@ -1529,6 +1531,7 @@ impl AppView {
+@@ -1558,6 +1560,7 @@ impl AppView {
              show_tips: None,
              auto_update: None,
              ask_user_question_timeout_enabled: None,
@@ -183,7 +183,7 @@ index 01e2d3c0d9973cb09b064670f137bd10b4863050..cb686e0155b019d6563b92c0efba2c11
              usage_billing_redirect_url: None,
              access_gate_shown_logged: false,
 diff --git a/crates/codegen/xai-grok-pager/src/app/app_view_tests.rs b/crates/codegen/xai-grok-pager/src/app/app_view_tests.rs
-index 66bf4e4f20b8a43cd7e2d1683cb2a8826bcd91a2..44d7021e404a87f0a4b6d3d8a0611a83bfa9333a 100644
+index 483296d4..1bc6ae82 100644
 --- a/crates/codegen/xai-grok-pager/src/app/app_view_tests.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/app_view_tests.rs
 @@ -184,6 +184,7 @@ pub(crate) fn test_app() -> AppView {
@@ -195,18 +195,18 @@ index 66bf4e4f20b8a43cd7e2d1683cb2a8826bcd91a2..44d7021e404a87f0a4b6d3d8a0611a83
          usage_billing_redirect_url: None,
          access_gate_shown_logged: false,
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs
-index 434707c1f5f1d4c6f81699f1f29b0f8278e17630..5194a18cc9fc7c9cd83964a9e74ba7721c8d6289 100644
+index cb31424d..496b4688 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs
-@@ -1381,6 +1381,7 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
+@@ -1184,6 +1184,7 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
      let respect_manual_folds_from_app = app.appearance.scrollback.scroll.respect_manual_folds;
      let auto_mode_gate_from_app = app.auto_mode_gate;
      let ask_user_question_timeout_enabled_from_app = app.ask_user_question_timeout_enabled;
 +    let workflow_builtin_deep_research_from_app = app.workflow_builtin_deep_research;
      let voice_stt_language_from_app = app.voice_config.language.clone();
-     // Dashboard commands run before any session exists, so the startup seed is the only answer available here
- 
-@@ -1486,6 +1487,7 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
+     let result = {
+         let Some(invocation) = parse_invocation(trimmed.as_str()) else {
+@@ -1270,6 +1271,7 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
                  respect_manual_folds: respect_manual_folds_from_app,
                  auto_mode_gate: auto_mode_gate_from_app,
                  ask_user_question_timeout_enabled: ask_user_question_timeout_enabled_from_app,
@@ -215,7 +215,7 @@ index 434707c1f5f1d4c6f81699f1f29b0f8278e17630..5194a18cc9fc7c9cd83964a9e74ba772
              },
          };
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
-index 3006f1f0782bdf2448cbda7567b1f7e95a6218e6..6011df5f60229c762130be43739a482f5e2509ca 100644
+index a4d77733..90b2fd96 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
 @@ -697,6 +697,7 @@ pub(super) fn dispatch_send_prompt_submission(
@@ -226,7 +226,7 @@ index 3006f1f0782bdf2448cbda7567b1f7e95a6218e6..6011df5f60229c762130be43739a482f
      let voice_stt_language_from_app = app.voice_config.language.clone();
      let login_method_id_from_app = app.login_method_id.as_ref().map(|id| id.0.to_string());
      let leader_mode = app.leader_mode;
-@@ -812,6 +813,7 @@ pub(super) fn dispatch_send_prompt_submission(
+@@ -837,6 +838,7 @@ pub(super) fn dispatch_send_prompt_submission(
                      respect_manual_folds: respect_manual_folds_from_app,
                      auto_mode_gate: auto_mode_gate_from_app,
                      ask_user_question_timeout_enabled: ask_user_question_timeout_enabled_from_app,
@@ -235,7 +235,7 @@ index 3006f1f0782bdf2448cbda7567b1f7e95a6218e6..6011df5f60229c762130be43739a482f
                  },
              };
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs
-index dd53b1ae3faba9cde31e2da53cd5c3d9a8383ff7..d36ffc86bc1abf419d1b150df9f5dcad75cd89cf 100644
+index 89c36b27..9396ae02 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs
 @@ -89,7 +89,7 @@ use super::settings::setters::{
@@ -247,7 +247,7 @@ index dd53b1ae3faba9cde31e2da53cd5c3d9a8383ff7..d36ffc86bc1abf419d1b150df9f5dcad
  };
  use super::settings::ui::{
      dispatch_confirm_reset_setting, dispatch_open_command_palette, dispatch_open_howto_guides,
-@@ -752,6 +752,8 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
+@@ -768,6 +768,8 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
              }]
          }
          Action::ReloadSkills => {
@@ -256,7 +256,7 @@ index dd53b1ae3faba9cde31e2da53cd5c3d9a8383ff7..d36ffc86bc1abf419d1b150df9f5dcad
              let ActiveView::Agent(id) = app.active_view else {
                  return vec![];
              };
-@@ -1101,6 +1103,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
+@@ -1117,6 +1119,7 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
          Action::SetAskUserQuestionTimeoutEnabled(v) => {
              set_ask_user_question_timeout_enabled(app, v)
          }
@@ -265,7 +265,7 @@ index dd53b1ae3faba9cde31e2da53cd5c3d9a8383ff7..d36ffc86bc1abf419d1b150df9f5dcad
          Action::SetScrollSpeed(v) => set_scroll_speed(app, v),
          Action::SetScrollMode(v) => set_scroll_mode(app, v),
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
-index 7d396d11a2a10adfad4601f9fdd02e5a4697a93a..bf2f02e7a2796b4a1d55b35cd1121c72365128e0 100644
+index 418be165..9a59322f 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
 @@ -381,6 +381,52 @@ pub(in crate::app::dispatch) fn set_ask_user_question_timeout_enabled(
@@ -322,7 +322,7 @@ index 7d396d11a2a10adfad4601f9fdd02e5a4697a93a..bf2f02e7a2796b4a1d55b35cd1121c72
      crate::appearance::cache::set_show_thinking_blocks(new);
      // Thinking visibility reshapes verb-group runs (shown thoughts claim into folds) AND dense N-more runs (hidden thoughts stop counting toward truncation)
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/settings/ui.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/settings/ui.rs
-index cba69755522ea4f0c2efd721f846904f067ecda1..eaf71fd4a6e8552ee976e8c004f187fcec5e9581 100644
+index 75af0696..9d525088 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/settings/ui.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/settings/ui.rs
 @@ -15,6 +15,7 @@ use super::setters::{
@@ -365,7 +365,7 @@ index cba69755522ea4f0c2efd721f846904f067ecda1..eaf71fd4a6e8552ee976e8c004f187fc
          voice_stt_language: voice_stt_language_from_app,
      };
      let mut state = Box::new(SettingsModalState::new_with_row_visibility(
-@@ -616,6 +621,7 @@ pub(crate) fn build_pager_snapshot(app: &AppView) -> crate::settings::PagerLocal
+@@ -619,6 +624,7 @@ pub(crate) fn build_pager_snapshot(app: &AppView) -> crate::settings::PagerLocal
          respect_manual_folds: app.appearance.scrollback.scroll.respect_manual_folds,
          auto_mode_gate: app.auto_mode_gate,
          ask_user_question_timeout_enabled: app.ask_user_question_timeout_enabled,
@@ -374,10 +374,10 @@ index cba69755522ea4f0c2efd721f846904f067ecda1..eaf71fd4a6e8552ee976e8c004f187fc
      }
  }
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/task_result.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/task_result.rs
-index ce9c0603e9ae126a74df929050824f21d441835b..a1c2c2aeb6944328da84eebceaf5c54c36359722 100644
+index b00317f2..a219a91e 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/task_result.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/task_result.rs
-@@ -1277,12 +1277,20 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
+@@ -1337,12 +1337,20 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
              result,
          } => {
              use crate::views::extensions_modal::TabDataState;
@@ -400,10 +400,10 @@ index ce9c0603e9ae126a74df929050824f21d441835b..a1c2c2aeb6944328da84eebceaf5c54c
                  };
              }
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
-index 2bcc8eff26b5a7578d97f4b9d6b425b143821465..340acfd6b1e1576fb65554f9d7ca8a2483a1619d 100644
+index bf64193d..13030018 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
-@@ -195,6 +195,7 @@ fn test_app() -> AppView {
+@@ -196,6 +196,7 @@ fn test_app() -> AppView {
          show_tips: None,
          auto_update: None,
          ask_user_question_timeout_enabled: None,
@@ -412,7 +412,7 @@ index 2bcc8eff26b5a7578d97f4b9d6b425b143821465..340acfd6b1e1576fb65554f9d7ca8a24
          usage_billing_redirect_url: None,
          access_gate_shown_logged: false,
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/session/modal.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/session/modal.rs
-index 6d97edbb398cea797801bd43a8addd0b20e1960d..7ec29a3505786c37a9455951e1e82139d6d5b194 100644
+index 34adf8a5..0e0d541a 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/session/modal.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/session/modal.rs
 @@ -93,6 +93,10 @@ fn reload_skills_marks_both_lists_loading_and_refetches() {
@@ -427,10 +427,10 @@ index 6d97edbb398cea797801bd43a8addd0b20e1960d..7ec29a3505786c37a9455951e1e82139
          effects
              .iter()
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
-index 36109d21cdd9ab6bb31ba1903e40f5127604b584..43c283b338b0613ae68f0cddb3c465d4410d37ad 100644
+index 4fec06be..c0f9ff1e 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
-@@ -3661,3 +3661,62 @@ fn mouse_reporting_toggle_enqueues_capture_escapes_on_the_writer_queue() {
+@@ -3702,3 +3702,62 @@ fn mouse_reporting_toggle_enqueues_capture_escapes_on_the_writer_queue() {
          "toggle-on queues exactly one payload"
      );
  }
@@ -494,7 +494,7 @@ index 36109d21cdd9ab6bb31ba1903e40f5127604b584..43c283b338b0613ae68f0cddb3c465d4
 +    }
 +}
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs
-index 7c064357d36cbcd7fe3b0fc906e485656a51a311..290695dbbbf39da4617c0c45edaeea3f521a2ef3 100644
+index 596a7556..90d991ec 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs
 @@ -428,6 +428,63 @@ fn stale_workflows_result_does_not_repaint_replaced_session_modal() {
@@ -562,10 +562,10 @@ index 7c064357d36cbcd7fe3b0fc906e485656a51a311..290695dbbbf39da4617c0c45edaeea3f
      tool: xai_grok_foreign_sessions::ForeignSessionTool,
  ) -> xai_grok_foreign_sessions::RecentForeignSession {
 diff --git a/crates/codegen/xai-grok-pager/src/app/effects/helpers.rs b/crates/codegen/xai-grok-pager/src/app/effects/helpers.rs
-index ae86c5bf3a432a8d3fd51c04345ba68de14d4216..2f947001b7bf929b5da1c34bf674ad18477b361a 100644
+index ac5de69d..3e9ba158 100644
 --- a/crates/codegen/xai-grok-pager/src/app/effects/helpers.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/effects/helpers.rs
-@@ -1158,6 +1158,18 @@ pub(crate) async fn persist_setting(
+@@ -1226,6 +1226,18 @@ pub(crate) async fn persist_setting(
                  .await
                  .map_err(|e| e.to_string())
          }
@@ -584,7 +584,7 @@ index ae86c5bf3a432a8d3fd51c04345ba68de14d4216..2f947001b7bf929b5da1c34bf674ad18
          "show_thinking_blocks" => {
              let SettingValue::Bool(b) = value else {
                  return Err(kind_mismatch("show_thinking_blocks", "Bool", &value));
-@@ -1455,6 +1467,23 @@ pub(super) fn persist_hint(
+@@ -1523,6 +1535,23 @@ pub(super) fn persist_hint(
              TaskResult::CancelComplete
          });
  }
@@ -608,7 +608,7 @@ index ae86c5bf3a432a8d3fd51c04345ba68de14d4216..2f947001b7bf929b5da1c34bf674ad18
  /// Map a billing config into a [`CreditBalance`].
  /// Prefers the newer credits-config fields (`credit_usage_percent`, `current_period`).
  /// Falls back to the deprecated `monthly_limit`/`used`/`billing_period_end`.
-@@ -1594,3 +1623,32 @@ pub(super) fn unregister_active_session_best_effort_in(
+@@ -1662,3 +1691,32 @@ pub(super) fn unregister_active_session_best_effort_in(
          Err(e) => tracing::warn!(?e, "Failed to unregister active session"),
      }
  }
@@ -642,10 +642,10 @@ index ae86c5bf3a432a8d3fd51c04345ba68de14d4216..2f947001b7bf929b5da1c34bf674ad18
 +    }
 +}
 diff --git a/crates/codegen/xai-grok-pager/src/app/effects/mod.rs b/crates/codegen/xai-grok-pager/src/app/effects/mod.rs
-index 68008b6427f0e60ef6513e41aae7a171ced5c152..9371ded2d498e6f24d94d1e5d409d2a55a90dea3 100644
+index 1c507697..21e4244a 100644
 --- a/crates/codegen/xai-grok-pager/src/app/effects/mod.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/effects/mod.rs
-@@ -16,6 +16,7 @@ pub(crate) use helpers::{
+@@ -17,6 +17,7 @@ pub(crate) use helpers::{
      EffectMeta, RestoreProgressMsg, SessionFlags, acp_send_bounded, compact_error,
      is_disk_full_error, parse_worktree_restore_payload, parse_worktree_strategy_summary,
      persist_permission_mode_and_notify, persist_setting, sanitize_user_error,
@@ -653,7 +653,7 @@ index 68008b6427f0e60ef6513e41aae7a171ced5c152..9371ded2d498e6f24d94d1e5d409d2a5
  };
  #[cfg(feature = "local-workspace")]
  pub(crate) use helpers::reject_non_fs_only_advertised_tools;
-@@ -2284,10 +2285,23 @@ pub(crate) fn execute(
+@@ -2293,10 +2294,23 @@ pub(crate) fn execute(
                  );
          }
          Effect::PersistSetting { key, value, rollback_value } => {
@@ -677,7 +677,7 @@ index 68008b6427f0e60ef6513e41aae7a171ced5c152..9371ded2d498e6f24d94d1e5d409d2a5
                              TaskResult::SettingPersisted {
                                  key,
                                  value,
-@@ -2912,6 +2926,15 @@ pub(crate) fn execute(
+@@ -3028,6 +3042,15 @@ pub(crate) fn execute(
                              )
                          }
                      };
@@ -694,10 +694,10 @@ index 68008b6427f0e60ef6513e41aae7a171ced5c152..9371ded2d498e6f24d94d1e5d409d2a5
                          agent_id,
                          session_id,
 diff --git a/crates/codegen/xai-grok-pager/src/app/effects/tests.rs b/crates/codegen/xai-grok-pager/src/app/effects/tests.rs
-index da5724a3166f18bcce756d5b016987254d38c751..6813fb5583e792b371acc5b918f571a34cf4b452 100644
+index 2bd707c2..1b5483b5 100644
 --- a/crates/codegen/xai-grok-pager/src/app/effects/tests.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/effects/tests.rs
-@@ -1869,22 +1869,29 @@ async fn fetch_session_list_sends_kind_facet_filter() {
+@@ -1880,22 +1880,29 @@ async fn fetch_session_list_sends_kind_facet_filter() {
  async fn fetch_workflows_list_sends_session_id() {
      use std::sync::{Arc, Mutex};
      use xai_acp_lib::AcpAgentMessage;
@@ -734,7 +734,7 @@ index da5724a3166f18bcce756d5b016987254d38c751..6813fb5583e792b371acc5b918f571a3
              }
          }
      });
-@@ -1915,9 +1922,12 @@ async fn fetch_workflows_list_sends_session_id() {
+@@ -1926,9 +1933,12 @@ async fn fetch_workflows_list_sends_session_id() {
          other => panic!("expected WorkflowsListLoaded, got {other:?}"),
      }
      let captured = captured.lock().unwrap();
@@ -751,10 +751,10 @@ index da5724a3166f18bcce756d5b016987254d38c751..6813fb5583e792b371acc5b918f571a3
  /// The debounce arm must echo `query` and `seq` exactly.
  /// Awaits the real 250 ms debounce (tokio's paused clock needs `test-util`, not enabled in this crate).
 diff --git a/crates/codegen/xai-grok-pager/src/app/event_loop.rs b/crates/codegen/xai-grok-pager/src/app/event_loop.rs
-index d2463b6fe538698f3ce4aa83a4b09f26865b7982..37f4d793189249f7380a8d34d21af7d73dbd8530 100644
+index eda61b3c..58ea9ec6 100644
 --- a/crates/codegen/xai-grok-pager/src/app/event_loop.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/event_loop.rs
-@@ -1589,6 +1589,8 @@ pub(crate) async fn run(
+@@ -1591,6 +1591,8 @@ pub(crate) async fn run(
      app.show_tips = config_session_bools.show_tips;
      app.auto_update = config_session_bools.auto_update;
      app.ask_user_question_timeout_enabled = config_session_bools.ask_user_question_timeout_enabled;
@@ -763,7 +763,7 @@ index d2463b6fe538698f3ce4aa83a4b09f26865b7982..37f4d793189249f7380a8d34d21af7d7
      crate::appearance::cache::prime(&app.current_ui);
      crate::appearance::cache::apply_remote_keep_text_selection_default(
          remote_settings
-@@ -3003,6 +3005,7 @@ struct InitialConfigSessionBools {
+@@ -2967,6 +2969,7 @@ struct InitialConfigSessionBools {
      show_tips: Option<bool>,
      auto_update: Option<bool>,
      ask_user_question_timeout_enabled: Option<bool>,
@@ -771,7 +771,7 @@ index d2463b6fe538698f3ce4aa83a4b09f26865b7982..37f4d793189249f7380a8d34d21af7d7
  }
  fn load_initial_config_session_bools() -> InitialConfigSessionBools {
      let Ok(root) = xai_grok_shell::config::load_effective_config() else {
-@@ -3017,6 +3020,11 @@ fn load_initial_config_session_bools() -> InitialConfigSessionBools {
+@@ -2981,6 +2984,11 @@ fn load_initial_config_session_bools() -> InitialConfigSessionBools {
              .and_then(|t| t.get("ask_user_question"))
              .and_then(|a| a.get("timeout_enabled"))
              .and_then(|v| v.as_bool()),
@@ -784,7 +784,7 @@ index d2463b6fe538698f3ce4aa83a4b09f26865b7982..37f4d793189249f7380a8d34d21af7d7
  }
  /// Sync shell `sessionRecap` into the execution gate and every place that offers `/recap`.
 diff --git a/crates/codegen/xai-grok-pager/src/settings/registry.rs b/crates/codegen/xai-grok-pager/src/settings/registry.rs
-index fcc5fe084b21f424e1200d25a01c4ccae467a1ba..4e2c5b12d9db6f2910712dd8acec994e0a675bcd 100644
+index fbaebaa3..1e43e12c 100644
 --- a/crates/codegen/xai-grok-pager/src/settings/registry.rs
 +++ b/crates/codegen/xai-grok-pager/src/settings/registry.rs
 @@ -268,6 +268,8 @@ pub struct PagerLocalSnapshot {
@@ -805,7 +805,7 @@ index fcc5fe084b21f424e1200d25a01c4ccae467a1ba..4e2c5b12d9db6f2910712dd8acec994e
          }
      }
 diff --git a/crates/codegen/xai-grok-pager/src/views/extensions_modal.rs b/crates/codegen/xai-grok-pager/src/views/extensions_modal.rs
-index 6394e7c5172b5f6b0df27c852c6e067e4a39d642..7b1546c28e8398301887e343b682a1e40839739c 100644
+index 6394e7c5..7b1546c2 100644
 --- a/crates/codegen/xai-grok-pager/src/views/extensions_modal.rs
 +++ b/crates/codegen/xai-grok-pager/src/views/extensions_modal.rs
 @@ -612,6 +612,8 @@ pub enum ButtonAction {
@@ -1006,7 +1006,7 @@ index 6394e7c5172b5f6b0df27c852c6e067e4a39d642..7b1546c28e8398301887e343b682a1e4
          ]);
          let area = Rect::new(0, 0, 100, 40);
 diff --git a/crates/codegen/xai-grok-pager/src/views/extensions_modal/workflows_picker_rows.rs b/crates/codegen/xai-grok-pager/src/views/extensions_modal/workflows_picker_rows.rs
-index 5e2861c9871e6640ca7e138cc82fcbb6f5e0be39..03544483a6a769384ac2b7b57a4cef509a15b36a 100644
+index 5e2861c9..03544483 100644
 --- a/crates/codegen/xai-grok-pager/src/views/extensions_modal/workflows_picker_rows.rs
 +++ b/crates/codegen/xai-grok-pager/src/views/extensions_modal/workflows_picker_rows.rs
 @@ -1,10 +1,12 @@
@@ -1134,10 +1134,10 @@ index 5e2861c9871e6640ca7e138cc82fcbb6f5e0be39..03544483a6a769384ac2b7b57a4cef50
 +    }
  }
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
-index 346c751d17cabe47a49ac56b0abfc46baced64bb..621fe35243eb647cd3cf1af5aff6d52375f4a9f5 100644
+index fbb9b958..8985e6b9 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
-@@ -2675,6 +2675,14 @@ impl Config {
+@@ -2679,6 +2679,14 @@ impl Config {
              .default(true)
              .resolve()
      }
@@ -1152,7 +1152,7 @@ index 346c751d17cabe47a49ac56b0abfc46baced64bb..621fe35243eb647cd3cf1af5aff6d523
      /// Classifier, planner, and summary all default to goal mode itself: when `/goal` is on they are on unless config/env/remote says otherwise.
      /// `goal_enabled` is the session's already-resolved master switch (the same value the actor stores).
      /// It is passed in so a sub-role default can never disagree with whether `/goal` is on.
-@@ -4467,6 +4475,18 @@ pub struct GoalConfig {
+@@ -4475,6 +4483,18 @@ pub struct GoalConfig {
  pub struct WorkflowsConfig {
      #[serde(skip_serializing_if = "Option::is_none")]
      pub enabled: Option<bool>,
@@ -1172,10 +1172,10 @@ index 346c751d17cabe47a49ac56b0abfc46baced64bb..621fe35243eb647cd3cf1af5aff6d523
  /// `[auto_mode]` section: server-side configuration for Auto permission mode. ONE struct serves both the local `[auto_mode]` TOML table and the remote settings `auto_mode` JSON object, so the two stay 1:1.
  /// The remote object is coerced via `serde_json::from_value`. All fields are plain scalars/enums, so they deserialize cleanly from both formats (no custom tolerant deser needed). Unset fields stay `None` here.
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
-index 756a96915086c7c1fd7445e0af2ccf3d1ec34f7e..557eca9682cd661c4d8588da8c6ff026d03ff96e 100644
+index 6c1e17a6..7be08534 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
-@@ -4435,6 +4435,46 @@ fn resolve_workflows_env_wins() {
+@@ -4437,6 +4437,46 @@ fn resolve_workflows_env_wins() {
      );
      unsafe { std::env::remove_var("GROK_WORKFLOWS") };
  }
@@ -1223,10 +1223,10 @@ index 756a96915086c7c1fd7445e0af2ccf3d1ec34f7e..557eca9682cd661c4d8588da8c6ff026
  #[serial]
  fn resolve_image_gen_model_override_remote_settings_or_config() {
 diff --git a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs
-index 72ae07f1799d561d9540eb810d9ecf17f25d4a38..5c1d7ece50bfd4bdb25b27858b1b6117f3b403ce 100644
+index 49f99da9..31232c72 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs
-@@ -2003,7 +2003,8 @@ impl acp::Agent for MvpAgent {
+@@ -2008,7 +2008,8 @@ impl acp::Agent for MvpAgent {
              }
              "x.ai/session/rename" | "x.ai/session/delete"
              | "x.ai/session/update_mcp_servers" | "x.ai/session/fork"
@@ -1237,7 +1237,7 @@ index 72ae07f1799d561d9540eb810d9ecf17f25d4a38..5c1d7ece50bfd4bdb25b27858b1b6117
              }
              m if InternalMethod::from_name(m).is_some() => {
 diff --git a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs
-index 772a6e0a0f00d9b59ebba022be0620acc9a99599..7458c9af8229fdc8d9252c834664bd46b2ae3168 100644
+index ffa26399..589f0830 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs
 @@ -91,6 +91,17 @@ impl MvpAgent {
@@ -1258,7 +1258,7 @@ index 772a6e0a0f00d9b59ebba022be0620acc9a99599..7458c9af8229fdc8d9252c834664bd46
      pub(super) fn resolve_image_description_model(&self) -> String {
          self.cfg
              .borrow()
-@@ -725,6 +736,7 @@ impl MvpAgent {
+@@ -727,6 +738,7 @@ impl MvpAgent {
          crate::session::slash_commands::CommandAvailability {
              goal: self.cfg.borrow().resolve_goal().value,
              workflows: self.cfg.borrow().resolve_workflows().value,
@@ -1266,7 +1266,7 @@ index 772a6e0a0f00d9b59ebba022be0620acc9a99599..7458c9af8229fdc8d9252c834664bd46
              ..crate::session::slash_commands::CommandAvailability::default()
          }
      }
-@@ -4695,6 +4707,8 @@ impl MvpAgent {
+@@ -4653,6 +4665,8 @@ impl MvpAgent {
              .is_feature_enabled(crate::agent::config::Feature::ActiveAgentMessages);
          let goal_enabled = self.cfg.borrow().resolve_goal().value;
          let background_workflows_enabled = self.cfg.borrow().resolve_workflows().value;
@@ -1275,7 +1275,7 @@ index 772a6e0a0f00d9b59ebba022be0620acc9a99599..7458c9af8229fdc8d9252c834664bd46
          let subagents_enabled = self.cfg.borrow().subagents_enabled;
          let subagents_max_depth = self.cfg.borrow().subagents_max_depth;
          let workflow_max_concurrent_agents = self
-@@ -4950,6 +4964,7 @@ impl MvpAgent {
+@@ -4910,6 +4924,7 @@ impl MvpAgent {
                      None,
                      goal_enabled,
                      background_workflows_enabled,
@@ -1284,10 +1284,10 @@ index 772a6e0a0f00d9b59ebba022be0620acc9a99599..7458c9af8229fdc8d9252c834664bd46
                      subagents_max_depth,
                      workflow_max_concurrent_agents,
 diff --git a/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs b/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs
-index 4ef8c5dd1c719d118c5e8c07424fddefc44b4640..a7cdd818372bd29664c017a949164c60ce7bc417 100644
+index 442a10ca..7f65bcb1 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs
-@@ -1584,6 +1584,7 @@ pub(crate) async fn run_shell_child(
+@@ -1651,6 +1651,7 @@ pub(crate) async fn run_shell_child(
          ctx.goal_enabled,
          ctx.background_workflows_enabled,
          true,
@@ -1296,7 +1296,7 @@ index 4ef8c5dd1c719d118c5e8c07424fddefc44b4640..a7cdd818372bd29664c017a949164c60
          ctx.workflow_max_concurrent_agents,
          ctx.media_gen_batch_limits,
 diff --git a/crates/codegen/xai-grok-shell/src/extensions/session_admin.rs b/crates/codegen/xai-grok-shell/src/extensions/session_admin.rs
-index 74072e961bc795a6afae06b8b0d983ebfd5d31d0..80147201b4d0c4bef83860ad0213742488d903e9 100644
+index 74072e96..80147201 100644
 --- a/crates/codegen/xai-grok-shell/src/extensions/session_admin.rs
 +++ b/crates/codegen/xai-grok-shell/src/extensions/session_admin.rs
 @@ -50,6 +50,9 @@ pub(crate) async fn handle(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResul
@@ -1331,10 +1331,10 @@ index 74072e961bc795a6afae06b8b0d983ebfd5d31d0..80147201b4d0c4bef83860ad02137424
  
  async fn handle_commands_list(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session.rs b/crates/codegen/xai-grok-shell/src/session/acp_session.rs
-index ad9cbdcebed63f6416d70df10aae618a7740fc50..2384c79b5f3fbdc8d1d5409cc92374b4ec118475 100644
+index 1170ffbe..feaadf0c 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session.rs
-@@ -908,6 +908,7 @@ pub(crate) struct SessionActor {
+@@ -921,6 +921,7 @@ pub(crate) struct SessionActor {
      /// Whether goal mode (`/goal`) is enabled for this session (feature flag).
      pub(crate) goal_enabled: bool,
      pub(crate) background_workflows_enabled: bool,
@@ -1342,7 +1342,7 @@ index ad9cbdcebed63f6416d70df10aae618a7740fc50..2384c79b5f3fbdc8d1d5409cc92374b4
      goal_harness_enabled: std::sync::atomic::AtomicBool,
      goal_harness_availability_reconciled: std::sync::atomic::AtomicBool,
      /// Session-scoped state for the `/goal` Design-Execute-Verify loop.
-@@ -1235,7 +1236,7 @@ impl SessionActor {
+@@ -1246,7 +1247,7 @@ impl SessionActor {
      /// Build the `CommandAvailability` snapshot from a precomputed slice of tool names plus the live session-scoped capability state.
      /// Single source of truth for the seven gate fields.
      /// Both `command_availability` (resolve path) and `send_available_commands_update` (advertise path) call this so the two paths can never drift.
@@ -1351,7 +1351,7 @@ index ad9cbdcebed63f6416d70df10aae618a7740fc50..2384c79b5f3fbdc8d1d5409cc92374b4
          &self,
          tool_names: &[String],
          has_workflow_runs: bool,
-@@ -1283,6 +1284,9 @@ impl SessionActor {
+@@ -1295,6 +1296,9 @@ impl SessionActor {
                  n == xai_grok_tools::implementations::grok_build::workflow::WORKFLOW_TOOL_NAME
              }),
              workflow_management: false,
@@ -1361,7 +1361,7 @@ index ad9cbdcebed63f6416d70df10aae618a7740fc50..2384c79b5f3fbdc8d1d5409cc92374b4
          }
      }
      /// Names of every tool registered with the session's tool bridge.
-@@ -1477,7 +1481,7 @@ mod model_switch_label_tests;
+@@ -1489,7 +1493,7 @@ mod model_switch_label_tests;
  mod replace_system_prompt_tests;
  #[cfg(test)]
  #[path = "acp_session_tests/support.rs"]
@@ -1371,10 +1371,10 @@ index ad9cbdcebed63f6416d70df10aae618a7740fc50..2384c79b5f3fbdc8d1d5409cc92374b4
  #[path = "acp_session_tests/usage_categories_tests.rs"]
  mod usage_categories_tests;
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs
-index 9132a18dac5f2c71831b70711ee5400f0bae083e..79e82a0f6385b07d8721981ddfbcff49772e4337 100644
+index 8f700c51..4b62ea63 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs
-@@ -1862,6 +1862,14 @@ pub(super) async fn run_session(
+@@ -1867,6 +1867,14 @@ pub(super) async fn run_session(
                          SessionCommand::AdvertiseCommands { trigger } => {
                              session.send_available_commands_update(trigger).await;
                          }
@@ -1390,10 +1390,10 @@ index 9132a18dac5f2c71831b70711ee5400f0bae083e..79e82a0f6385b07d8721981ddfbcff49
                              let tool_names = session.registered_tool_names().await;
                              let has_runs = !session.workflow_tracker().await.lock().list().is_empty();
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-index b6ff478fa0da0867379e1ccc7ac48a0be4c10b8e..bfb3bd03f7db8307019f536002bd6603293ccbbf 100644
+index b250044b..5bac5b2a 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-@@ -264,6 +264,7 @@ pub(crate) async fn spawn_session_actor(
+@@ -295,6 +295,7 @@ pub(crate) async fn spawn_session_actor(
      >,
      goal_enabled: bool,
      background_workflows_enabled: bool,
@@ -1401,7 +1401,7 @@ index b6ff478fa0da0867379e1ccc7ac48a0be4c10b8e..bfb3bd03f7db8307019f536002bd6603
      subagents_enabled: bool,
      subagents_max_depth: u32,
      workflow_max_concurrent_agents: usize,
-@@ -1966,6 +1967,9 @@ pub(crate) async fn spawn_session_actor(
+@@ -1959,6 +1960,9 @@ pub(crate) async fn spawn_session_actor(
          plan_mode: plan_mode.clone(),
          goal_enabled,
          background_workflows_enabled,
@@ -1411,7 +1411,7 @@ index b6ff478fa0da0867379e1ccc7ac48a0be4c10b8e..bfb3bd03f7db8307019f536002bd6603
          goal_harness_enabled: std::sync::atomic::AtomicBool::new(if background_workflows_enabled {
              goal_enabled
          } else {
-@@ -2611,6 +2615,7 @@ pub(crate) async fn spawn_session_on_thread(
+@@ -2604,6 +2608,7 @@ pub(crate) async fn spawn_session_on_thread(
      >,
      goal_enabled: bool,
      background_workflows_enabled: bool,
@@ -1419,7 +1419,7 @@ index b6ff478fa0da0867379e1ccc7ac48a0be4c10b8e..bfb3bd03f7db8307019f536002bd6603
      subagents_enabled: bool,
      subagents_max_depth: u32,
      workflow_max_concurrent_agents: usize,
-@@ -2818,6 +2823,7 @@ pub(crate) async fn spawn_session_on_thread(
+@@ -2816,6 +2821,7 @@ pub(crate) async fn spawn_session_on_thread(
                      agent_message_sender,
                      goal_enabled,
                      background_workflows_enabled,
@@ -1428,7 +1428,7 @@ index b6ff478fa0da0867379e1ccc7ac48a0be4c10b8e..bfb3bd03f7db8307019f536002bd6603
                      subagents_max_depth,
                      workflow_max_concurrent_agents,
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/workflow.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/workflow.rs
-index cf105f1fdbff3f5190563e0f5287ce6fed24d29c..c8159ad9b88f108ffc7f4ac6a44c32b50bb2b32f 100644
+index cf105f1f..c8159ad9 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/workflow.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/workflow.rs
 @@ -15,9 +15,17 @@ impl SessionActor {
@@ -1453,10 +1453,10 @@ index cf105f1fdbff3f5190563e0f5287ce6fed24d29c..c8159ad9b88f108ffc7f4ac6a44c32b5
  
      /// Model-facing catalog of launchable workflows.
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/cancel_running_task_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/cancel_running_task_tests.rs
-index 6ece43e65ace56dc4fd4e832b20277fb2b477e7d..08c871562b8e82ecb83344050fc85cb1b524dcb7 100644
+index fc3ca485..33e4b301 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/cancel_running_task_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/cancel_running_task_tests.rs
-@@ -114,6 +114,7 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
+@@ -113,6 +113,7 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                      persistence_tx: persistence.tx.clone(),
                      disk_full: persistence.subscribe_disk_full(),
                      client_caps: crate::session::notifications::SessionClientCaps::new(false, true),
@@ -1464,7 +1464,7 @@ index 6ece43e65ace56dc4fd4e832b20277fb2b477e7d..08c871562b8e82ecb83344050fc85cb1
                  },
                  permissions: PermissionHandle::allow_all(),
                  tool_context,
-@@ -225,6 +226,7 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
+@@ -228,6 +229,7 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                  )),
                  goal_enabled: false,
                  background_workflows_enabled: false,
@@ -1472,7 +1472,7 @@ index 6ece43e65ace56dc4fd4e832b20277fb2b477e7d..08c871562b8e82ecb83344050fc85cb1
                  goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
                  goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
                  goal_tracker: Arc::new(parking_lot::Mutex::new(
-@@ -652,6 +654,7 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
+@@ -653,6 +655,7 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                      persistence_tx: persistence.tx.clone(),
                      disk_full: persistence.subscribe_disk_full(),
                      client_caps: crate::session::notifications::SessionClientCaps::new(false, true),
@@ -1480,7 +1480,7 @@ index 6ece43e65ace56dc4fd4e832b20277fb2b477e7d..08c871562b8e82ecb83344050fc85cb1
                  },
                  permissions: PermissionHandle::allow_all(),
                  tool_context,
-@@ -766,6 +769,7 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
+@@ -771,6 +774,7 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                  )),
                  goal_enabled: false,
                  background_workflows_enabled: false,
@@ -1488,7 +1488,7 @@ index 6ece43e65ace56dc4fd4e832b20277fb2b477e7d..08c871562b8e82ecb83344050fc85cb1
                  goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
                  goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
                  goal_tracker: Arc::new(parking_lot::Mutex::new(
-@@ -1108,6 +1112,7 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
+@@ -1116,6 +1120,7 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
                  ),
                  goal_enabled: false,
                  background_workflows_enabled: false,
@@ -1496,7 +1496,7 @@ index 6ece43e65ace56dc4fd4e832b20277fb2b477e7d..08c871562b8e82ecb83344050fc85cb1
                  goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
                  goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(
                      false,
-@@ -2671,6 +2676,7 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
+@@ -2682,6 +2687,7 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
                  ),
                  goal_enabled: false,
                  background_workflows_enabled: false,
@@ -1505,10 +1505,10 @@ index 6ece43e65ace56dc4fd4e832b20277fb2b477e7d..08c871562b8e82ecb83344050fc85cb1
                  goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(
                      false,
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/idle_resume_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/idle_resume_tests.rs
-index f8548fc27cd7650a2aa2a587bbffb5e66a34c2f5..ffce058957ac65f9bcfdd0750f94ce327d8049d3 100644
+index 7d138051..0e9c847c 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/idle_resume_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/idle_resume_tests.rs
-@@ -269,6 +269,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
+@@ -272,6 +272,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                  )),
                  goal_enabled: false,
                  background_workflows_enabled: false,
@@ -1517,10 +1517,10 @@ index f8548fc27cd7650a2aa2a587bbffb5e66a34c2f5..ffce058957ac65f9bcfdd0750f94ce32
                  goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
                  goal_tracker: Arc::new(parking_lot::Mutex::new(
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/inline_auto_compact_flow_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/inline_auto_compact_flow_tests.rs
-index 54faecbb0305eed5474ba75a6b0cfb223fe335a0..4e569155d30d2fcd9dd008aa0d9ac4b204510f1d 100644
+index 42b66607..ae5159aa 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/inline_auto_compact_flow_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/inline_auto_compact_flow_tests.rs
-@@ -195,6 +195,7 @@ async fn create_test_actor(
+@@ -198,6 +198,7 @@ async fn create_test_actor(
          )),
          goal_enabled: false,
          background_workflows_enabled: false,
@@ -1528,7 +1528,7 @@ index 54faecbb0305eed5474ba75a6b0cfb223fe335a0..4e569155d30d2fcd9dd008aa0d9ac4b2
          goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
          goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
          goal_tracker: Arc::new(parking_lot::Mutex::new(
-@@ -630,6 +631,7 @@ async fn create_test_actor_with_memory(
+@@ -635,6 +636,7 @@ async fn create_test_actor_with_memory(
          )),
          goal_enabled: false,
          background_workflows_enabled: false,
@@ -1537,10 +1537,10 @@ index 54faecbb0305eed5474ba75a6b0cfb223fe335a0..4e569155d30d2fcd9dd008aa0d9ac4b2
          goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
          goal_tracker: Arc::new(parking_lot::Mutex::new(
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/memory_config_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/memory_config_tests.rs
-index c6e720942bbc437aa3d04a1eb43c375b4ad64537..bd95a9f69552aecd6ff6c8bb4778de77cff596fd 100644
+index a90463b0..919c6bae 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/memory_config_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/memory_config_tests.rs
-@@ -306,6 +306,7 @@ pub(super) async fn create_test_actor_with_memory(
+@@ -313,6 +313,7 @@ pub(super) async fn create_test_actor_with_memory(
          )),
          goal_enabled: false,
          background_workflows_enabled: false,
@@ -1549,10 +1549,10 @@ index c6e720942bbc437aa3d04a1eb43c375b4ad64537..bd95a9f69552aecd6ff6c8bb4778de77
          goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
          goal_tracker: Arc::new(parking_lot::Mutex::new(
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/replay_buffer_send_update_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/replay_buffer_send_update_tests.rs
-index f699dc14424df543533322a87dd78aa49bebdcfe..f7a929f223405b6355d4da4c6330c5348ff72c6e 100644
+index 69975dae..9285eebc 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/replay_buffer_send_update_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/replay_buffer_send_update_tests.rs
-@@ -213,6 +213,7 @@ pub(super) async fn make_replay_send_update_fixture() -> ReplaySendUpdateFixture
+@@ -216,6 +216,7 @@ pub(super) async fn make_replay_send_update_fixture() -> ReplaySendUpdateFixture
          )),
          goal_enabled: false,
          background_workflows_enabled: false,
@@ -1561,10 +1561,10 @@ index f699dc14424df543533322a87dd78aa49bebdcfe..f7a929f223405b6355d4da4c6330c534
          goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
          goal_tracker: Arc::new(parking_lot::Mutex::new(
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs
-index 41d8ed67efa7c209823814a0c01e4565bf619ec4..41e1346491445d8de315061725a28f3c7568dd88 100644
+index 99a8084d..8c9e74b0 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs
-@@ -460,6 +460,7 @@ async fn create_test_actor_inner(
+@@ -463,6 +463,7 @@ async fn create_test_actor_inner(
          )),
          goal_enabled: false,
          background_workflows_enabled: false,
@@ -1573,7 +1573,7 @@ index 41d8ed67efa7c209823814a0c01e4565bf619ec4..41e1346491445d8de315061725a28f3c
          goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
          goal_tracker: Arc::new(parking_lot::Mutex::new(
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs
-index 63c41fc05d8905c201fafd30c276c43055ff6fd6..ac1de7992057384e857a6e9af8eae67dd9fb2063 100644
+index 712f6826..e8c52b0a 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs
 @@ -6,6 +6,7 @@ use xai_grok_tools::types::output::{MCPOutput, ToolOutput, ToolRunResult};
@@ -1585,10 +1585,10 @@ index 63c41fc05d8905c201fafd30c276c43055ff6fd6..ac1de7992057384e857a6e9af8eae67d
      let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
          ImageBuffer::from_pixel(32, 32, Rgba([128, 64, 32, 255]));
 diff --git a/crates/codegen/xai-grok-shell/src/session/commands.rs b/crates/codegen/xai-grok-shell/src/session/commands.rs
-index 10b0bea5e5a5c9196ef75a705865a4aec9f65e61..1d0496e58559f7e3e9365cd930de51c50f9bc461 100644
+index a00785c8..a0c2791a 100644
 --- a/crates/codegen/xai-grok-shell/src/session/commands.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/commands.rs
-@@ -804,6 +804,9 @@ pub enum SessionCommand {
+@@ -826,6 +826,9 @@ pub enum SessionCommand {
      AdvertiseCommands {
          trigger: AdvertiseTrigger,
      },
@@ -1599,10 +1599,10 @@ index 10b0bea5e5a5c9196ef75a705865a4aec9f65e61..1d0496e58559f7e3e9365cd930de51c5
          respond_to: oneshot::Sender<(bool, bool)>,
      },
 diff --git a/crates/codegen/xai-grok-shell/src/session/compaction_inline_auto_compact_flow_tests.rs b/crates/codegen/xai-grok-shell/src/session/compaction_inline_auto_compact_flow_tests.rs
-index 23580d558562bf8b5c32f54ff45517ae041586a6..fefab695b386d19226455ce15b49488960e102d9 100644
+index efa06a91..b217a265 100644
 --- a/crates/codegen/xai-grok-shell/src/session/compaction_inline_auto_compact_flow_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/compaction_inline_auto_compact_flow_tests.rs
-@@ -202,6 +202,7 @@ async fn create_test_actor(
+@@ -205,6 +205,7 @@ async fn create_test_actor(
          )),
          goal_enabled: false,
          background_workflows_enabled: false,
@@ -1611,10 +1611,10 @@ index 23580d558562bf8b5c32f54ff45517ae041586a6..fefab695b386d19226455ce15b494889
          goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
          goal_tracker: Arc::new(parking_lot::Mutex::new(
 diff --git a/crates/codegen/xai-grok-shell/src/session/slash_commands.rs b/crates/codegen/xai-grok-shell/src/session/slash_commands.rs
-index 998e218b31693df2b26ff9e6db6140a5efe99e23..aa8b574e9c73bae3e0da306111691716d453761a 100644
+index 806f7878..97ab1d1a 100644
 --- a/crates/codegen/xai-grok-shell/src/session/slash_commands.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/slash_commands.rs
-@@ -391,7 +391,7 @@ const PROMPT_COMMANDS: &[BuiltinCommand] = &[BuiltinCommand {
+@@ -383,7 +383,7 @@ const PROMPT_COMMANDS: &[BuiltinCommand] = &[BuiltinCommand {
  /// Each field corresponds to a `BuiltinGate` variant.
  /// `Default` returns every gate disabled (fail-closed) so a forgotten initialization advertises only `BuiltinGate::AlwaysOn` commands.
  /// In test code, prefer `all_enabled()` when the gating itself isn't under test; otherwise the test silently loses coverage of any gated builtin.
@@ -1623,7 +1623,7 @@ index 998e218b31693df2b26ff9e6db6140a5efe99e23..aa8b574e9c73bae3e0da306111691716
  pub(crate) struct CommandAvailability {
      pub feedback: bool,
      /// Memory is enabled with v2 filesystem access or legacy `memory_search`/`memory_get` tools.
-@@ -406,6 +406,30 @@ pub(crate) struct CommandAvailability {
+@@ -398,6 +398,30 @@ pub(crate) struct CommandAvailability {
      pub goal: bool,
      pub workflows: bool,
      pub workflow_management: bool,
@@ -1654,7 +1654,7 @@ index 998e218b31693df2b26ff9e6db6140a5efe99e23..aa8b574e9c73bae3e0da306111691716
  }
  impl CommandAvailability {
      /// `true` if commands gated on `gate` should be advertised this session.
-@@ -435,6 +459,7 @@ impl CommandAvailability {
+@@ -427,6 +451,7 @@ impl CommandAvailability {
              goal: true,
              workflows: true,
              workflow_management: true,
@@ -1662,7 +1662,7 @@ index 998e218b31693df2b26ff9e6db6140a5efe99e23..aa8b574e9c73bae3e0da306111691716
          }
      }
  }
-@@ -683,7 +708,7 @@ impl<'a> EffectiveCommandCatalog<'a> {
+@@ -679,7 +704,7 @@ impl<'a> EffectiveCommandCatalog<'a> {
          let builtins: Vec<_> = BUILTIN_COMMANDS
              .iter()
              .chain(PROMPT_COMMANDS.iter())
@@ -1671,15 +1671,15 @@ index 998e218b31693df2b26ff9e6db6140a5efe99e23..aa8b574e9c73bae3e0da306111691716
              .collect();
          let effective_skills = EffectiveSkillCatalog::build(skills, &builtins);
          let taken = &effective_skills.taken;
-@@ -827,7 +852,7 @@ pub(super) fn available_commands(
+@@ -818,7 +843,7 @@ pub(super) fn available_commands(
  pub(crate) fn builtin_commands(availability: CommandAvailability) -> Vec<acp::AvailableCommand> {
      BUILTIN_COMMANDS
          .iter()
 -        .filter(|cmd| availability.allows(cmd.gate))
 +        .filter(|cmd| advertise_builtin(cmd, availability))
-         .map(|cmd| {
-             acp::AvailableCommand::new(cmd.name.to_string(), cmd.description.to_string()).input(
-                 cmd.argument_hint.map(|hint| {
+         .map(available_command)
+         .collect()
+ }
 @@ -1168,12 +1193,15 @@ pub(crate) async fn list_commands(
          project_trusted,
      )
@@ -1703,10 +1703,10 @@ index 998e218b31693df2b26ff9e6db6140a5efe99e23..aa8b574e9c73bae3e0da306111691716
          commands: available_commands(&skills, availability, &workflows),
          tools: None,
 diff --git a/crates/codegen/xai-grok-shell/src/session/slash_commands_tests.rs b/crates/codegen/xai-grok-shell/src/session/slash_commands_tests.rs
-index dd9aed03ff2f8d68248664c4cb9803d522d6e2c7..b5036088074a26ef86978737b7183144fe5dd5ff 100644
+index 11b29e70..2d71ed1a 100644
 --- a/crates/codegen/xai-grok-shell/src/session/slash_commands_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/slash_commands_tests.rs
-@@ -1710,6 +1710,42 @@ fn listing(name: &str) -> crate::session::workflow::registry::WorkflowListing {
+@@ -1669,6 +1669,42 @@ fn listing(name: &str) -> crate::session::workflow::registry::WorkflowListing {
      }
  }
  
@@ -1750,7 +1750,7 @@ index dd9aed03ff2f8d68248664c4cb9803d522d6e2c7..b5036088074a26ef86978737b7183144
  fn same_named_builtin_projects_workflow_metadata_without_replacing_command() {
      let workflow = crate::session::workflow::registry::WorkflowListing {
 diff --git a/crates/codegen/xai-grok-shell/src/session/workflow/registry.rs b/crates/codegen/xai-grok-shell/src/session/workflow/registry.rs
-index cbb7a07b2382cb9515050d910589236bdec7f004..a147a349b1f7e0a4e95bd8e75cee41e766824bc6 100644
+index cbb7a07b..a147a349 100644
 --- a/crates/codegen/xai-grok-shell/src/session/workflow/registry.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/workflow/registry.rs
 @@ -155,6 +155,16 @@ impl WorkflowRegistry {
@@ -1830,7 +1830,7 @@ index cbb7a07b2382cb9515050d910589236bdec7f004..a147a349b1f7e0a4e95bd8e75cee41e7
      fn inline_resolution_validates_name_and_size() {
          let ok = resolve_inline(script("valid-name"));
 diff --git a/crates/codegen/xai-grok-shell/src/util/config/load.rs b/crates/codegen/xai-grok-shell/src/util/config/load.rs
-index a2175b221591074e98e248626d678946cfc1e049..77594326271692cc25b82ad2fe4906db1af2f72e 100644
+index a2175b22..77594326 100644
 --- a/crates/codegen/xai-grok-shell/src/util/config/load.rs
 +++ b/crates/codegen/xai-grok-shell/src/util/config/load.rs
 @@ -100,6 +100,7 @@ pub fn load_config_from_toml(root: &TomlValue) -> Config {
@@ -1842,7 +1842,7 @@ index a2175b221591074e98e248626d678946cfc1e049..77594326271692cc25b82ad2fe4906db
              .get("toolset")
              .and_then(|t| t.get("ask_user_question"))
 diff --git a/crates/codegen/xai-grok-shell/src/util/config/mcp.rs b/crates/codegen/xai-grok-shell/src/util/config/mcp.rs
-index 7c7a14d7a507b1bdb10ca48683417f9902b8574c..27ca12b903476084bf45d97331b63495b3c4e15e 100644
+index 164a3df4..c6fd6874 100644
 --- a/crates/codegen/xai-grok-shell/src/util/config/mcp.rs
 +++ b/crates/codegen/xai-grok-shell/src/util/config/mcp.rs
 @@ -40,6 +40,8 @@ pub struct Config {
@@ -1855,10 +1855,10 @@ index 7c7a14d7a507b1bdb10ca48683417f9902b8574c..27ca12b903476084bf45d97331b63495
      /// The rest of `[toolset]` never round-trips (it carries runtime-only structs whose defaults must not hit disk).
      pub ask_user_question: crate::tools::config::AskUserQuestionToolConfig,
 diff --git a/crates/codegen/xai-grok-shell/src/util/config/persist.rs b/crates/codegen/xai-grok-shell/src/util/config/persist.rs
-index 579159d0adc5cbf6cc8b41860403b916306345ea..7738fa849a2b2a284d668b75cca77eca18769deb 100644
+index 725f3cb6..d486c966 100644
 --- a/crates/codegen/xai-grok-shell/src/util/config/persist.rs
 +++ b/crates/codegen/xai-grok-shell/src/util/config/persist.rs
-@@ -41,6 +41,7 @@ async fn save_config_locked(config: &Config) -> Result<()> {
+@@ -54,6 +54,7 @@ async fn save_config_locked(
      merge_section(table, "ui", &config.ui);
      merge_section(table, "harness", &config.harness);
      merge_section(table, "session", &config.session);
@@ -1867,10 +1867,10 @@ index 579159d0adc5cbf6cc8b41860403b916306345ea..7738fa849a2b2a284d668b75cca77eca
      if config.privacy == super::mcp::PrivacyConfig::default() {
          table.remove("privacy");
 diff --git a/crates/codegen/xai-grok-shell/src/util/config/settings_writes.rs b/crates/codegen/xai-grok-shell/src/util/config/settings_writes.rs
-index 1b61acbbb63f8b17681db20488392696063cfc9c..3d5c40844e3e2cd65b81ba7c8fdc8b54f4361df3 100644
+index 38b5d444..150c8435 100644
 --- a/crates/codegen/xai-grok-shell/src/util/config/settings_writes.rs
 +++ b/crates/codegen/xai-grok-shell/src/util/config/settings_writes.rs
-@@ -302,6 +302,11 @@ pub async fn set_ask_user_question_timeout_enabled(value: bool) -> Result<()> {
+@@ -360,6 +360,11 @@ pub async fn set_ask_user_question_timeout_enabled(value: bool) -> Result<()> {
      update_config(|cfg| cfg.ask_user_question.timeout_enabled = Some(value)).await
  }
  
