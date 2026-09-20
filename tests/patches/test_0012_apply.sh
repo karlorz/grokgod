@@ -45,9 +45,16 @@ if [ -d "$REAL_GROK_BUILD/.git" ]; then
 
   for pred in "$REPO_ROOT"/patches/*.patch; do
     [ -f "$pred" ] || continue
-    [ "$pred" = "$PATCH_0012" ] && continue
+    base="$(basename "$pred")"
+    num="${base%%-*}"
+    case "$num" in
+      *[!0-9]*) continue ;;
+    esac
+    stripped="$(printf '%s' "$num" | sed 's/^0*//')"
+    [ -n "$stripped" ] || continue
+    [ "$stripped" -le 11 ] || continue
     git -C "$TMP_WT" apply "$pred" || {
-      echo "FAIL: predecessor patch failed in series: $(basename "$pred")" >&2
+      echo "FAIL: predecessor patch failed in series: $base" >&2
       exit 1
     }
   done

@@ -1894,8 +1894,26 @@ setup_sandbox "test_ab"
 reset_worktree
 
 NEWEST_PATCH="$(ls "$REPO_ROOT"/patches/*.patch | tail -n 1)"
-git -C "$GB_WORKTREE" apply "$NEWEST_PATCH"
-git -C "$GB_WORKTREE" diff --quiet && { echo "FAIL: Test (ab) - worktree should be dirty after newest-only apply"; exit 1; }
+set +e
+git -C "$GB_WORKTREE" apply "$NEWEST_PATCH" >/dev/null 2>&1
+NEWEST_ONLY_STATUS=$?
+set -eu
+if [ "$NEWEST_ONLY_STATUS" -ne 0 ]; then
+  # Stacked newest patch cannot land on a clean pin (0013+). Apply 0001..N-1
+  # first so the leftover is still a reverseable suffix.
+  reset_worktree
+  for p in "$REPO_ROOT"/patches/*.patch; do
+    [ -f "$p" ] || continue
+    [ "$p" = "$NEWEST_PATCH" ] && continue
+    git -C "$GB_WORKTREE" apply "$p" || {
+      echo "FAIL: Test (ab) - predecessor $(basename "$p") failed before newest leftover"; exit 1
+    }
+  done
+  git -C "$GB_WORKTREE" apply "$NEWEST_PATCH" || {
+    echo "FAIL: Test (ab) - newest patch failed after predecessors"; exit 1
+  }
+fi
+git -C "$GB_WORKTREE" diff --quiet && { echo "FAIL: Test (ab) - worktree should be dirty after newest leftover apply"; exit 1; }
 
 mkdir -p "$FAKE_GROKGOD_HOME/bin"
 echo "EXISTING_GOOD_BINARY" > "$FAKE_GROKGOD_HOME/bin/grok"

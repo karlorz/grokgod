@@ -12,7 +12,7 @@ on `grok update` / `grokgod update`. Current set: `0001-normalize-plugin-skill-j
 `0005-model-tools-deny-allow`, `0006-web-search-call-tolerant-parse`, `0007-hosted-web-search-splice-decouple`,
 `0008-claude-permissions-import-gate`, `0009-deepseek-chat-fix`,
 `0010-deepseek-chat-compact-lenient`, `0011-ask-question-timeout-action`,
-`0012-protoc-dependency-output-portable`.
+`0012-protoc-dependency-output-portable`, `0013-same-session-compaction-warning`.
 _Avoid_: Mach-O hex edit, plugin.json rewrite as the engine fix
 
 **Auth-decoupled hosted splice**:
@@ -65,6 +65,10 @@ fail-closed. Stacks after 0001–0009; does not rewrite 0006 or 0009.
 _Avoid_: folding into `deserialize_response_event`, `DefaultOnError`,
 inventing identity fields, generating this patch against clean-pin
 `client.rs` (hunks fight 0006)
+
+**Same-session compaction warning**:
+`0013-same-session-compaction-warning` keeps a separate persisted count of successful compactions in the current session. It warns at the configured limit (default 3; `0` disables) using existing prompt-adjacent notice chrome, then recommends saving SkillWiki progress and handing off to a new session at the next round. `/context` Turn is a chat/request prompt index, not this counter; the existing header remains the single default context indicator. This is separate from `0010`, which only handles compact Chat Completions JSON parsing.
+_Avoid_: reusing legacy attempt/double-count telemetry, duplicating the header with a default context footer, or auto-closing/creating sessions
 
 **Per-model tool gating**:
 `[model."<id>".tools]` with `deny` and `allow` lists in grokgod `0005`. Strips
