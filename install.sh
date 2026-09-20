@@ -809,9 +809,9 @@ if [ "$MODE" = "source" ]; then
         done
       fi
 
-      # Newest-first suffix: reverse every patch whose reverse-check succeeds,
-      # stop at the first miss. Persist-dev leftover is often only the newest
-      # patch on a clean pin, not the full 0001–N stack.
+      # Newest-first: reverse every patch whose reverse-check succeeds.
+      # Skip (do not stop on) patches that are not in the working tree, so a
+      # leftover 0001–(N-1) stack still reverses after grokgod adds patch N.
       rev_patch_files=""
       for p in $patch_files; do
         rev_patch_files="$p $rev_patch_files"
@@ -827,8 +827,6 @@ if [ "$MODE" = "source" ]; then
               exit 1
             }
             suffix_files="$suffix_files $p"
-          else
-            break
           fi
         done
       fi

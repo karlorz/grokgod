@@ -1950,4 +1950,52 @@ echo "$BUILT_BIN" | grep -q "MOCK_BUILT_GROK_BINARY" || {
 }
 echo "PASS: Test (ab) - Newest-patch-only suffix reverse"
 
+# ─────────────────────────────────────────────────────────
+# Test (ac): predecessor-stack leftover still reverses after a new newest patch
+# ─────────────────────────────────────────────────────────
+echo "Test (ac): Predecessor-stack leftover skips unapplied newest patch"
+setup_sandbox "test_ac"
+reset_worktree
+
+NEWEST_PATCH="$(ls "$REPO_ROOT"/patches/*.patch | tail -n 1)"
+for p in "$REPO_ROOT"/patches/*.patch; do
+  [ -f "$p" ] || continue
+  [ "$p" = "$NEWEST_PATCH" ] && continue
+  git -C "$GB_WORKTREE" apply "$p" || {
+    echo "FAIL: Test (ac) - predecessor $(basename "$p") failed"; exit 1
+  }
+done
+git -C "$GB_WORKTREE" diff --quiet && { echo "FAIL: Test (ac) - worktree should be dirty after predecessor stack"; exit 1; }
+
+mkdir -p "$FAKE_GROKGOD_HOME/bin"
+echo "EXISTING_GOOD_BINARY" > "$FAKE_GROKGOD_HOME/bin/grok"
+chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
+GB_HEAD="$(git -C "$GB_WORKTREE" rev-parse HEAD)"
+printf "SHA=%s\nPATCHSET=stale-not-full-stack\nVERSION=%s\nMODE=source\n" "$GB_HEAD" "$GB_HEAD" > "$FAKE_GROKGOD_HOME/.source-version"
+rm -f "$CARGO_INVOKED_FILE"
+
+set +e
+AC_OUT="$(
+  PATH="$FAKE_BIN_SHADOW:$PATH" \
+  HOME="$FAKE_HOME" \
+  GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+  GROK_BUILD_SRC="$GB_WORKTREE" \
+  BIN_DIR="$FAKE_BIN_DIR" \
+  CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+  sh "$INSTALL_SCRIPT" --from-source --no-upgrade 2>&1
+)"
+AC_STATUS=$?
+set -eu
+
+if [ "$AC_STATUS" -ne 0 ]; then
+  echo "FAIL: Test (ac) - expected predecessor reverse then install, got exit $AC_STATUS ($AC_OUT)"; exit 1
+fi
+echo "$AC_OUT" | grep -q "Local leftover:" && {
+  echo "FAIL: Test (ac) - leftover-aborted predecessor stack ($AC_OUT)"; exit 1
+}
+if [ ! -f "$CARGO_INVOKED_FILE" ]; then
+  echo "FAIL: Test (ac) - cargo not invoked after predecessor reverse"; exit 1
+fi
+echo "PASS: Test (ac) - Predecessor-stack leftover skips unapplied newest patch"
+
 echo "=== All install.sh tests passed successfully! ==="
