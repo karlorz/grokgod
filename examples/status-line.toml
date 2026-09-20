@@ -1,0 +1,18 @@
+# Merge into ~/.grok/config.toml (not GROK_CONFIG_PATH overlay —
+# [ui.status_line] is not on the overlay allowlist).
+#
+# grokgod install writes type = "builtin" with this items list when
+# [ui.status_line] is missing, and appends "compacts" to an existing
+# builtin items array that lacks it.
+# type = "command" / "disabled" (and off/none/hidden) are left alone.
+# Compiled default stays type = "disabled"; DEFAULT_ITEMS stay
+# cwd, model, context (compacts is opt-in via this merge, not compiled).
+
+[ui.status_line]
+type = "builtin"
+items = [
+    "model",
+    "turn-timer",
+    "session-name",
+    "compacts",
+]

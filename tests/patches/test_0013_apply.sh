@@ -21,7 +21,11 @@ for needle in \
   'successful_compaction_count' \
   'compaction_round_count' \
   'Compacted {round_count} times in this session. Save SkillWiki progress soon.' \
-  'Compacted {round_count} times in this session. Save SkillWiki progress and hand off to a new session.'; do
+  'Compacted {round_count} times in this session. Save SkillWiki progress and hand off to a new session.' \
+  'StatusLineItem::Compacts' \
+  '"compacts"' \
+  'format!("C{count}")' \
+  '&["session", "compaction_round_warning_limit"]'; do
   grep -q "$needle" "$PATCH_0013" || { echo "FAIL: missing 0013 contract: $needle" >&2; exit 1; }
 done
 if grep '^+' "$PATCH_0013" | grep -Eiq '(/new|create|kill|close)[^[:alnum:]]+session|automatically[^[:alnum:]]+(create|kill|close)'; then

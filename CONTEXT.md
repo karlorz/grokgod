@@ -67,7 +67,7 @@ inventing identity fields, generating this patch against clean-pin
 `client.rs` (hunks fight 0006)
 
 **Same-session compaction warning**:
-`0013-same-session-compaction-warning` keeps a separate persisted count of successful compactions in the current session. It warns at the configured limit (default 3; `0` disables) using existing prompt-adjacent notice chrome, then recommends saving SkillWiki progress and handing off to a new session at the next round. `/context` Turn is a chat/request prompt index, not this counter; the existing header remains the single default context indicator. This is separate from `0010`, which only handles compact Chat Completions JSON parsing.
+`0013-same-session-compaction-warning` keeps a separate persisted count of successful compactions in the current session. It warns at the configured limit (default 3; `0` disables) using existing prompt-adjacent notice chrome, then recommends saving SkillWiki progress and handing off to a new session at the next round. An always-on builtin status-line item `compacts` paints `C0`, `C1`, … from the persisted count (resume-safe, not only after the next `/compact`); amber at the same limit. grokgod install merges `compacts` into `~/.grok/config.toml` `[ui.status_line]` when that section is missing or already `type = "builtin"` with an `items` list that lacks it. `/context` Turn is a chat/request prompt index, not this counter; the existing header remains the single default context indicator. This is separate from `0010`, which only handles compact Chat Completions JSON parsing.
 _Avoid_: reusing legacy attempt/double-count telemetry, duplicating the header with a default context footer, or auto-closing/creating sessions
 
 **Per-model tool gating**:

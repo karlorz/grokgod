@@ -1141,6 +1141,267 @@ maybe_merge_workflows_builtins_config() {
 
 maybe_merge_workflows_builtins_config
 
+# Merge [ui.status_line] builtin "compacts" into ~/.grok/config.toml.
+# Overlay GROK_CONFIG_PATH cannot carry this table (command-injection strip).
+# Missing section: seed type=builtin with model/turn-timer/session-name/compacts.
+# Existing builtin items without "compacts": append, preserving order.
+# Leave command/disabled/off/none/hidden, missing type, and builtin-without-items.
+maybe_merge_status_line_config() {
+  cfg="$GROK_HOME/config.toml"
+  action="seed"
+  if [ -f "$cfg" ]; then
+    action="$(awk '
+      function trim(s) {
+        gsub(/\r/, "", s)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+        return s
+      }
+      function type_value(s,   q, i) {
+        sub(/^[[:space:]]*type[[:space:]]*=[[:space:]]*/, "", s)
+        s = trim(s)
+        q = substr(s, 1, 1)
+        if (q == "\"" || q == "\047") {
+          s = substr(s, 2)
+          i = index(s, q)
+          if (i > 0) s = substr(s, 1, i - 1)
+        } else {
+          if (match(s, /[[:space:]#;]/)) s = substr(s, 1, RSTART - 1)
+        }
+        return tolower(trim(s))
+      }
+      function line_has_compacts(s) {
+        return (s ~ /"compacts"/) || (s ~ /\047compacts\047/)
+      }
+      BEGIN {
+        section = 0
+        found_section = 0
+        type_val = ""
+        has_items = 0
+        has_compacts = 0
+        in_items = 0
+      }
+      {
+        raw = $0
+        gsub(/\r/, "", raw)
+      }
+      /^[[:space:]]*\[[^]]+\]/ {
+        if (raw ~ /^[[:space:]]*\[ui\.status_line\][[:space:]]*$/) {
+          section = 1
+          found_section = 1
+          in_items = 0
+          next
+        }
+        section = 0
+        in_items = 0
+        next
+      }
+      section == 1 && /^[[:space:]]*#/ { next }
+      section == 1 && /^[[:space:]]*type[[:space:]]*=/ {
+        type_val = type_value(raw)
+      }
+      section == 1 && /^[[:space:]]*items[[:space:]]*=/ {
+        has_items = 1
+        in_items = 1
+      }
+      in_items {
+        if (line_has_compacts(raw)) has_compacts = 1
+        if (raw ~ /\]/) in_items = 0
+      }
+      END {
+        if (!found_section) { print "seed"; exit }
+        if (type_val == "") { print "leave"; exit }
+        if (type_val == "disabled" || type_val == "off" || type_val == "none" || type_val == "hidden") {
+          print "leave"; exit
+        }
+        if (type_val != "builtin") { print "leave"; exit }
+        if (!has_items) { print "leave"; exit }
+        if (has_compacts) { print "has-compacts"; exit }
+        print "append"
+      }
+    ' "$cfg")"
+  fi
+  case "$action" in
+    has-compacts)
+      log_info "ui.status_line items already includes compacts in $cfg"
+      return 0
+      ;;
+    leave)
+      return 0
+      ;;
+    seed|append) ;;
+    *)
+      action="seed"
+      ;;
+  esac
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log_dry "Would merge [ui.status_line] builtin items with \"compacts\" into $cfg"
+    return 0
+  fi
+  mkdir -p "$GROK_HOME"
+  if [ "$action" = "append" ]; then
+    tmp="$cfg.grokgod-status-line.tmp"
+    awk '
+      function trim(s) {
+        gsub(/\r/, "", s)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+        return s
+      }
+      function last_index(s, ch,   i, p) {
+        p = 0
+        for (i = 1; i <= length(s); i++) {
+          if (substr(s, i, 1) == ch) p = i
+        }
+        return p
+      }
+      function leading_ws(s,   i, c) {
+        for (i = 1; i <= length(s); i++) {
+          c = substr(s, i, 1)
+          if (c != " " && c != "\t") return substr(s, 1, i - 1)
+        }
+        return s
+      }
+      function ensure_comma(s,   t) {
+        t = s
+        sub(/[[:space:]]+$/, "", t)
+        if (t ~ /,$/) return s
+        return t ","
+      }
+      function rewrite_inline(s,   obr, cbr, pre, inner, post, t) {
+        obr = index(s, "[")
+        cbr = last_index(s, "]")
+        if (obr == 0 || cbr == 0 || cbr < obr) return s
+        pre = substr(s, 1, obr)
+        inner = substr(s, obr + 1, cbr - obr - 1)
+        post = substr(s, cbr)
+        t = inner
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", t)
+        if (t == "") return pre "\"compacts\"" post
+        if (t ~ /,$/) return pre inner " \"compacts\"" post
+        return pre inner ", \"compacts\"" post
+      }
+      function insert_before_close_bracket(s,   cbr, pre, post, t) {
+        cbr = last_index(s, "]")
+        if (cbr == 0) return s ", \"compacts\""
+        pre = substr(s, 1, cbr - 1)
+        post = substr(s, cbr)
+        t = trim(pre)
+        if (t == "") return pre "\"compacts\"" post
+        if (t ~ /,$/) return pre " \"compacts\"" post
+        return pre ", \"compacts\"" post
+      }
+      function is_bare_close(s,   t) {
+        t = trim(s)
+        sub(/[;#].*$/, "", t)
+        t = trim(t)
+        return (t == "]")
+      }
+      {
+        lines[++n] = $0
+      }
+      END {
+        sec_start = 0
+        sec_end = n
+        for (i = 1; i <= n; i++) {
+          t = lines[i]
+          gsub(/\r/, "", t)
+          if (t ~ /^[[:space:]]*\[ui\.status_line\][[:space:]]*$/) {
+            sec_start = i
+            sec_end = n
+            for (j = i + 1; j <= n; j++) {
+              u = lines[j]
+              gsub(/\r/, "", u)
+              if (u ~ /^[[:space:]]*\[[^]]+\]/) {
+                sec_end = j - 1
+                break
+              }
+            }
+            break
+          }
+        }
+        items_start = 0
+        items_end = 0
+        if (sec_start > 0) {
+          for (i = sec_start; i <= sec_end; i++) {
+            t = lines[i]
+            gsub(/\r/, "", t)
+            if (t ~ /^[[:space:]]*items[[:space:]]*=/) {
+              items_start = i
+              if (index(t, "[") > 0 && index(t, "]") > 0) {
+                items_end = i
+              } else {
+                for (j = i; j <= sec_end; j++) {
+                  u = lines[j]
+                  gsub(/\r/, "", u)
+                  if (j > i && index(u, "]") > 0) {
+                    items_end = j
+                    break
+                  }
+                }
+              }
+              break
+            }
+          }
+        }
+        if (items_start == 0 || items_end == 0) {
+          for (i = 1; i <= n; i++) print lines[i]
+          exit
+        }
+        for (i = 1; i <= n; i++) {
+          if (i == items_start) {
+            if (items_start == items_end) {
+              print rewrite_inline(lines[i])
+            } else if (is_bare_close(lines[items_end])) {
+              print lines[items_start]
+              last_item = 0
+              for (j = items_end - 1; j > items_start; j--) {
+                t = trim(lines[j])
+                if (t == "" || t ~ /^#/) continue
+                last_item = j
+                break
+              }
+              indent = "    "
+              if (last_item > 0) {
+                ws = leading_ws(lines[last_item])
+                if (ws != "") indent = ws
+              }
+              for (j = items_start + 1; j <= items_end - 1; j++) {
+                if (j == last_item) print ensure_comma(lines[j])
+                else print lines[j]
+              }
+              print indent "\"compacts\","
+              print lines[items_end]
+            } else {
+              for (j = items_start; j < items_end; j++) print lines[j]
+              print insert_before_close_bracket(lines[items_end])
+            }
+            i = items_end
+            continue
+          }
+          print lines[i]
+        }
+      }
+    ' "$cfg" > "$tmp" && mv "$tmp" "$cfg"
+    log_info "Merged \"compacts\" into existing [ui.status_line] items in $cfg"
+    return 0
+  fi
+  {
+    if [ -f "$cfg" ] && [ -s "$cfg" ]; then
+      printf '\n'
+    fi
+    printf '%s\n' '[ui.status_line]'
+    printf '%s\n' 'type = "builtin"'
+    printf '%s\n' 'items = ['
+    printf '%s\n' '    "model",'
+    printf '%s\n' '    "turn-timer",'
+    printf '%s\n' '    "session-name",'
+    printf '%s\n' '    "compacts",'
+    printf '%s\n' ']'
+  } >> "$cfg"
+  log_info "Wrote [ui.status_line] builtin items including \"compacts\" to $cfg"
+}
+
+maybe_merge_status_line_config
+
 # ─────────────────────────────────────────────────────────
 # POST-BUILD DISK WARN
 # ─────────────────────────────────────────────────────────
