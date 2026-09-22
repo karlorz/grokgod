@@ -1,0 +1,63 @@
+# Isolated grok home for `grokgod eval`.
+# No plugins, no memory, no MCP. Auth is env-only — never put api_key here.
+
+[cli]
+auto_update = false
+
+[ui]
+permission_mode = "dontAsk"
+screen_mode = "minimal"
+
+[features]
+telemetry = false
+web_fetch = false
+codebase_indexing = false
+lsp_tools = false
+remote_fetch = false
+
+[memory]
+enabled = false
+
+[memory_v2]
+enabled = false
+
+[subagents]
+enabled = false
+
+[plugins]
+enabled = []
+
+[compat.claude]
+skills = false
+hooks = false
+permissions = false
+agents = false
+mcps = false
+
+[compat.cursor]
+skills = false
+hooks = false
+agents = false
+mcps = false
+
+[models]
+default = "deepseek-v4-flash"
+session_summary = "flash-non-reasoning"
+
+[model.deepseek-v4-flash]
+model = "deepseek-v4.1-flash"
+base_url = "https://cliapi.karldigi.dev/v1"
+name = "deepseek-v4-flash"
+description = "eval: DeepSeek-V4.1-Flash via new-api (chat_completions)"
+env_key = ["CLIAPI_API_KEY", "NEW_API_KEY"]
+api_backend = "chat_completions"
+max_completion_tokens = 100000
+context_window = 500000
+supports_backend_search = false
+stream_tool_calls = false
+
+[model.deepseek-v4-flash.tools]
+deny = [
+    "web_search",
+    "web_fetch",
+]

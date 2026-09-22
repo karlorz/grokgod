@@ -15,6 +15,17 @@ on `grok update` / `grokgod update`. Current set: `0001-normalize-plugin-skill-j
 `0012-protoc-dependency-output-portable`, `0013-same-session-compaction-warning`.
 _Avoid_: Mach-O hex edit, plugin.json rewrite as the engine fix
 
+**Eval home**:
+Wrapper isolation for DeepSeek Harness **Minimal** (`grokgod eval` →
+`--agent minimal`). This is not a 1:1 DeepSeek Harness clone: only Standard
+and Minimal exist here. Daily grok stays **Standard**. Private `GROK_HOME` seeded
+from `examples/eval-home` plus `src/grokgod-eval.sh`. Not a numbered source
+patch: `GROK_CONFIG` cannot disable plugins/memory, and an empty curated
+toolset is rejected by grok-build. Persist stamp `eval-home: wrapper|missing`.
+_Avoid_: loading daily `~/.grok` plugins into an eval session, asking the
+model to `read_file` a JPEG (placeholder, not native vision), renaming the
+default grok-build agent to Minimal
+
 **Auth-decoupled hosted splice**:
 Decoupling of the server-side `HostedTool::WebSearch` splice from the client-side `WebSearchConfig`
 credential gate in grokgod `0007`. Prevents logout state from stripping server-side hosted web search

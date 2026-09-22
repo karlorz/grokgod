@@ -3,7 +3,7 @@
 ClawGod-style tracking of what grokgod **must** re-apply after `grok update`,
 versus wrapper behavior, versus work we will not keep. This file is the
 inventory. Persist status is exposed via the `grok status` persist block
-(`0001-normalize-plugin-skill-join: applied|missing`, `0002-plan-mode-extra-writable: applied|missing`, `0003-session-persist-single: applied|missing`, `0004-disable-builtin-deep-research: applied|missing`, `0005-model-tools-deny-allow: applied|missing`, `0006-web-search-call-tolerant-parse: applied|missing`, `0007-hosted-web-search-splice-decouple: applied|missing`, `0008-claude-permissions-import-gate: applied|missing`, `0009-deepseek-chat-fix: applied|missing`, `0010-deepseek-chat-compact-lenient: applied|missing`, `0011-ask-question-timeout-action: applied|missing`, `0012-protoc-dependency-output-portable: applied|missing`, `0013-same-session-compaction-warning: applied|missing`, `overlay-pin: wrapper|missing`).
+(`0001-normalize-plugin-skill-join: applied|missing`, `0002-plan-mode-extra-writable: applied|missing`, `0003-session-persist-single: applied|missing`, `0004-disable-builtin-deep-research: applied|missing`, `0005-model-tools-deny-allow: applied|missing`, `0006-web-search-call-tolerant-parse: applied|missing`, `0007-hosted-web-search-splice-decouple: applied|missing`, `0008-claude-permissions-import-gate: applied|missing`, `0009-deepseek-chat-fix: applied|missing`, `0010-deepseek-chat-compact-lenient: applied|missing`, `0011-ask-question-timeout-action: applied|missing`, `0012-protoc-dependency-output-portable: applied|missing`, `0013-same-session-compaction-warning: applied|missing`, `overlay-pin: wrapper|missing`, `eval-home: wrapper|missing`).
 
 ## Keep — grok-build source patch (re-apply on update)
 
@@ -30,6 +30,7 @@ Base SHA: see `patches/README.md` (`4247f661`). Source mode still tracks the mov
 | ID | Mechanism | What | Why persist |
 |----|-----------|------|-------------|
 | `ORCA-PIN` | Official `GROK_CONFIG_PATH` env + `src/grokgod-run.sh` runner | Export `GROK_CONFIG_PATH` and exec/run `grok -p` (never `-m`) | Mechanism is official GROK_CONFIG_PATH; grokgod run sets it. Host overlay is operator/template (`examples/grok-overlay.toml`), not Weekly tree on every host. Orca 1.4.184 has no per-automation env. Interactive grok must stay on `~/.grok/config.toml`. |
+| `EVAL-HOME` | `GROK_HOME` isolation + `src/grokgod-eval.sh` | Seed `~/.grokgod/eval-home` from `examples/eval-home` (no plugins/memory/MCP, DeepSeek **Minimal** agent) and exec grok with `--no-memory --no-subagents --agent minimal`. Daily grok stays **Standard**. | Benchmark chat must not load daily `~/.grok` plugins, memory, or the grok-build coding prompt. `GROK_CONFIG` overlay cannot disable plugins, so this is a private home, not a 0014 source patch. Auth is `CLIAPI_API_KEY` / `NEW_API_KEY` only. |
 
 Production overlay lives under the automation root (Weekly:
 `~/.orca/automations/weekly-dev-cache-scan/grok-overlay.toml`) or host pin (`~/.grokgod/pin/grok-overlay.toml`). 

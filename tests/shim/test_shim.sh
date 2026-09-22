@@ -261,10 +261,14 @@ echo "$STATUS_PERSIST_OUT" | grep -q "  0011-ask-question-timeout-action: applie
 echo "$STATUS_PERSIST_OUT" | grep -q "  0012-protoc-dependency-output-portable: applied" || { echo "FAIL: status output missing 0012 applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
 echo "$STATUS_PERSIST_OUT" | grep -q "  0013-same-session-compaction-warning: applied" || { echo "FAIL: status output missing 0013 applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
 echo "$STATUS_PERSIST_OUT" | grep -q "  overlay-pin: wrapper" || { echo "FAIL: status output missing overlay-pin wrapper ($STATUS_PERSIST_OUT)"; exit 1; }
+echo "$STATUS_PERSIST_OUT" | grep -q "  eval-home: missing" || { echo "FAIL: status output missing eval-home missing before touch ($STATUS_PERSIST_OUT)"; exit 1; }
+touch "$TEST_GROKGOD_SRC/src/grokgod-eval.sh"
+STATUS_EVAL_OUT="$(run_shim status)"
+echo "$STATUS_EVAL_OUT" | grep -q "  eval-home: wrapper" || { echo "FAIL: status output missing eval-home wrapper ($STATUS_EVAL_OUT)"; exit 1; }
 echo "$STATUS_PERSIST_OUT" | grep -q "  weekly-pin: global-default" || { echo "FAIL: status output missing weekly-pin ($STATUS_PERSIST_OUT)"; exit 1; }
 
 # 7b: missing and missing
-rm -f "$TEST_GROKGOD_HOME/.source-version" "$TEST_GROKGOD_SRC/src/grokgod-run.sh"
+rm -f "$TEST_GROKGOD_HOME/.source-version" "$TEST_GROKGOD_SRC/src/grokgod-run.sh" "$TEST_GROKGOD_SRC/src/grokgod-eval.sh"
 STATUS_MISSING_OUT="$(run_shim status)"
 echo "$STATUS_MISSING_OUT" | grep -q "^persist:" || { echo "FAIL: status output missing persist header ($STATUS_MISSING_OUT)"; exit 1; }
 echo "$STATUS_MISSING_OUT" | grep -q "  0001-normalize-plugin-skill-join: missing" || { echo "FAIL: status output missing patch missing state ($STATUS_MISSING_OUT)"; exit 1; }
@@ -281,6 +285,7 @@ echo "$STATUS_MISSING_OUT" | grep -q "  0011-ask-question-timeout-action: missin
 echo "$STATUS_MISSING_OUT" | grep -q "  0012-protoc-dependency-output-portable: missing" || { echo "FAIL: status output missing 0012 missing state ($STATUS_MISSING_OUT)"; exit 1; }
 echo "$STATUS_MISSING_OUT" | grep -q "  0013-same-session-compaction-warning: missing" || { echo "FAIL: status output missing 0013 missing state ($STATUS_MISSING_OUT)"; exit 1; }
 echo "$STATUS_MISSING_OUT" | grep -q "  overlay-pin: missing" || { echo "FAIL: status output missing overlay-pin missing state ($STATUS_MISSING_OUT)"; exit 1; }
+echo "$STATUS_MISSING_OUT" | grep -q "  eval-home: missing" || { echo "FAIL: status output missing eval-home missing state ($STATUS_MISSING_OUT)"; exit 1; }
 echo "$STATUS_MISSING_OUT" | grep -q "  weekly-pin: global-default" || { echo "FAIL: status output missing weekly-pin ($STATUS_MISSING_OUT)"; exit 1; }
 echo "PASS: Test 7"
 

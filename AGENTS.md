@@ -11,12 +11,13 @@ Before any other work in this repo, read and run
 1. Disk watch (host volume is tight; cargo builds eat GBs)
 2. Upstream patch watch (is our manifest.rs normalize fixed upstream?)
 3. Live state sanity (shim ownership of `~/.local/bin/grok`)
-4. Pin facts: interactive default is ~/.grok/config.toml (currently grok-4.6).
-   Orca automations (Daily 04136086, Weekly f91e2fc7) launch `grok -- <prompt>`
-   and get ~/.grokgod/pin/orca-pin.toml flash-max via the shim. `--agent grok`
-   tags do not. Precheck is `grokgod pin check --expect-orca-pin flash-max`
-   (do not use --expect-no-overlay on this path). grokgod run remains for the
-   disabled DEV-TEST fixture. Historical Weekly id 0bbdc998 is retired.
+4. Pin facts: interactive default stays ~/.grok/config.toml (currently
+   grok-4.6). Orca desktop v1.4.206-1 publishes each automation's model
+   field (`-m`), reasoning effort, and optional `minimal` profile
+   (`--agent minimal`); use that record, not ~/.grokgod/pin/orca-pin.toml.
+   A missing pin file is expected. Do not use `grokgod pin check
+   --expect-orca-pin` as a session-start failure. `grokgod run` remains for
+   the disabled DEV-TEST fixture. Historical Weekly id 0bbdc998 is retired.
    launchd retired. Codex Scheduled copies stay PAUSED.
 5. Release CI facts (`macos-13` retired -> `macos-15-intel`; dotslash required
    for vendored `bin/protoc`; release job gates on required legs)
@@ -45,9 +46,9 @@ the runbook lists.
   patch); `install.sh` handles reverse/re-apply on update.
 - Local grokgod real-session tests (headed Orca TUI / interactive grok against
   the live patched binary) MUST use model `flash-max`: `grok -m flash-max`
-  (or `/model flash-max` after launch). Do not test on grok-4.6. This is
-  separate from Saturday overlay pin (`GROK_CONFIG_PATH`; that path still
-  never uses `-m`).
+  (or `/model flash-max` after launch). Do not test on grok-4.6. The old
+  Saturday overlay pin is deprecated; local real-session tests still use
+  `grok -m flash-max`.
 
 ## Repo map
 
@@ -56,8 +57,9 @@ the runbook lists.
   launcher install, uninstall/restore.
 - `patches/` - source patches against xai-org/grok-build (base SHA in
   `patches/README.md`).
-- `src/shim/grok-shim.sh` - PATH shim: update/status/cache/run dispatch,
+- `src/shim/grok-shim.sh` - PATH shim: update/status/cache/run/eval dispatch,
   absolute-path exec, `GROK_DISABLE_AUTOUPDATER=1`.
 - `src/grokgod-run.sh` - overlay pin runner (`GROK_CONFIG_PATH`).
+- `src/grokgod-eval.sh` - isolated DeepSeek benchmark home (`GROK_HOME`).
 - `src/grokgod-cache.sh` - disk report + guarded clean.
 - `tests/` - run each suite standalone with `sh tests/<dir>/test_*.sh`.

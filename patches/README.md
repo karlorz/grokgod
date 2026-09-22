@@ -2,6 +2,10 @@
 
 This directory contains upstream source patches applied to `grok-build` for `grokgod`.
 
+DeepSeek **benchmark isolation** is not a numbered patch: use wrapper
+`grokgod eval` (`src/grokgod-eval.sh`, persist `eval-home`). Wire-format
+DeepSeek fixes remain `0009` and `0010`.
+
 ## Patches
 
 - `0001-normalize-plugin-skill-join.patch`: Normalizes manifest path joins by filtering out `Component::CurDir` (`.`) components so relative paths like `"./skills/"` resolve identically to `"skills"`.

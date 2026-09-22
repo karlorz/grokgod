@@ -1,5 +1,10 @@
 # Orca Automation Model Pin Architecture
 
+> **Deprecated (2026-09-23):** The pin overlay is deprecated. Orca desktop
+> v1.4.206-1 selects the model, reasoning effort, and optional Minimal profile
+> on the automation record. A missing `~/.grokgod/pin/orca-pin.toml` is
+> expected. The historical overlay mechanism remains documented below.
+
 ## 1. Problem (ORCA-PIN)
 
 Orca 1.4.x automations lack per-job configuration for environment variables (`agentEnv`) and custom CLI arguments (`agentArgs`). When an automation triggers, Orca launches grok directly as `grok -- <prompt>`.
@@ -13,7 +18,7 @@ Because automations run unattended, runs must guarantee they execute against the
 | **(a) Global Config Default** | Set `[models] default = "flash-max"` in `~/.grok/config.toml` | Global to all standard interactive and headless grok invocations | **Active / Production** (used for Weekly scan) |
 | **(b) Orca Global Argv** | Set `agentDefaultArgs.grok = ["-m", "flash-max"]` in Orca settings | Global across all Orca grok tabs and automations | Flip-proof across profile changes, but too broad (not applied) |
 | **(c) GROK_CONFIG_PATH Overlay** | Run via `grokgod run --automation-root DIR` / `grokgod run --pin` | Per-job isolated overlay TOML via official environment variable | **Retired for Weekly 2026-08-20**; retained for DEV-TEST fixture & per-job pins |
-| **(d) Shim Overlay Injection** | Export `GROK_CONFIG_PATH=~/.grokgod/pin/orca-pin.toml` when `ORCA_WORKTREE_ID` is set and argv is `grok -- <prompt>` | Scoped to Orca automation runs without affecting interactive grok tags, modifying global config, or Orca settings | **Available (Phase 1 opt-in)** via `~/.grokgod/pin/orca-pin.toml` |
+| **(d) Shim Overlay Injection** | Export `GROK_CONFIG_PATH=~/.grokgod/pin/orca-pin.toml` when `ORCA_WORKTREE_ID` is set and argv is `grok -- <prompt>` | Scoped to Orca automation runs without affecting interactive grok tags, modifying global config, or Orca settings | **Deprecated (2026-09-23)**; retained as historical mechanism |
 
 ### 2.1 Shim Overlay Injection (Mechanism d)
 
@@ -34,29 +39,21 @@ Empirical observation from external automation probes:
 3. Before orca-pin, `grok -- <prompt>` inherited `config.toml` `[models] default`. After orca-pin, automations (`grok -- <prompt>` + `ORCA_WORKTREE_ID`) merge `~/.grokgod/pin/orca-pin.toml` (`flash-max`). Interactive Orca grok tags do not.
 4. (2026-08-21) Pinning every Orca grok tab from `ORCA_WORKTREE_ID` alone was a leak: `--agent grok` / `terminal create grok` stuck on `flash-max`. Guard is now `$1 = "--"`.
 
-## 4. Recommended Pattern (2026-08-21)
+## 4. Current Pattern (2026-09-23)
 
-Keep interactive grok and Orca automations on **different** models:
+Keep interactive grok and Orca automations on the configured paths:
 
-1. **Interactive default** lives in `~/.grok/config.toml` `[models] default`
-   (currently `grok-4.6`). New Orca grok tags use this. Do **not** set the
-   global default to `flash-max` just to pin automations — that was mechanism
-   (a) and it leaked into every tab.
-2. **Automation pin** is mechanism (d): opt-in `~/.grokgod/pin/orca-pin.toml`
-   (`default = "flash-max"`). The shim applies it only to `grok -- <prompt>`.
-3. **Precheck** on the Orca automation:
-   ```sh
-   $HOME/.local/bin/grokgod pin check --expect-orca-pin flash-max
-   ```
-   Scheduler: non-zero exit records `skipped_precheck`. Manual
-   `orca automations run` bypasses precheck (`precheckResult` null) and
-   still gets the overlay at process start because argv is `grok -- <prompt>`.
-4. **Prompt step-0 guard** remains defense in depth. Never put `/model …` as
-   the first line of an automation prompt (startup registry race).
-
-Do **not** use `--expect-default flash-max --expect-no-overlay` on the
-current Weekly/Daily path: the overlay **is** set for automations, and the
-config default is **not** flash-max.
+1. **Interactive default** stays in `~/.grok/config.toml` `[models] default`
+   (currently `grok-4.6`). New Orca grok tags use this. Do not set the global
+   default to `flash-max` just to pin automations.
+2. **Automation model selection** comes from the published Orca desktop
+   v1.4.206-1 automation record: its model field (`-m`), reasoning effort, and
+   optional Minimal profile (`--agent minimal`). Do not install the deprecated
+   pin overlay or use `grokgod pin check --expect-orca-pin` as the current
+   precheck. A missing `~/.grokgod/pin/orca-pin.toml` is expected.
+3. The historical `grokgod run --pin` / `--automation-root` path remains for
+   the disabled DEV-TEST fixture. Never put `/model …` as the first line of an
+   automation prompt (startup registry race).
 
 ## 5. Rollback
 

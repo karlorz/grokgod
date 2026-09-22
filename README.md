@@ -47,11 +47,11 @@ Mach-O hex.
   session. Install merges `false` when the key is missing. No `/settings` row.
 
 Local headed grokgod real-session tests use `grok -m flash-max` (see
-[AGENTS.md](AGENTS.md)). The Saturday Weekly pin is the global `~/.grok/config.toml`
-default `flash-max` (top-thread), asserted fail-closed by a `grokgod pin check`
-precheck on the Orca automation; the `GROK_CONFIG_PATH` overlay via `grokgod run`
-was retired for Weekly 2026-08-20 and remains for the disabled DEV-TEST fixture
-and future per-job pins.
+[AGENTS.md](AGENTS.md)). Orca desktop v1.4.206-1 selects the automation model
+from its published model field (`-m`), reasoning effort, and optional agent
+profile. The old Saturday pin overlay and its `grokgod pin check` precheck are
+deprecated as of 2026-09-23; `GROK_CONFIG_PATH` via `grokgod run` remains for
+the disabled DEV-TEST fixture and future per-job pins.
 
 ```sh
 sh install.sh                                                # release mode: download prebuilt binary + shims
@@ -76,7 +76,7 @@ On Windows, `grok.cmd` and `grokgod.cmd` forward commands with positional identi
 - `grok status [--json]` / `grokgod status [--json]` -> wrapper status inspection (never launches TUI).
 - `grok [args]` (including `grok sessions ...`) -> passes through arguments unchanged to the patched `grokgod.exe` with `GROK_DISABLE_AUTOUPDATER=1`.
 - `grokgod update [allowed args]` -> wrapper update.
-- `grokgod sessions`, `grokgod cache`, `grokgod run`, `grokgod pin`, or bare `grokgod` -> explicit Windows error and guidance, **never falling through to the interactive TUI**.
+- `grokgod sessions`, `grokgod cache`, `grokgod run`, `grokgod pin`, `grokgod eval`, `grokgod eval-health`, or bare `grokgod` -> explicit Windows error and guidance, **never falling through to the interactive TUI**.
 
 #### Status Schema & Health States
 
@@ -116,6 +116,23 @@ checks: [docs/RUNBOOK-session-start.md](docs/RUNBOOK-session-start.md) (auto-loa
 via [AGENTS.md](AGENTS.md)). Persist inventory (keep vs phase-out):
 [docs/patch-inventory.md](docs/patch-inventory.md).
 
+## grokgod eval (DeepSeek benchmark home)
+
+Isolated chat for model evaluation. Not a grok-build source patch and not `GROK_CONFIG_PATH` (that overlay cannot turn plugins or memory off).
+
+```sh
+export CLIAPI_API_KEY=...   # or NEW_API_KEY
+grokgod eval                # TUI in ~/.grokgod/eval-home
+grokgod eval --dry-run
+grokgod eval -- --verbatim -p "hello"
+```
+
+Seeds `~/.grokgod/eval-home` from [`examples/eval-home`](examples/eval-home): empty plugin enable list, memory off, DeepSeek **Minimal** agent (`--agent minimal`, `promptMode: full`). Daily grok stays **Standard**. Launch flags: `--no-memory --no-subagents --no-plan --disable-web-search --sandbox read-only --minimal -m deepseek-v4-flash`. CLI `--minimal` is TUI screen mode, not the preset name.
+
+Paste or `@`-attach images for native DeepSeek vision. Do not type `read /path/to.jpg` — `read_file` is a path placeholder, which is why a full grok-build session POSTed the screenshot to Poe.
+
+`--reset` re-copies the templates. `--home DIR` uses another empty home. Interactive daily grok is unchanged (`~/.grok/config.toml`). POSIX only; Windows `grokgod eval` errors closed.
+
 ## grokgod run (overlay pin)
 
 `grokgod run` executes an automation run configured with a TOML config overlay and a prompt.
@@ -147,7 +164,7 @@ grokgod run --automation-root DIR --dry-run
 
 - **Official Env First**: Grok Build 1.0.5 natively supports `GROK_CONFIG_PATH=<toml> grok` for full interactive TUI sessions and headless `-p` runs as an overlay layer atop `~/.grok/config.toml`. This is official grok-build functionality, not a grokgod TUI patch.
 - **Automation Helper**: `grokgod run --pin` / `--overlay` / `--automation-root` serves as the `-p` helper and enforces file/security guards. It sets `GROK_CONFIG_PATH` before invoking `$GROKGOD_BIN -p "<prompt>"`. It never passes `-m` (which is the wrong API).
-- **Interactive Isolation**: Interactive shim execution (bare `grok ...`, `grok -m ...`, `grok --resume`) never sets `GROK_CONFIG_PATH`. For Orca automation runs (`ORCA_WORKTREE_ID` set and argv `grok -- <prompt>`), the shim injects the opt-in `~/.grokgod/pin/orca-pin.toml` overlay if present (see `examples/orca-pin.toml` and [docs/orca-automation-model-pin.md](docs/orca-automation-model-pin.md)). Interactive Orca grok tags keep the `config.toml` default.
+- **Interactive Isolation**: Interactive shim execution (bare `grok ...`, `grok -m ...`, `grok --resume`) never sets `GROK_CONFIG_PATH`. Historically, for Orca automation runs (`ORCA_WORKTREE_ID` set and argv `grok -- <prompt>`), the shim injects the opt-in `~/.grokgod/pin/orca-pin.toml` overlay if present (see `examples/orca-pin.toml` and [docs/orca-automation-model-pin.md](docs/orca-automation-model-pin.md)); this overlay is deprecated as of 2026-09-23. The current model path is the Orca automation model field on desktop v1.4.206-1. Interactive Orca grok tags keep the `config.toml` default.
 - **Safety Guards**:
   - Rejects `--automation-root` set to `$HOME`, `~/.grok`, or `~/.grokgod`.
   - Rejects overlays containing forbidden full-config sections or keys (`[mcp_servers]`, `[auth]`, `[plugins]`, `[subagents]`, or `api_key`).

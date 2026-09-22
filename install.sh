@@ -709,10 +709,20 @@ except Exception:
           log_err "Failed to download grokgod-sessions.sh (fail-closed)."
           exit 1
         }
+        curl -fsSL "$RAW_BASE/src/grokgod-eval.sh" -o "$GROKGOD_HOME/src/src/grokgod-eval.sh" 2>/dev/null || \
+        curl -fsSL "https://raw.githubusercontent.com/${REPO_PATH}/main/src/grokgod-eval.sh" -o "$GROKGOD_HOME/src/src/grokgod-eval.sh" || {
+          log_err "Failed to download grokgod-eval.sh (fail-closed)."
+          exit 1
+        }
+        curl -fsSL "$RAW_BASE/src/grokgod-eval-health.sh" -o "$GROKGOD_HOME/src/src/grokgod-eval-health.sh" 2>/dev/null || \
+        curl -fsSL "https://raw.githubusercontent.com/${REPO_PATH}/main/src/grokgod-eval-health.sh" -o "$GROKGOD_HOME/src/src/grokgod-eval-health.sh" || {
+          log_err "Failed to download grokgod-eval-health.sh (fail-closed)."
+          exit 1
+        }
         mkdir -p "$GROKGOD_HOME/src/examples"
         curl -fsSL "$RAW_BASE/examples/orca-pin.toml" -o "$GROKGOD_HOME/src/examples/orca-pin.toml" 2>/dev/null || \
         curl -fsSL "https://raw.githubusercontent.com/${REPO_PATH}/main/examples/orca-pin.toml" -o "$GROKGOD_HOME/src/examples/orca-pin.toml" 2>/dev/null || true
-        chmod +x "$GROKGOD_HOME/src/src/shim/grok-shim.sh" "$GROKGOD_HOME/src/src/grokgod-cache.sh" "$GROKGOD_HOME/src/src/grokgod-run.sh" "$GROKGOD_HOME/src/src/grokgod-pin.sh" "$GROKGOD_HOME/src/src/grokgod-sessions.sh"
+        chmod +x "$GROKGOD_HOME/src/src/shim/grok-shim.sh" "$GROKGOD_HOME/src/src/grokgod-cache.sh" "$GROKGOD_HOME/src/src/grokgod-run.sh" "$GROKGOD_HOME/src/src/grokgod-pin.sh" "$GROKGOD_HOME/src/src/grokgod-sessions.sh" "$GROKGOD_HOME/src/src/grokgod-eval.sh" "$GROKGOD_HOME/src/src/grokgod-eval-health.sh"
         GROKGOD_SRC="$GROKGOD_HOME/src"
         log_info "Downloaded runtime scripts to $GROKGOD_HOME/src"
       fi
@@ -942,6 +952,25 @@ if [ "$MODE" = "source" ]; then
         cp "$ef" "$GROKGOD_HOME/src/examples/"
       fi
     done
+    if [ -d "$SCRIPT_DIR/examples/eval-home" ]; then
+      mkdir -p "$GROKGOD_HOME/src/examples/eval-home/agents"
+      if [ -f "$SCRIPT_DIR/examples/eval-home/config.toml" ]; then
+        cp "$SCRIPT_DIR/examples/eval-home/config.toml" "$GROKGOD_HOME/src/examples/eval-home/config.toml"
+      fi
+      if [ -f "$SCRIPT_DIR/examples/eval-home/pager.toml" ]; then
+        cp "$SCRIPT_DIR/examples/eval-home/pager.toml" "$GROKGOD_HOME/src/examples/eval-home/pager.toml"
+      fi
+      if [ -f "$SCRIPT_DIR/examples/eval-home/agents/minimal.md" ]; then
+        cp "$SCRIPT_DIR/examples/eval-home/agents/minimal.md" "$GROKGOD_HOME/src/examples/eval-home/agents/minimal.md"
+      fi
+      if [ -f "$SCRIPT_DIR/examples/eval-home/README.md" ]; then
+        cp "$SCRIPT_DIR/examples/eval-home/README.md" "$GROKGOD_HOME/src/examples/eval-home/README.md"
+      fi
+      if [ -f "$SCRIPT_DIR/examples/eval-home/assets/vision-probe.jpg" ]; then
+        mkdir -p "$GROKGOD_HOME/src/examples/eval-home/assets"
+        cp "$SCRIPT_DIR/examples/eval-home/assets/vision-probe.jpg" "$GROKGOD_HOME/src/examples/eval-home/assets/vision-probe.jpg"
+      fi
+    fi
     log_info "Synced runtime files to $GROKGOD_HOME/src"
   fi
 

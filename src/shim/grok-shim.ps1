@@ -501,7 +501,7 @@ if ($normIdentity -eq "grokgod") {
         [Console]::Error.WriteLine("hint: use 'grok sessions' to manage sessions via the grok executable.")
         exit 1
     }
-    if ($subcommand -in @("cache", "run", "pin")) {
+    if ($subcommand -in @("cache", "run", "pin", "eval", "eval-health")) {
         [Console]::Error.WriteLine("error: 'grokgod $subcommand' is not supported on Windows.")
         exit 1
     }

@@ -149,6 +149,12 @@ case "$cmd" in
       overlay_status="missing"
     fi
 
+    if [ -f "$GROKGOD_SRC/src/grokgod-eval.sh" ]; then
+      eval_home_status="wrapper"
+    else
+      eval_home_status="missing"
+    fi
+
     echo "persist:"
     echo "  0001-normalize-plugin-skill-join: $patch_status"
     echo "  0002-plan-mode-extra-writable: $patch_status"
@@ -164,6 +170,7 @@ case "$cmd" in
     echo "  0012-protoc-dependency-output-portable: $patch_status"
     echo "  0013-same-session-compaction-warning: $patch_status"
     echo "  overlay-pin: $overlay_status"
+    echo "  eval-home: $eval_home_status"
     echo "  weekly-pin: global-default"
     if [ -f "$GROKGOD_HOME/pin/orca-pin.toml" ]; then
       echo "  orca-pin: enabled"
@@ -246,6 +253,26 @@ case "$cmd" in
   run)
     shift || true
     exec sh "$GROKGOD_SRC/src/grokgod-run.sh" "$@"
+    ;;
+  eval)
+    shift || true
+    eval_script="$GROKGOD_SRC/src/grokgod-eval.sh"
+    if [ -f "$eval_script" ]; then
+      exec sh "$eval_script" "$@"
+    else
+      echo "grokgod eval not installed" >&2
+      exit 1
+    fi
+    ;;
+  eval-health)
+    shift || true
+    health_script="$GROKGOD_SRC/src/grokgod-eval-health.sh"
+    if [ -f "$health_script" ]; then
+      exec sh "$health_script" "$@"
+    else
+      echo "grokgod eval-health not installed" >&2
+      exit 1
+    fi
     ;;
   *)
     export GROK_DISABLE_AUTOUPDATER=1
