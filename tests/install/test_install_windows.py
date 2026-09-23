@@ -183,7 +183,8 @@ def main():
     check(pinned_sha in src, f"Contains PINNED_BASE_SHA {pinned_sha}")
     check("SHA=" in src, "Stamp includes SHA=")
     check("PATCHSET=" in src, "Stamp includes PATCHSET=")
-    check("VERSION=$PINNED_BASE_SHA" in src, "Stamp binds VERSION to PINNED_BASE_SHA (not grokgod tag)")
+    check("VERSION=$StampVersion" in src, "Stamp binds VERSION to $StampVersion (staged pin or fallback)")
+    check('RuntimeStagedFiles["install.ps1"]' in src and '$PINNED_BASE_SHA' in src and "$StampVersion = $matches[1]" in src, "Staged install.ps1 pin is resolved and used for stamp version")
     check("MODE=release" in src, "Stamp includes MODE=release")
 
     # 21. Manifest commit point

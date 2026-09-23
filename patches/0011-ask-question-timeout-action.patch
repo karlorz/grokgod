@@ -984,7 +984,7 @@ index e8970b114e34ad3da6fe7d4aea4333029f6df164..134966537638084b8ad4e48a6fc6d738
 +            },
 +            Some(dur) => {
 +                tokio::pin!(result_rx);
-+                let mut sleep_fut = tokio::time::sleep(dur);
++                let sleep_fut = tokio::time::sleep(dur);
 +                tokio::pin!(sleep_fut);
 +                let mut activity_closed = false;
 +

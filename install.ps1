@@ -449,6 +449,28 @@ New-Item -ItemType Directory -Force -Path $BackupDir    | Out-Null
 # -----------------------------------------------------------------------------
 # 10. Download & Verification in Temp Directory
 # -----------------------------------------------------------------------------
+# Resolve real tag for 'latest' release when not using custom download base
+if ($Tag -eq "latest" -and -not $env:GROKGOD_DOWNLOAD_BASE_URL) {
+    try {
+        $apiUri = "https://api.github.com/repos/$Repo/releases/latest"
+        $apiHeaders = @{ "User-Agent" = "grokgod-installer" }
+        $releaseObj = Invoke-RestMethod -Uri $apiUri -Headers $apiHeaders -UseBasicParsing -ErrorAction Stop
+        $resolvedTag = $null
+        if ($releaseObj) {
+            if ($releaseObj -is [System.Collections.IDictionary] -and $releaseObj.Contains("tag_name")) {
+                $resolvedTag = [string]$releaseObj["tag_name"]
+            } elseif ($releaseObj.PSObject.Properties['tag_name']) {
+                $resolvedTag = [string]$releaseObj.tag_name
+            }
+        }
+        if ($resolvedTag -and ($resolvedTag -match '^v\d')) {
+            $Tag = $resolvedTag
+        }
+    } catch {
+        # On any failure, leave $Tag as latest (do not fail the install)
+    }
+}
+
 $BaseUrl = if ($env:GROKGOD_DOWNLOAD_BASE_URL) {
     $env:GROKGOD_DOWNLOAD_BASE_URL.TrimEnd('/')
 } elseif ($Tag -eq "latest") {
@@ -460,6 +482,7 @@ $BaseUrl = if ($env:GROKGOD_DOWNLOAD_BASE_URL) {
 $CandidateSibling = Join-Path $GrokgodBinDir "candidate-$([Guid]::NewGuid().ToString('N')).exe"
 $TmpDir = Join-Path ([System.IO.Path]::GetTempPath()) "grokgod-install-$([Guid]::NewGuid().ToString('N'))"
 $ActualHash = ""
+$StampVersion = $PINNED_BASE_SHA
 $IsAlreadyUpToDate = $false
 
 New-Item -ItemType Directory -Force -Path $TmpDir | Out-Null
@@ -635,6 +658,19 @@ try {
 
             $RuntimeStagedFiles[$scriptName] = $stagedScriptPath
         }
+
+        # Resolve $StampVersion from staged install.ps1 if present
+        if ($RuntimeStagedFiles.ContainsKey("install.ps1") -and (Test-Path -LiteralPath $RuntimeStagedFiles["install.ps1"])) {
+            try {
+                $stagedLines = Get-Content -LiteralPath $RuntimeStagedFiles["install.ps1"] -ErrorAction SilentlyContinue
+                foreach ($stagedLine in $stagedLines) {
+                    if ($stagedLine -match '^\$PINNED_BASE_SHA\s*=\s*"([0-9a-fA-F]{40})"') {
+                        $StampVersion = $matches[1].ToLower()
+                        break
+                    }
+                }
+            } catch {}
+        }
     }
 } catch {
     Write-Err $_
@@ -647,6 +683,53 @@ try {
 }
 
 if ($IsAlreadyUpToDate) {
+    # If already up to date, refresh stamp/manifest if VERSION or PATCHSET differ from resolved values
+    # Do not do this when $Tag is still literal 'latest' and $StampVersion equals the running pin (nothing new learned)
+    $hasNewInfo = -not ($Tag -eq "latest" -and $StampVersion -eq $PINNED_BASE_SHA)
+    if ($hasNewInfo -and (Test-Path -LiteralPath $StampFile)) {
+        $priorStamp = Get-StampDict
+        $stampChanged = $false
+        $curVersion = if ($priorStamp.ContainsKey("VERSION")) { $priorStamp["VERSION"] } else { "" }
+        $curPatchset = if ($priorStamp.ContainsKey("PATCHSET")) { $priorStamp["PATCHSET"] } else { "" }
+
+        if ($curVersion -ne $StampVersion -or $curPatchset -ne $Tag) {
+            $stampChanged = $true
+        }
+
+        if ($stampChanged) {
+            $curMode = if ($priorStamp.ContainsKey("MODE")) { $priorStamp["MODE"] } else { "release" }
+            $curSha = if ($priorStamp.ContainsKey("SHA")) { $priorStamp["SHA"] } else { $ActualHash }
+            $newStampContent = @"
+SHA=$curSha
+PATCHSET=$Tag
+VERSION=$StampVersion
+MODE=$curMode
+"@
+            Set-Content -LiteralPath $StampFile -Value $newStampContent -Encoding ASCII
+
+            # Safely update manifest if it exists and is valid JSON
+            $curManifest = Read-Manifest
+            if ($curManifest) {
+                try {
+                    if ($curManifest.PSObject.Properties['patchset']) {
+                        $curManifest.patchset = $Tag
+                    } else {
+                        $curManifest | Add-Member -MemberType NoteProperty -Name "patchset" -Value $Tag
+                    }
+                    if ($curManifest.PSObject.Properties['sourceSha']) {
+                        $curManifest.sourceSha = $StampVersion
+                    } else {
+                        $curManifest | Add-Member -MemberType NoteProperty -Name "sourceSha" -Value $StampVersion
+                    }
+                    Write-ManifestFile $curManifest
+                } catch {
+                    # If manifest cannot be safely updated, .source-version was already rewritten
+                }
+            }
+            Write-OK "Refreshed stamp: SHA=$curSha PATCHSET=$Tag VERSION=$StampVersion"
+        }
+    }
+
     Write-OK "Already up to date ($ActualHash). Skipping mutation."
     Release-InstallLock
     exit 0
@@ -833,7 +916,7 @@ try {
     $stampContent = @"
 SHA=$ActualHash
 PATCHSET=$Tag
-VERSION=$PINNED_BASE_SHA
+VERSION=$StampVersion
 MODE=release
 "@
     Set-Content -LiteralPath $StampFile -Value $stampContent -Encoding ASCII
@@ -863,7 +946,7 @@ MODE=release
         installedAt     = (Get-Date).ToString("o")
         artifactSha256  = $ActualHash
         patchset        = $Tag
-        sourceSha       = $PINNED_BASE_SHA
+        sourceSha       = $StampVersion
         mode            = "release"
         targetExe       = $TargetExe
         binDir          = $BinDir
@@ -888,7 +971,7 @@ MODE=release
     Write-OK "grokgod Windows installation succeeded!"
     Write-OK "Installed binary:    $TargetExe"
     Write-OK "Installed launchers: $grokCmdPath and $grokgodCmdPath"
-    Write-OK "Stamp recorded:      SHA=$ActualHash PATCHSET=$Tag VERSION=$PINNED_BASE_SHA"
+    Write-OK "Stamp recorded:      SHA=$ActualHash PATCHSET=$Tag VERSION=$StampVersion"
     exit 0
 
 } catch {

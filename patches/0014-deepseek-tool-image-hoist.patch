@@ -51,7 +51,7 @@ index af280df5..3663fa10 100644
 +    let mut out: Vec<ChatRequestMessage> = Vec::with_capacity(messages.len() + 2);
 +    let mut hoisted_images: Vec<ChatContentBlock> = Vec::new();
 +
-+    let mut flush_hoisted = |out: &mut Vec<ChatRequestMessage>, hoisted: &mut Vec<ChatContentBlock>| {
++    let flush_hoisted = |out: &mut Vec<ChatRequestMessage>, hoisted: &mut Vec<ChatContentBlock>| {
 +        if !hoisted.is_empty() {
 +            let mut user_blocks = Vec::with_capacity(1 + hoisted.len());
 +            user_blocks.push(ChatContentBlock::Text {
