@@ -103,7 +103,7 @@ The Windows installer provides transactional install, update, and uninstall sema
 - **Preflight Check**: Executes candidate `--version` prior to any live target mutation.
 - **Destination-Volume Sibling Staging**: Stages candidate binary on the target volume (`candidate-<guid>.exe`) with bounded backups of prior components.
 - **Transactional Rollback**: Reverts completely to pristine prior state if candidate preflight fails, target is locked/running, or any failure occurs.
-- **Manifest Commit Point**: Commits `.source-version` (`SHA=...`, `PATCHSET=...`, `VERSION=4247f661689354b831191f11eeeac8424993fe3d`, `MODE=release`) and `manifest.json` last.
+- **Manifest Commit Point**: Commits `.source-version` (`SHA=...`, `PATCHSET=...`, `VERSION=07e35a3dfeed2f200d319ef6c893b5ea286d9a51`, `MODE=release`) and `manifest.json` last.
 - **Clean Uninstall**: `install.ps1 -Uninstall` restores backups recorded in the manifest, deletes manifest-owned files, and preserves unrelated files.
 
 Source mode tracks upstream `origin/main` on bare `grok update` (fetching latest,
@@ -111,7 +111,7 @@ re-applying persist patches, and rebuilding), mirroring ClawGod's `@latest`
 lifecycle. `--version <sha>` locks to a specific commit. `--no-upgrade` skips
 fetch and checkout to re-apply / restore launchers on the current tree.
 
-Patch authorship base SHA: `4247f661689354b831191f11eeeac8424993fe3d` (`patches/README.md`). Source mode still tracks moving `origin/main`; this authorship pin is not the source-mode update target. Session-start
+Patch authorship base SHA: `07e35a3dfeed2f200d319ef6c893b5ea286d9a51` (`patches/README.md`). Source mode still tracks moving `origin/main`; this authorship pin is not the source-mode update target. Session-start
 checks: [docs/RUNBOOK-session-start.md](docs/RUNBOOK-session-start.md) (auto-load
 via [AGENTS.md](AGENTS.md)). Persist inventory (keep vs phase-out):
 [docs/patch-inventory.md](docs/patch-inventory.md).

@@ -1,8 +1,8 @@
 diff --git a/crates/codegen/xai-chat-state/src/actor/request_builder.rs b/crates/codegen/xai-chat-state/src/actor/request_builder.rs
-index c6f4f950..2d0e36b2 100644
+index 850cd04f..b1a3c4ca 100644
 --- a/crates/codegen/xai-chat-state/src/actor/request_builder.rs
 +++ b/crates/codegen/xai-chat-state/src/actor/request_builder.rs
-@@ -93,6 +93,7 @@ impl ChatStateActor {
+@@ -101,6 +101,7 @@ impl ChatStateActor {
              // Execute completed tool calls on a Length-truncated turn instead
              // of failing it; text-only salvage stays behind `CompletePartial`.
              length_policy: xai_grok_sampling_types::LengthPolicy::CompleteToolCalls,
@@ -11,7 +11,7 @@ index c6f4f950..2d0e36b2 100644
      }
  
 diff --git a/crates/codegen/xai-grok-sampling-types/src/conversation.rs b/crates/codegen/xai-grok-sampling-types/src/conversation.rs
-index 83e88f92..eb65c2eb 100644
+index 3d1f3c0b..ae798bd8 100644
 --- a/crates/codegen/xai-grok-sampling-types/src/conversation.rs
 +++ b/crates/codegen/xai-grok-sampling-types/src/conversation.rs
 @@ -662,6 +662,8 @@ pub struct ConversationRequest {
@@ -285,10 +285,10 @@ index 47395b6a..bd09bb43 100644
 +}
 +
 diff --git a/crates/codegen/xai-grok-sampling-types/src/types.rs b/crates/codegen/xai-grok-sampling-types/src/types.rs
-index 3dd8b3cd..0e7308cc 100644
+index ad230b6c..14bcd482 100644
 --- a/crates/codegen/xai-grok-sampling-types/src/types.rs
 +++ b/crates/codegen/xai-grok-sampling-types/src/types.rs
-@@ -1125,6 +1125,9 @@ pub struct SamplingConfig {
+@@ -1155,6 +1155,9 @@ pub struct SamplingConfig {
      /// When true, inject `stream_tool_calls: true` into the Responses API request body so the upstream emits per-chunk argument deltas.
      #[serde(default, skip_serializing_if = "Option::is_none")]
      pub stream_tool_calls: Option<bool>,
@@ -298,7 +298,7 @@ index 3dd8b3cd..0e7308cc 100644
  }
  
  impl Default for SamplingConfig {
-@@ -1149,6 +1152,7 @@ impl Default for SamplingConfig {
+@@ -1180,6 +1183,7 @@ impl Default for SamplingConfig {
              reasoning_effort: None,
              reasoning_summary: None,
              stream_tool_calls: None,
@@ -307,10 +307,10 @@ index 3dd8b3cd..0e7308cc 100644
      }
  }
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
-index b3a0460b..4e14af3b 100644
+index 09aa9233..dfc8158b 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
-@@ -3370,6 +3370,9 @@ pub(crate) fn resolve_model_list(
+@@ -3384,6 +3384,9 @@ pub(crate) fn resolve_model_list(
                  if entry.info.api_backend == ApiBackend::default() {
                      entry.info.api_backend.clone_from(&donor.info.api_backend);
                  }
@@ -320,10 +320,10 @@ index b3a0460b..4e14af3b 100644
              }
              if resolved.contains_key(key) {
                  tracing::debug!(model_key = %key, "prefetched model overriding default");
-@@ -3457,6 +3460,11 @@ pub(crate) fn resolve_model_list(
-                     )
-                 })
-                 .collect();
+@@ -3501,6 +3504,11 @@ pub(crate) fn resolve_model_list(
+                 );
+             }
+         }
 +        let modality_donors: std::collections::HashMap<String, Vec<String>> = resolved
 +            .values()
 +            .filter(|e| !e.info.input_modalities.is_empty())
@@ -332,9 +332,9 @@ index b3a0460b..4e14af3b 100644
          for (key, entry) in resolved.iter_mut() {
              if let Some((donor_cw, donor_backend)) = donors.get(&entry.info.model) {
                  if entry.info.context_window.get() == default_cw {
-@@ -3475,6 +3483,11 @@ pub(crate) fn resolve_model_list(
-                     entry.info.api_backend.clone_from(donor_backend);
-                 }
+@@ -3530,6 +3538,11 @@ pub(crate) fn resolve_model_list(
+                 entry.info.reasoning_efforts.clone_from(menu);
+                 entry.info.reasoning_effort_server_default = *server_default;
              }
 +            if entry.info.input_modalities.is_empty() {
 +                if let Some(donor_modalities) = modality_donors.get(&entry.info.model) {
@@ -344,7 +344,7 @@ index b3a0460b..4e14af3b 100644
          }
      }
      if let Some(ref global_agent_type) = cfg.models.agent_type {
-@@ -3695,6 +3708,7 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
+@@ -3759,6 +3772,7 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
                  stream_tool_calls: None,
                  reasoning_summary: None,
                  laziness_detector: LazinessDetectorPerModelConfig::default(),
@@ -352,7 +352,7 @@ index b3a0460b..4e14af3b 100644
              };
              (key, config)
          })
-@@ -3824,6 +3838,9 @@ pub struct ModelEntryConfig {
+@@ -3894,6 +3908,9 @@ pub struct ModelEntryConfig {
      /// Defaults to the all-disabled state via `#[serde(default)]`.
      #[serde(default, skip_serializing_if = "is_default_laziness_detector")]
      pub laziness_detector: LazinessDetectorPerModelConfig,
@@ -362,7 +362,7 @@ index b3a0460b..4e14af3b 100644
  }
  impl Default for ModelEntryConfig {
      /// Matches the per-field serde defaults so construction sites (tests especially) can use `..Default::default()`
-@@ -3869,6 +3886,7 @@ impl Default for ModelEntryConfig {
+@@ -3941,6 +3958,7 @@ impl Default for ModelEntryConfig {
              stream_tool_calls: None,
              reasoning_summary: None,
              laziness_detector: LazinessDetectorPerModelConfig::default(),
@@ -370,7 +370,7 @@ index b3a0460b..4e14af3b 100644
          }
      }
  }
-@@ -3937,6 +3955,8 @@ pub struct ConfigModelOverride {
+@@ -4010,6 +4028,8 @@ pub struct ConfigModelOverride {
      pub show_model_fingerprint: Option<bool>,
      pub stream_tool_calls: Option<bool>,
      pub reasoning_summary: Option<ReasoningSummary>,
@@ -379,7 +379,7 @@ index b3a0460b..4e14af3b 100644
  }
  impl ConfigModelOverride {
      pub(crate) fn apply(
-@@ -4049,6 +4069,9 @@ impl ConfigModelOverride {
+@@ -4126,6 +4146,9 @@ impl ConfigModelOverride {
          if self.reasoning_summary.is_some() {
              entry.info.reasoning_summary = self.reasoning_summary;
          }
@@ -389,7 +389,7 @@ index b3a0460b..4e14af3b 100644
          if self.api_key.is_some() {
              entry.api_key.clone_from(&self.api_key);
          }
-@@ -4153,6 +4176,9 @@ pub struct ModelInfo {
+@@ -4236,6 +4259,9 @@ pub struct ModelInfo {
      /// See [`LazinessDetectorPerModelConfig`].
      #[serde(default)]
      pub laziness_detector: LazinessDetectorPerModelConfig,
@@ -399,7 +399,7 @@ index b3a0460b..4e14af3b 100644
  }
  impl Default for ModelInfo {
      /// [`Self::fallback`] with an empty slug, so construction sites (tests especially) can use `..Default::default()`
-@@ -4204,6 +4230,7 @@ impl ModelInfo {
+@@ -4289,6 +4315,7 @@ impl ModelInfo {
              stream_tool_calls: None,
              reasoning_summary: None,
              laziness_detector: LazinessDetectorPerModelConfig::default(),
@@ -407,7 +407,7 @@ index b3a0460b..4e14af3b 100644
          }
      }
      pub(crate) fn from_config(entry: &ModelEntryConfig) -> Self {
-@@ -4246,6 +4273,7 @@ impl ModelInfo {
+@@ -4333,6 +4360,7 @@ impl ModelInfo {
              stream_tool_calls: entry.stream_tool_calls,
              reasoning_summary: entry.reasoning_summary,
              laziness_detector: entry.laziness_detector.clone(),
@@ -415,7 +415,7 @@ index b3a0460b..4e14af3b 100644
          }
      }
      /// Whether `id` is one of the ids this model sends: its own, or the one it uses at some effort.
-@@ -4960,6 +4988,7 @@ pub(crate) fn resolve_aux_model_sampling_config(
+@@ -5053,6 +5081,7 @@ pub(crate) fn resolve_aux_model_sampling_config(
                  stream_tool_calls: None,
                  reasoning_summary: None,
                  laziness_detector: LazinessDetectorPerModelConfig::default(),
@@ -423,7 +423,7 @@ index b3a0460b..4e14af3b 100644
              },
              mtls_cert_dir: None,
              api_key: Some(bearer),
-@@ -5188,6 +5217,7 @@ fn resolve_hidden_default_web_search_sampling_config(
+@@ -5287,6 +5316,7 @@ fn resolve_hidden_default_web_search_sampling_config(
              stream_tool_calls: None,
              reasoning_summary: None,
              laziness_detector: LazinessDetectorPerModelConfig::default(),
@@ -432,10 +432,10 @@ index b3a0460b..4e14af3b 100644
          mtls_cert_dir: None,
          api_key: None,
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config_model_override_parse.rs b/crates/codegen/xai-grok-shell/src/agent/config_model_override_parse.rs
-index 22fadad7..8fe866f7 100644
+index 9e7aaef0..74990897 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config_model_override_parse.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config_model_override_parse.rs
-@@ -769,6 +769,7 @@ mod tests {
+@@ -770,6 +770,7 @@ mod tests {
              show_model_fingerprint: Some(true),
              stream_tool_calls: Some(false),
              reasoning_summary: Some(ReasoningSummary::None),
@@ -444,10 +444,10 @@ index 22fadad7..8fe866f7 100644
      }
  
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
-index 69899c8f..c0fd311d 100644
+index adb19894..8e3136d1 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
-@@ -8002,6 +8002,34 @@ fn plain_config_overlay_preserves_bundled_visibility() {
+@@ -8357,6 +8357,34 @@ fn plain_config_overlay_preserves_bundled_visibility() {
          "non-BYOK config overlay must preserve bundled OAuth visibility"
      );
  }
@@ -530,10 +530,10 @@ index 4f30ec5a..3498c6ba 100644
  fn default_model_honors_allowlist_when_no_default_set() {
      let cfg = config_from_toml(
 diff --git a/crates/codegen/xai-grok-shell/src/remote/client.rs b/crates/codegen/xai-grok-shell/src/remote/client.rs
-index 7fd48e4e..04e6a2d6 100644
+index efbfcd56..b9ec2e43 100644
 --- a/crates/codegen/xai-grok-shell/src/remote/client.rs
 +++ b/crates/codegen/xai-grok-shell/src/remote/client.rs
-@@ -826,6 +826,7 @@ pub(crate) fn parse_remote_model_value(
+@@ -838,6 +838,7 @@ pub(crate) fn parse_remote_model_value(
                  }
              })
              .unwrap_or_default(),
@@ -542,10 +542,10 @@ index 7fd48e4e..04e6a2d6 100644
  }
  fn get_string(obj: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
-index b0ba8b85..d4df55e3 100644
+index 01b62b46..1972581d 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
-@@ -76,6 +76,7 @@ impl SessionActor {
+@@ -77,6 +77,7 @@ impl SessionActor {
                  reasoning_effort: sampling_config.reasoning_effort,
                  reasoning_summary: sampling_config.reasoning_summary,
                  stream_tool_calls: Some(sampling_config.stream_tool_calls),
@@ -554,10 +554,10 @@ index b0ba8b85..d4df55e3 100644
          let existing = self.chat_state_handle.get_credentials().await;
          let session_key = self
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs
-index 7e167d9e..9d971dc6 100644
+index 1e9776bf..a73369cf 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs
-@@ -674,6 +674,7 @@ impl SessionActor {
+@@ -676,6 +676,7 @@ impl SessionActor {
                  reasoning_effort: None,
                  reasoning_summary: None,
                  stream_tool_calls: None,
@@ -566,10 +566,10 @@ index 7e167d9e..9d971dc6 100644
          let creds = self.chat_state_handle.get_credentials().await;
          let model_facts = self.model_auth_facts(cfg.model.as_str());
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-index 15d2c881..b395a33a 100644
+index b32645fc..317e63e1 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-@@ -607,6 +607,7 @@ pub(crate) async fn spawn_session_actor(
+@@ -617,6 +617,7 @@ pub(crate) async fn spawn_session_actor(
          reasoning_effort: sampling_config.reasoning_effort,
          reasoning_summary: sampling_config.reasoning_summary,
          stream_tool_calls: Some(sampling_config.stream_tool_calls),

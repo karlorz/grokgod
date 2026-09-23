@@ -28,8 +28,8 @@ if [ -z "$PIN_SHA" ]; then
   echo "FAIL: PINNED_BASE_SHA missing in $INSTALL_SH" >&2
   exit 1
 fi
-if [ "$PIN_SHA" != "4247f661689354b831191f11eeeac8424993fe3d" ]; then
-  echo "FAIL: Expected PINNED_BASE_SHA to be 4247f661689354b831191f11eeeac8424993fe3d, got $PIN_SHA" >&2
+if [ "$PIN_SHA" != "07e35a3dfeed2f200d319ef6c893b5ea286d9a51" ]; then
+  echo "FAIL: Expected PINNED_BASE_SHA to be 07e35a3dfeed2f200d319ef6c893b5ea286d9a51, got $PIN_SHA" >&2
   exit 1
 fi
 if ! grep -q "$PIN_SHA" "$PATCHES_README"; then
