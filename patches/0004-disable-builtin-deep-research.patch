@@ -268,10 +268,12 @@ diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs 
 index 38812224..bbd65b46 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
-@@ -502,6 +502,50 @@ pub(in crate::app::dispatch) fn clear_subagent_model_inheritance(app: &mut AppVi
+@@ -502,6 +502,52 @@ pub(in crate::app::dispatch) fn clear_subagent_model_inheritance(app: &mut AppVi
          "\u{2713} {SUBAGENT_MODEL_INHERITANCE_LABEL}: reset (restart to apply)"
      ));
      effects
++}
++
 +pub(super) fn set_workflow_builtin_deep_research_inner(app: &mut AppView, new: bool) {
 +    app.workflow_builtin_deep_research = Some(new);
 +}
