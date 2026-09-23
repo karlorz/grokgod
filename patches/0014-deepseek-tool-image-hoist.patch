@@ -24,10 +24,10 @@ index 3d1f3c0b..ae798bd8 100644
  
  impl ConversationRequest {
 diff --git a/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions.rs b/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions.rs
-index af280df5..77575452 100644
+index af280df5..3663fa10 100644
 --- a/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions.rs
 +++ b/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions.rs
-@@ -242,9 +242,92 @@ impl From<ChatResponseMessage> for ConversationItem {
+@@ -242,9 +242,96 @@ impl From<ChatResponseMessage> for ConversationItem {
      }
  }
  
@@ -72,28 +72,32 @@ index af280df5..77575452 100644
 +
 +    for mut msg in messages {
 +        if msg.role == Role::Tool {
-+            if let MessageContent::Blocks(blocks) = msg.content {
-+                let mut kept_blocks: Vec<ChatContentBlock> = Vec::with_capacity(blocks.len());
-+                for block in blocks {
-+                    match block {
-+                        ChatContentBlock::ImageUrl { .. } => {
-+                            hoisted_images.push(block);
-+                        }
-+                        other => {
-+                            kept_blocks.push(other);
++            msg.content = match msg.content {
++                MessageContent::Blocks(blocks) => {
++                    let mut kept_blocks: Vec<ChatContentBlock> = Vec::with_capacity(blocks.len());
++                    for block in blocks {
++                        match block {
++                            ChatContentBlock::ImageUrl { .. } => {
++                                hoisted_images.push(block);
++                            }
++                            other => {
++                                kept_blocks.push(other);
++                            }
 +                        }
 +                    }
-+                }
-+                if kept_blocks.len() == 1
-+                    && matches!(kept_blocks.first(), Some(ChatContentBlock::Text { .. }))
-+                {
-+                    if let Some(ChatContentBlock::Text { text }) = kept_blocks.pop() {
-+                        msg.content = MessageContent::Text(text);
++                    if kept_blocks.len() == 1
++                        && matches!(kept_blocks.first(), Some(ChatContentBlock::Text { .. }))
++                    {
++                        match kept_blocks.pop() {
++                            Some(ChatContentBlock::Text { text }) => MessageContent::Text(text),
++                            _ => MessageContent::Blocks(kept_blocks),
++                        }
++                    } else {
++                        MessageContent::Blocks(kept_blocks)
 +                    }
-+                } else {
-+                    msg.content = MessageContent::Blocks(kept_blocks);
 +                }
-+            }
++                other => other,
++            };
 +            out.push(msg);
 +        } else {
 +            flush_hoisted(&mut out, &mut hoisted_images);
@@ -122,10 +126,10 @@ index af280df5..77575452 100644
          let tools_is_empty = req.tools.is_empty();
          let tools: Option<Vec<ToolDefinition>> = if tools_is_empty {
 diff --git a/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions_tests.rs b/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions_tests.rs
-index 47395b6a..bd09bb43 100644
+index 47395b6a..b05c7986 100644
 --- a/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions_tests.rs
 +++ b/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions_tests.rs
-@@ -629,3 +629,158 @@ fn upgrade_then_fold_through_conversation_to_chat_messages() {
+@@ -629,3 +629,157 @@ fn upgrade_then_fold_through_conversation_to_chat_messages() {
          "reconstructed sibling folded onto assistant.reasoning_content"
      );
  }
@@ -283,7 +287,6 @@ index 47395b6a..bd09bb43 100644
 +        assert_eq!(chat_req.messages[2].role, Role::User);
 +    }
 +}
-+
 diff --git a/crates/codegen/xai-grok-sampling-types/src/types.rs b/crates/codegen/xai-grok-sampling-types/src/types.rs
 index ad230b6c..14bcd482 100644
 --- a/crates/codegen/xai-grok-sampling-types/src/types.rs

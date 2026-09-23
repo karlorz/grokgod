@@ -119,6 +119,8 @@ jobs:
         shell: bash
         run: |
           cd grok-build
+          # cc 1.2.48 does not compile on Windows with rustc 1.94; 1.4.7 casts FILE_ATTRIBUTE_TEMPORARY to u32.
+          cargo update -p cc --precise 1.4.7
           if [ -n "${{ matrix.rustflags }}" ]; then
             export RUSTFLAGS="${{ matrix.rustflags }}"
             echo "RUSTFLAGS override: $RUSTFLAGS"
