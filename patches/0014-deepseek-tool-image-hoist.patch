@@ -1,0 +1,579 @@
+diff --git a/crates/codegen/xai-chat-state/src/actor/request_builder.rs b/crates/codegen/xai-chat-state/src/actor/request_builder.rs
+index c6f4f950..2d0e36b2 100644
+--- a/crates/codegen/xai-chat-state/src/actor/request_builder.rs
++++ b/crates/codegen/xai-chat-state/src/actor/request_builder.rs
+@@ -93,6 +93,7 @@ impl ChatStateActor {
+             // Execute completed tool calls on a Length-truncated turn instead
+             // of failing it; text-only salvage stays behind `CompletePartial`.
+             length_policy: xai_grok_sampling_types::LengthPolicy::CompleteToolCalls,
++            input_modalities: self.state.sampling_config.input_modalities.clone(),
+         }
+     }
+ 
+diff --git a/crates/codegen/xai-grok-sampling-types/src/conversation.rs b/crates/codegen/xai-grok-sampling-types/src/conversation.rs
+index 83e88f92..eb65c2eb 100644
+--- a/crates/codegen/xai-grok-sampling-types/src/conversation.rs
++++ b/crates/codegen/xai-grok-sampling-types/src/conversation.rs
+@@ -662,6 +662,8 @@ pub struct ConversationRequest {
+     pub prompt_cache_key: Option<String>,
+     /// What the sampler does when the response stops with `Length`.
+     pub length_policy: LengthPolicy,
++    /// Input modalities supported by the model (e.g. `["text"]`, `["text", "image"]`).
++    pub input_modalities: Vec<String>,
+ }
+ 
+ impl ConversationRequest {
+diff --git a/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions.rs b/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions.rs
+index af280df5..77575452 100644
+--- a/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions.rs
++++ b/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions.rs
+@@ -242,9 +242,92 @@ impl From<ChatResponseMessage> for ConversationItem {
+     }
+ }
+ 
++/// When the model supports image input modalities, hoists images from contiguous runs of tool messages
++/// into an immediately following synthetic user message.
++fn hoist_tool_images(messages: Vec<ChatRequestMessage>) -> Vec<ChatRequestMessage> {
++    let has_tool_image = messages.iter().any(|m| {
++        m.role == Role::Tool
++            && match &m.content {
++                MessageContent::Blocks(blocks) => blocks
++                    .iter()
++                    .any(|b| matches!(b, ChatContentBlock::ImageUrl { .. })),
++                MessageContent::Text(_) => false,
++            }
++    });
++
++    if !has_tool_image {
++        return messages;
++    }
++
++    let mut out: Vec<ChatRequestMessage> = Vec::with_capacity(messages.len() + 2);
++    let mut hoisted_images: Vec<ChatContentBlock> = Vec::new();
++
++    let mut flush_hoisted = |out: &mut Vec<ChatRequestMessage>, hoisted: &mut Vec<ChatContentBlock>| {
++        if !hoisted.is_empty() {
++            let mut user_blocks = Vec::with_capacity(1 + hoisted.len());
++            user_blocks.push(ChatContentBlock::Text {
++                text: "Attached image(s) from tool result:".to_string(),
++            });
++            user_blocks.append(hoisted);
++            out.push(ChatRequestMessage {
++                role: Role::User,
++                content: MessageContent::Blocks(user_blocks),
++                name: None,
++                tool_calls: Vec::new(),
++                tool_call_id: None,
++                model_id: None,
++                reasoning_content: None,
++            });
++        }
++    };
++
++    for mut msg in messages {
++        if msg.role == Role::Tool {
++            if let MessageContent::Blocks(blocks) = msg.content {
++                let mut kept_blocks: Vec<ChatContentBlock> = Vec::with_capacity(blocks.len());
++                for block in blocks {
++                    match block {
++                        ChatContentBlock::ImageUrl { .. } => {
++                            hoisted_images.push(block);
++                        }
++                        other => {
++                            kept_blocks.push(other);
++                        }
++                    }
++                }
++                if kept_blocks.len() == 1
++                    && matches!(kept_blocks.first(), Some(ChatContentBlock::Text { .. }))
++                {
++                    if let Some(ChatContentBlock::Text { text }) = kept_blocks.pop() {
++                        msg.content = MessageContent::Text(text);
++                    }
++                } else {
++                    msg.content = MessageContent::Blocks(kept_blocks);
++                }
++            }
++            out.push(msg);
++        } else {
++            flush_hoisted(&mut out, &mut hoisted_images);
++            out.push(msg);
++        }
++    }
++
++    flush_hoisted(&mut out, &mut hoisted_images);
++    out
++}
++
+ impl From<ConversationRequest> for ChatCompletionRequest {
+     fn from(req: ConversationRequest) -> Self {
+-        let messages: Vec<ChatRequestMessage> = conversation_to_chat_messages(req.items);
++        let mut messages: Vec<ChatRequestMessage> = conversation_to_chat_messages(req.items);
++
++        let supports_image = req
++            .input_modalities
++            .iter()
++            .any(|m| m.eq_ignore_ascii_case("image"));
++
++        if supports_image {
++            messages = hoist_tool_images(messages);
++        }
+ 
+         let tools_is_empty = req.tools.is_empty();
+         let tools: Option<Vec<ToolDefinition>> = if tools_is_empty {
+diff --git a/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions_tests.rs b/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions_tests.rs
+index 47395b6a..bd09bb43 100644
+--- a/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions_tests.rs
++++ b/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions_tests.rs
+@@ -629,3 +629,158 @@ fn upgrade_then_fold_through_conversation_to_chat_messages() {
+         "reconstructed sibling folded onto assistant.reasoning_content"
+     );
+ }
++
++#[test]
++fn test_tool_image_hoisting_request_conversion() {
++    let tool_item = ConversationItem::tool_result_with_images(
++        "call_1",
++        "Tool output text",
++        vec![ContentPart::Image {
++            url: "data:image/png;base64,img1".into(),
++        }],
++    );
++
++    // 1. Empty or ["text"] input_modalities leaves tool image on role=tool
++    for modalities in [vec![], vec!["text".to_string()]] {
++        let req = ConversationRequest {
++            items: vec![
++                ConversationItem::user("user message"),
++                tool_item.clone(),
++            ],
++            input_modalities: modalities,
++            ..Default::default()
++        };
++        let chat_req: ChatCompletionRequest = req.into();
++        assert_eq!(chat_req.messages.len(), 2);
++        assert_eq!(chat_req.messages[0].role, Role::User);
++        assert_eq!(chat_req.messages[1].role, Role::Tool);
++        assert_eq!(chat_req.messages[1].tool_call_id, Some("call_1".to_string()));
++        let MessageContent::Blocks(blocks) = &chat_req.messages[1].content else {
++            panic!("expected Blocks in tool message");
++        };
++        assert_eq!(blocks.len(), 2);
++        assert!(matches!(&blocks[0], ChatContentBlock::Text { text } if text == "Tool output text"));
++        assert!(matches!(&blocks[1], ChatContentBlock::ImageUrl { image_url } if image_url.url == "data:image/png;base64,img1"));
++    }
++
++    // 2. ["text", "image"] hoists one tool image to a following user message with the exact lead-in
++    {
++        let req = ConversationRequest {
++            items: vec![
++                ConversationItem::user("user message"),
++                tool_item.clone(),
++            ],
++            input_modalities: vec!["text".to_string(), "image".to_string()],
++            ..Default::default()
++        };
++        let chat_req: ChatCompletionRequest = req.into();
++        assert_eq!(chat_req.messages.len(), 3);
++        assert_eq!(chat_req.messages[0].role, Role::User);
++        assert_eq!(chat_req.messages[1].role, Role::Tool);
++        assert_eq!(chat_req.messages[1].tool_call_id, Some("call_1".to_string()));
++        assert_eq!(chat_req.messages[1].text_content(), "Tool output text");
++
++        assert_eq!(chat_req.messages[2].role, Role::User);
++        let MessageContent::Blocks(user_blocks) = &chat_req.messages[2].content else {
++            panic!("expected Blocks in hoisted user message");
++        };
++        assert_eq!(user_blocks.len(), 2);
++        assert!(matches!(&user_blocks[0], ChatContentBlock::Text { text } if text == "Attached image(s) from tool result:"));
++        assert!(matches!(&user_blocks[1], ChatContentBlock::ImageUrl { image_url } if image_url.url == "data:image/png;base64,img1"));
++    }
++
++    // 3. Two tool images in one run become one user message
++    {
++        let tool_item_2 = ConversationItem::tool_result_with_images(
++            "call_2",
++            "Tool output 2",
++            vec![ContentPart::Image {
++                url: "data:image/png;base64,img2".into(),
++            }],
++        );
++        let req = ConversationRequest {
++            items: vec![
++                ConversationItem::user("user message"),
++                tool_item.clone(),
++                tool_item_2,
++            ],
++            input_modalities: vec!["text".to_string(), "IMAGE".to_string()],
++            ..Default::default()
++        };
++        let chat_req: ChatCompletionRequest = req.into();
++        assert_eq!(chat_req.messages.len(), 4);
++        assert_eq!(chat_req.messages[0].role, Role::User);
++        assert_eq!(chat_req.messages[1].role, Role::Tool);
++        assert_eq!(chat_req.messages[2].role, Role::Tool);
++        assert_eq!(chat_req.messages[3].role, Role::User);
++
++        let MessageContent::Blocks(user_blocks) = &chat_req.messages[3].content else {
++            panic!("expected Blocks in hoisted user message");
++        };
++        assert_eq!(user_blocks.len(), 3);
++        assert!(matches!(&user_blocks[0], ChatContentBlock::Text { text } if text == "Attached image(s) from tool result:"));
++        assert!(matches!(&user_blocks[1], ChatContentBlock::ImageUrl { image_url } if image_url.url == "data:image/png;base64,img1"));
++        assert!(matches!(&user_blocks[2], ChatContentBlock::ImageUrl { image_url } if image_url.url == "data:image/png;base64,img2"));
++    }
++
++    // 4. Two separated runs become two user messages
++    {
++        let tool_item_b = ConversationItem::tool_result_with_images(
++            "call_b",
++            "Tool output b",
++            vec![ContentPart::Image {
++                url: "data:image/png;base64,img_b".into(),
++            }],
++        );
++        let req = ConversationRequest {
++            items: vec![
++                ConversationItem::user("user message 1"),
++                tool_item.clone(),
++                ConversationItem::assistant("assistant intervening"),
++                tool_item_b,
++            ],
++            input_modalities: vec!["text".to_string(), "image".to_string()],
++            ..Default::default()
++        };
++        let chat_req: ChatCompletionRequest = req.into();
++        assert_eq!(chat_req.messages.len(), 6);
++        assert_eq!(chat_req.messages[0].role, Role::User);
++        assert_eq!(chat_req.messages[1].role, Role::Tool);
++        assert_eq!(chat_req.messages[2].role, Role::User); // hoisted for first run
++        assert_eq!(chat_req.messages[3].role, Role::Assistant);
++        assert_eq!(chat_req.messages[4].role, Role::Tool);
++        assert_eq!(chat_req.messages[5].role, Role::User); // hoisted for second run
++    }
++
++    // 5. An existing user image stays put
++    {
++        let user_img = ConversationItem::User(UserItem {
++            content: vec![
++                ContentPart::Text { text: "user prompt".into() },
++                ContentPart::Image { url: "data:image/png;base64,user_img".into() },
++            ],
++            ..Default::default()
++        });
++        let req = ConversationRequest {
++            items: vec![
++                user_img,
++                tool_item,
++            ],
++            input_modalities: vec!["text".to_string(), "image".to_string()],
++            ..Default::default()
++        };
++        let chat_req: ChatCompletionRequest = req.into();
++        assert_eq!(chat_req.messages.len(), 3);
++        assert_eq!(chat_req.messages[0].role, Role::User);
++        let MessageContent::Blocks(u_blocks) = &chat_req.messages[0].content else {
++            panic!("expected blocks in original user message");
++        };
++        assert_eq!(u_blocks.len(), 2);
++        assert!(matches!(&u_blocks[0], ChatContentBlock::Text { text } if text == "user prompt"));
++        assert!(matches!(&u_blocks[1], ChatContentBlock::ImageUrl { image_url } if image_url.url == "data:image/png;base64,user_img"));
++
++        assert_eq!(chat_req.messages[1].role, Role::Tool);
++        assert_eq!(chat_req.messages[2].role, Role::User);
++    }
++}
++
+diff --git a/crates/codegen/xai-grok-sampling-types/src/types.rs b/crates/codegen/xai-grok-sampling-types/src/types.rs
+index 3dd8b3cd..0e7308cc 100644
+--- a/crates/codegen/xai-grok-sampling-types/src/types.rs
++++ b/crates/codegen/xai-grok-sampling-types/src/types.rs
+@@ -1125,6 +1125,9 @@ pub struct SamplingConfig {
+     /// When true, inject `stream_tool_calls: true` into the Responses API request body so the upstream emits per-chunk argument deltas.
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub stream_tool_calls: Option<bool>,
++    /// Input modalities supported by the model (e.g. `["text"]`, `["text", "image"]`).
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub input_modalities: Vec<String>,
+ }
+ 
+ impl Default for SamplingConfig {
+@@ -1149,6 +1152,7 @@ impl Default for SamplingConfig {
+             reasoning_effort: None,
+             reasoning_summary: None,
+             stream_tool_calls: None,
++            input_modalities: Vec::new(),
+         }
+     }
+ }
+diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
+index b3a0460b..4e14af3b 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/config.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
+@@ -3370,6 +3370,9 @@ pub(crate) fn resolve_model_list(
+                 if entry.info.api_backend == ApiBackend::default() {
+                     entry.info.api_backend.clone_from(&donor.info.api_backend);
+                 }
++                if entry.info.input_modalities.is_empty() {
++                    entry.info.input_modalities.clone_from(&donor.info.input_modalities);
++                }
+             }
+             if resolved.contains_key(key) {
+                 tracing::debug!(model_key = %key, "prefetched model overriding default");
+@@ -3457,6 +3460,11 @@ pub(crate) fn resolve_model_list(
+                     )
+                 })
+                 .collect();
++        let modality_donors: std::collections::HashMap<String, Vec<String>> = resolved
++            .values()
++            .filter(|e| !e.info.input_modalities.is_empty())
++            .map(|e| (e.info.model.clone(), e.info.input_modalities.clone()))
++            .collect();
+         for (key, entry) in resolved.iter_mut() {
+             if let Some((donor_cw, donor_backend)) = donors.get(&entry.info.model) {
+                 if entry.info.context_window.get() == default_cw {
+@@ -3475,6 +3483,11 @@ pub(crate) fn resolve_model_list(
+                     entry.info.api_backend.clone_from(donor_backend);
+                 }
+             }
++            if entry.info.input_modalities.is_empty() {
++                if let Some(donor_modalities) = modality_donors.get(&entry.info.model) {
++                    entry.info.input_modalities.clone_from(donor_modalities);
++                }
++            }
+         }
+     }
+     if let Some(ref global_agent_type) = cfg.models.agent_type {
+@@ -3695,6 +3708,7 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
+                 stream_tool_calls: None,
+                 reasoning_summary: None,
+                 laziness_detector: LazinessDetectorPerModelConfig::default(),
++                input_modalities: Vec::new(),
+             };
+             (key, config)
+         })
+@@ -3824,6 +3838,9 @@ pub struct ModelEntryConfig {
+     /// Defaults to the all-disabled state via `#[serde(default)]`.
+     #[serde(default, skip_serializing_if = "is_default_laziness_detector")]
+     pub laziness_detector: LazinessDetectorPerModelConfig,
++    /// Input modalities supported by the model (e.g. `["text"]`, `["text", "image"]`).
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub input_modalities: Vec<String>,
+ }
+ impl Default for ModelEntryConfig {
+     /// Matches the per-field serde defaults so construction sites (tests especially) can use `..Default::default()`
+@@ -3869,6 +3886,7 @@ impl Default for ModelEntryConfig {
+             stream_tool_calls: None,
+             reasoning_summary: None,
+             laziness_detector: LazinessDetectorPerModelConfig::default(),
++            input_modalities: Vec::new(),
+         }
+     }
+ }
+@@ -3937,6 +3955,8 @@ pub struct ConfigModelOverride {
+     pub show_model_fingerprint: Option<bool>,
+     pub stream_tool_calls: Option<bool>,
+     pub reasoning_summary: Option<ReasoningSummary>,
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub input_modalities: Vec<String>,
+ }
+ impl ConfigModelOverride {
+     pub(crate) fn apply(
+@@ -4049,6 +4069,9 @@ impl ConfigModelOverride {
+         if self.reasoning_summary.is_some() {
+             entry.info.reasoning_summary = self.reasoning_summary;
+         }
++        if !self.input_modalities.is_empty() {
++            entry.info.input_modalities = self.input_modalities.clone();
++        }
+         if self.api_key.is_some() {
+             entry.api_key.clone_from(&self.api_key);
+         }
+@@ -4153,6 +4176,9 @@ pub struct ModelInfo {
+     /// See [`LazinessDetectorPerModelConfig`].
+     #[serde(default)]
+     pub laziness_detector: LazinessDetectorPerModelConfig,
++    /// Input modalities supported by the model (e.g. `["text"]`, `["text", "image"]`).
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub input_modalities: Vec<String>,
+ }
+ impl Default for ModelInfo {
+     /// [`Self::fallback`] with an empty slug, so construction sites (tests especially) can use `..Default::default()`
+@@ -4204,6 +4230,7 @@ impl ModelInfo {
+             stream_tool_calls: None,
+             reasoning_summary: None,
+             laziness_detector: LazinessDetectorPerModelConfig::default(),
++            input_modalities: Vec::new(),
+         }
+     }
+     pub(crate) fn from_config(entry: &ModelEntryConfig) -> Self {
+@@ -4246,6 +4273,7 @@ impl ModelInfo {
+             stream_tool_calls: entry.stream_tool_calls,
+             reasoning_summary: entry.reasoning_summary,
+             laziness_detector: entry.laziness_detector.clone(),
++            input_modalities: entry.input_modalities.clone(),
+         }
+     }
+     /// Whether `id` is one of the ids this model sends: its own, or the one it uses at some effort.
+@@ -4960,6 +4988,7 @@ pub(crate) fn resolve_aux_model_sampling_config(
+                 stream_tool_calls: None,
+                 reasoning_summary: None,
+                 laziness_detector: LazinessDetectorPerModelConfig::default(),
++                input_modalities: Vec::new(),
+             },
+             mtls_cert_dir: None,
+             api_key: Some(bearer),
+@@ -5188,6 +5217,7 @@ fn resolve_hidden_default_web_search_sampling_config(
+             stream_tool_calls: None,
+             reasoning_summary: None,
+             laziness_detector: LazinessDetectorPerModelConfig::default(),
++            input_modalities: Vec::new(),
+         },
+         mtls_cert_dir: None,
+         api_key: None,
+diff --git a/crates/codegen/xai-grok-shell/src/agent/config_model_override_parse.rs b/crates/codegen/xai-grok-shell/src/agent/config_model_override_parse.rs
+index 22fadad7..8fe866f7 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/config_model_override_parse.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/config_model_override_parse.rs
+@@ -769,6 +769,7 @@ mod tests {
+             show_model_fingerprint: Some(true),
+             stream_tool_calls: Some(false),
+             reasoning_summary: Some(ReasoningSummary::None),
++            input_modalities: vec!["text".to_string(), "image".to_string()],
+         }
+     }
+ 
+diff --git a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
+index 69899c8f..c0fd311d 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/config_tests.rs
+@@ -8002,6 +8002,34 @@ fn plain_config_overlay_preserves_bundled_visibility() {
+         "non-BYOK config overlay must preserve bundled OAuth visibility"
+     );
+ }
++
++#[test]
++fn resolve_model_list_input_modalities_override_and_missing() {
++    let raw: toml::Value = toml::from_str(
++        r#"
++            [model."custom-vision"]
++            model = "custom-vision-slug"
++            base_url = "https://api.openai.com/v1"
++            context_window = 128000
++            input_modalities = ["text", "image"]
++
++            [model."custom-text"]
++            model = "custom-text-slug"
++            base_url = "https://api.openai.com/v1"
++            context_window = 128000
++        "#,
++    )
++    .unwrap();
++    let cfg = Config::new_from_toml_cfg(&raw).expect("config should parse");
++    let resolved = resolve_model_list(&cfg, None);
++
++    let vision_entry = resolved.get("custom-vision").expect("custom-vision should exist");
++    assert_eq!(vision_entry.info.input_modalities, vec!["text".to_string(), "image".to_string()]);
++
++    let text_entry = resolved.get("custom-text").expect("custom-text should exist");
++    assert!(text_entry.info.input_modalities.is_empty());
++}
++
+ #[test]
+ #[serial]
+ fn mcp_liveness_watchers_default_is_true() {
+diff --git a/crates/codegen/xai-grok-shell/src/agent/remote_config/manager/mod.rs b/crates/codegen/xai-grok-shell/src/agent/remote_config/manager/mod.rs
+index 07017aa6..819b8602 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/remote_config/manager/mod.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/remote_config/manager/mod.rs
+@@ -509,6 +509,12 @@ impl ModelsManager {
+             .unwrap_or(false)
+     }
+ 
++    /// Input modalities for a catalog key or wire model id. Empty when absent.
++    pub(crate) fn input_modalities_for(&self, model_id: &str) -> Vec<String> {
++        self.with_catalog_entry(model_id, |e| e.info().input_modalities.clone())
++            .unwrap_or_default()
++    }
++
+     /// Looks `model_id` up in the catalog, then returns the id that model sends at this effort.
+     pub(crate) fn model_for_effort(
+         &self,
+diff --git a/crates/codegen/xai-grok-shell/src/agent/remote_config/manager/tests.rs b/crates/codegen/xai-grok-shell/src/agent/remote_config/manager/tests.rs
+index 4f30ec5a..3498c6ba 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/remote_config/manager/tests.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/remote_config/manager/tests.rs
+@@ -596,6 +596,25 @@ fn reasoning_effort_helpers_resolve_wire_name_to_catalog_key() {
+     assert!(mgr.model_reasoning_efforts("missing-model").is_empty());
+ }
+ 
++#[test]
++fn input_modalities_for_resolves_catalog_key_and_wire_slug() {
++    let mgr = test_manager();
++
++    let mut entry = make_model_entry("deepseek-v4.1-flash");
++    entry.info.input_modalities = vec!["text".to_string(), "image".to_string()];
++    mgr.insert_test_entry("deepseek-v4-flash", entry);
++
++    assert_eq!(
++        mgr.input_modalities_for("deepseek-v4.1-flash"),
++        vec!["text", "image"]
++    );
++    assert_eq!(
++        mgr.input_modalities_for("deepseek-v4-flash"),
++        vec!["text", "image"]
++    );
++    assert!(mgr.input_modalities_for("gpt-6-luna").is_empty());
++}
++
+ #[test]
+ fn default_model_honors_allowlist_when_no_default_set() {
+     let cfg = config_from_toml(
+diff --git a/crates/codegen/xai-grok-shell/src/remote/client.rs b/crates/codegen/xai-grok-shell/src/remote/client.rs
+index 7fd48e4e..04e6a2d6 100644
+--- a/crates/codegen/xai-grok-shell/src/remote/client.rs
++++ b/crates/codegen/xai-grok-shell/src/remote/client.rs
+@@ -826,6 +826,7 @@ pub(crate) fn parse_remote_model_value(
+                 }
+             })
+             .unwrap_or_default(),
++        input_modalities: Vec::new(),
+     })
+ }
+ fn get_string(obj: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
+index b0ba8b85..d4df55e3 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
+@@ -76,6 +76,7 @@ impl SessionActor {
+                 reasoning_effort: sampling_config.reasoning_effort,
+                 reasoning_summary: sampling_config.reasoning_summary,
+                 stream_tool_calls: Some(sampling_config.stream_tool_calls),
++                input_modalities: self.models_manager.input_modalities_for(&sampling_config.model),
+             });
+         let existing = self.chat_state_handle.get_credentials().await;
+         let session_key = self
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs
+index 7e167d9e..9d971dc6 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs
+@@ -674,6 +674,7 @@ impl SessionActor {
+                 reasoning_effort: None,
+                 reasoning_summary: None,
+                 stream_tool_calls: None,
++                input_modalities: Vec::new(),
+             });
+         let creds = self.chat_state_handle.get_credentials().await;
+         let model_facts = self.model_auth_facts(cfg.model.as_str());
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
+index 15d2c881..b395a33a 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
+@@ -607,6 +607,7 @@ pub(crate) async fn spawn_session_actor(
+         reasoning_effort: sampling_config.reasoning_effort,
+         reasoning_summary: sampling_config.reasoning_summary,
+         stream_tool_calls: Some(sampling_config.stream_tool_calls),
++        input_modalities: models_manager.input_modalities_for(&sampling_config.model),
+     };
+     let actor_pruning_config = xai_chat_state::PruningConfig {
+         enabled: session_pruning_config.enabled,
