@@ -239,8 +239,133 @@ get_free_kb() {
   $DF_CMD -P -k "$check_dir" 2>/dev/null | awk 'NR==2 {print $4}'
 }
 
-# ff-only pull of the installed grokgod src (never the developer checkout
-# unless it is also GROKGOD_SRC). Skip when unset or not a git repo.
+# Behavior must match the other copy in src/shim/grok-shim.sh (fast_forward_or_reset_repo)
+fast_forward_or_reset_grokgod_src() {
+  repo="$1"
+  upstream="$(git -C "$repo" rev-parse origin/main 2>/dev/null || true)"
+  head="$(git -C "$repo" rev-parse HEAD 2>/dev/null || true)"
+
+  if [ -z "$upstream" ] || [ -z "$head" ]; then
+    echo "grokgod: could not resolve upstream or HEAD at $repo" >&2
+    return 1
+  fi
+
+  # 1. If head is not upstream and head is not an ancestor of upstream:
+  if [ "$head" != "$upstream" ] && ! git -C "$repo" merge-base --is-ancestor "$head" "$upstream" 2>/dev/null; then
+    echo "grokgod: src has local commits (not fast-forward) at $repo" >&2
+    return 1
+  fi
+
+  # 2. Otherwise classify the worktree with no mutations yet:
+  has_tracked_changes=0
+  tab="$(printf '\t')"
+
+  diff_out="$(git -C "$repo" diff --name-status --no-renames HEAD 2>/dev/null || true)"
+  if [ -n "$diff_out" ]; then
+    has_tracked_changes=1
+    while IFS="$tab" read -r status path || [ -n "$status" ]; do
+      [ -z "$status" ] && continue
+      case "$status" in
+        D)
+          if git -C "$repo" cat-file -e "origin/main:$path" 2>/dev/null; then
+            echo "grokgod: src differs from origin/main: $path" >&2
+            return 1
+          fi
+          ;;
+        A|M|T)
+          if [ ! -f "$repo/$path" ]; then
+            echo "grokgod: src differs from origin/main: $path" >&2
+            return 1
+          fi
+          if ! git -C "$repo" cat-file -e "origin/main:$path" 2>/dev/null; then
+            echo "grokgod: src differs from origin/main: $path" >&2
+            return 1
+          fi
+          if ! git -C "$repo" show "origin/main:$path" 2>/dev/null | cmp -s "$repo/$path" -; then
+            echo "grokgod: src differs from origin/main: $path" >&2
+            return 1
+          fi
+          ;;
+        *)
+          echo "grokgod: src differs from origin/main: $path" >&2
+          return 1
+          ;;
+      esac
+    done << EOF_DIFF
+$diff_out
+EOF_DIFF
+  fi
+
+  blockers=""
+  untracked_out="$(git -C "$repo" ls-files --others --exclude-standard 2>/dev/null || true)"
+  if [ -n "$untracked_out" ]; then
+    while IFS= read -r path || [ -n "$path" ]; do
+      [ -z "$path" ] && continue
+      cur="$path"
+      while [ "$cur" != "." ] && [ "$cur" != "/" ]; do
+        cur="$(dirname "$cur")"
+        [ "$cur" = "." ] || [ "$cur" = "/" ] && break
+        if git -C "$repo" cat-file -e "origin/main:$cur" 2>/dev/null; then
+          if [ -d "$repo/$cur" ]; then
+            echo "grokgod: src differs from origin/main: $cur" >&2
+            return 1
+          fi
+        fi
+      done
+
+      if git -C "$repo" cat-file -e "origin/main:$path" 2>/dev/null; then
+        if [ -d "$repo/$path" ]; then
+          echo "grokgod: src differs from origin/main: $path" >&2
+          return 1
+        fi
+        if [ ! -f "$repo/$path" ]; then
+          echo "grokgod: src differs from origin/main: $path" >&2
+          return 1
+        fi
+        if git -C "$repo" show "origin/main:$path" 2>/dev/null | cmp -s "$repo/$path" -; then
+          if [ -z "$blockers" ]; then
+            blockers="$path"
+          else
+            blockers="$blockers
+$path"
+          fi
+        else
+          echo "grokgod: src differs from origin/main: $path" >&2
+          return 1
+        fi
+      fi
+    done << EOF_UNTRACKED
+$untracked_out
+EOF_UNTRACKED
+  fi
+
+  # 3. If there was any tracked change or any matching untracked blocker:
+  if [ "$has_tracked_changes" -eq 1 ] || [ -n "$blockers" ]; then
+    if ! git -C "$repo" symbolic-ref -q HEAD >/dev/null 2>&1; then
+      echo "grokgod: src is detached; refusing to reset $repo" >&2
+      return 1
+    fi
+    if [ -n "$blockers" ]; then
+      while IFS= read -r b_file || [ -n "$b_file" ]; do
+        [ -z "$b_file" ] && continue
+        rm -f "$repo/$b_file"
+      done << EOF_BLOCKERS
+$blockers
+EOF_BLOCKERS
+    fi
+    if ! git -C "$repo" reset --hard origin/main >/dev/null 2>&1; then
+      echo "grokgod: src reset failed at $repo" >&2
+      return 1
+    fi
+    return 0
+  fi
+
+  # 4. If the tree had no tracked changes and no blockers:
+  git -C "$repo" pull --ff-only
+}
+
+# ff-only pull or clean reset of the installed grokgod src (never the developer
+# checkout unless it is also GROKGOD_SRC). Skip when unset or not a git repo.
 sync_installed_grokgod_src() {
   if [ -z "${GROKGOD_SRC:-}" ] || [ ! -d "$GROKGOD_SRC/.git" ]; then
     return 0
@@ -255,8 +380,7 @@ sync_installed_grokgod_src() {
     log_live_untouched
     exit 1
   fi
-  if ! git -C "$GROKGOD_SRC" pull --ff-only; then
-    log_err "grokgod src has local commits (not fast-forward) at $GROKGOD_SRC"
+  if ! fast_forward_or_reset_grokgod_src "$GROKGOD_SRC"; then
     log_err "This is not leftover grok-build dirt and not the CI compat-broken miss."
     log_live_untouched
     log_err "Next: inspect $GROKGOD_SRC and rebase/ff onto origin, then retry grok update."
@@ -424,7 +548,19 @@ if [ "$DRY_RUN" -eq 1 ]; then
         log_dry "Would checkout commit: git -C $GROK_BUILD_SRC checkout $VERSION_SHA"
       else
         log_dry "Would fetch: git -C $GROK_BUILD_SRC fetch origin"
-        log_dry "Would checkout origin/main: git -C $GROK_BUILD_SRC checkout origin/main"
+        dry_checkout_ref="origin/main"
+        if [ -d "$GROK_BUILD_SRC/.git" ]; then
+          main_tip="$(git -C "$GROK_BUILD_SRC" rev-parse --verify refs/heads/main 2>/dev/null || true)"
+          origin_tip="$(git -C "$GROK_BUILD_SRC" rev-parse --verify origin/main 2>/dev/null || true)"
+          if [ -n "$main_tip" ] && [ "$main_tip" = "$origin_tip" ]; then
+            dry_checkout_ref="main"
+          fi
+        fi
+        if [ "$dry_checkout_ref" = "main" ]; then
+          log_dry "Would checkout main: git -C $GROK_BUILD_SRC checkout main"
+        else
+          log_dry "Would checkout origin/main: git -C $GROK_BUILD_SRC checkout origin/main"
+        fi
       fi
     else
       log_dry "Skipping git fetch/checkout (--no-upgrade)"
@@ -799,8 +935,15 @@ if [ "$MODE" = "source" ]; then
   else
     if [ "$NO_UPGRADE" -eq 0 ]; then
       log_info "Checking out target commit $TARGET_SHA..."
-      git -C "$GROK_BUILD_SRC" checkout "$TARGET_SHA" || {
-        log_err "Failed to checkout $TARGET_SHA"
+      checkout_ref="$TARGET_SHA"
+      if [ -z "$VERSION_SHA" ]; then
+        main_sha="$(git -C "$GROK_BUILD_SRC" rev-parse --verify refs/heads/main 2>/dev/null || true)"
+        if [ -n "$main_sha" ] && [ "$main_sha" = "$TARGET_SHA" ]; then
+          checkout_ref="main"
+        fi
+      fi
+      git -C "$GROK_BUILD_SRC" checkout "$checkout_ref" || {
+        log_err "Failed to checkout $checkout_ref"
         exit 1
       }
     fi

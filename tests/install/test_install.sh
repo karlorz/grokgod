@@ -1998,4 +1998,220 @@ if [ ! -f "$CARGO_INVOKED_FILE" ]; then
 fi
 echo "PASS: Test (ac) - Predecessor-stack leftover skips unapplied newest patch"
 
+# ─────────────────────────────────────────────────────────
+# Test (ad): Source-mode unpinned checkout checks out branch main when refs/heads/main equals origin/main
+# ─────────────────────────────────────────────────────────
+echo "Test (ad): Source-mode unpinned checkout checks out branch main"
+setup_sandbox "test_ad"
+reset_worktree
+
+REAL_GB_BRANCH="$(git -C "$REAL_GROK_BUILD" branch --show-current 2>/dev/null || true)"
+REAL_GB_SHA="$(git -C "$REAL_GROK_BUILD" rev-parse HEAD 2>/dev/null || true)"
+
+GIT_INVOKED_FILE_AD="$TEST_DIR/git_invoked_ad.txt"
+rm -f "$GIT_INVOKED_FILE_AD"
+cat << EOF > "$FAKE_BIN_SHADOW/git"
+#!/bin/sh
+set -eu
+echo "git \$*" >> "$GIT_INVOKED_FILE_AD"
+dir=""
+if [ "\$1" = "-C" ]; then
+  dir="\$2"
+  shift 2
+fi
+
+if [ "\$1" = "fetch" ]; then
+  exit 0
+fi
+
+if [ "\$1" = "rev-parse" ]; then
+  case "\$*" in
+    *"origin/main"*)
+      echo "origin_main_matching_sha_99999"
+      exit 0
+      ;;
+    *"refs/heads/main"*)
+      echo "origin_main_matching_sha_99999"
+      exit 0
+      ;;
+  esac
+fi
+
+if [ "\$1" = "checkout" ]; then
+  case "\$*" in
+    *"main"*)
+      exit 0
+      ;;
+  esac
+fi
+
+if [ -n "\$dir" ]; then
+  exec /usr/bin/git -C "\$dir" "\$@"
+fi
+exec /usr/bin/git "\$@"
+EOF
+chmod +x "$FAKE_BIN_SHADOW/git"
+
+PATH="$FAKE_BIN_SHADOW:$PATH" \
+HOME="$FAKE_HOME" \
+GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+GROK_BUILD_SRC="$GB_WORKTREE" \
+BIN_DIR="$FAKE_BIN_DIR" \
+CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+sh "$INSTALL_SCRIPT" --from-source >/dev/null
+
+grep -q "checkout main" "$GIT_INVOKED_FILE_AD" || {
+  echo "FAIL: Test (ad) - Git did not record checkout main! ($GIT_INVOKED_FILE_AD)"; exit 1
+}
+if grep -q "checkout origin_main_matching_sha_99999" "$GIT_INVOKED_FILE_AD"; then
+  echo "FAIL: Test (ad) - Git recorded raw SHA checkout instead of branch main!"; exit 1
+fi
+
+AFTER_REAL_GB_BRANCH="$(git -C "$REAL_GROK_BUILD" branch --show-current 2>/dev/null || true)"
+AFTER_REAL_GB_SHA="$(git -C "$REAL_GROK_BUILD" rev-parse HEAD 2>/dev/null || true)"
+if [ "$REAL_GB_BRANCH" != "$AFTER_REAL_GB_BRANCH" ] || [ "$REAL_GB_SHA" != "$AFTER_REAL_GB_SHA" ]; then
+  echo "FAIL: Test (ad) - real grok-build repo was modified! (was $REAL_GB_BRANCH@$REAL_GB_SHA, now $AFTER_REAL_GB_BRANCH@$AFTER_REAL_GB_SHA)"; exit 1
+fi
+echo "PASS: Test (ad) - Source-mode unpinned checkout checks out branch main"
+
+# ─────────────────────────────────────────────────────────
+# Test (ae): grokgod src behind origin with matching dirty tracked and untracked blocker plus unique untracked file
+# ─────────────────────────────────────────────────────────
+echo "Test (ae): Src-behind dirty tracked match + blocker match + unique untracked file"
+setup_sandbox "test_ae"
+reset_worktree
+
+ORIGIN_AE="$TEST_DIR/grokgod_origin_ae"
+BEHIND_AE="$TEST_DIR/grokgod_behind_ae"
+mkdir -p "$ORIGIN_AE/patches" "$ORIGIN_AE/src/shim"
+cp "$INSTALL_SCRIPT" "$ORIGIN_AE/install.sh"
+cp "$REPO_ROOT/src/shim/grok-shim.sh" "$ORIGIN_AE/src/shim/grok-shim.sh"
+cp "$REPO_ROOT"/patches/*.patch "$ORIGIN_AE/patches/"
+printf '%s\n' 'tracked old' > "$ORIGIN_AE/tracked.txt"
+git -C "$ORIGIN_AE" init -b main >/dev/null 2>&1
+git -C "$ORIGIN_AE" config user.name "CI"
+git -C "$ORIGIN_AE" config user.email "ci@example.com"
+git -C "$ORIGIN_AE" add install.sh src patches tracked.txt
+git -C "$ORIGIN_AE" commit -m "initial commit" >/dev/null 2>&1
+OLD_AE_SHA="$(git -C "$ORIGIN_AE" rev-parse HEAD)"
+
+printf '%s\n' 'tracked new' > "$ORIGIN_AE/tracked.txt"
+printf '%s\n' 'blocker from origin' > "$ORIGIN_AE/blocker.txt"
+git -C "$ORIGIN_AE" add tracked.txt blocker.txt
+git -C "$ORIGIN_AE" commit -m "update with blocker" >/dev/null 2>&1
+ORIGIN_AE_SHA="$(git -C "$ORIGIN_AE" rev-parse HEAD)"
+
+git clone --quiet "$ORIGIN_AE" "$BEHIND_AE"
+git -C "$BEHIND_AE" reset --hard "$OLD_AE_SHA" >/dev/null 2>&1
+
+# Dirty tracked file matching origin/main
+printf '%s\n' 'tracked new' > "$BEHIND_AE/tracked.txt"
+# Untracked blocker matching origin/main
+printf '%s\n' 'blocker from origin' > "$BEHIND_AE/blocker.txt"
+# Unique untracked file
+printf '%s\n' 'unique eval notes' > "$BEHIND_AE/deepseek-eval.md"
+
+mkdir -p "$FAKE_GROKGOD_HOME/bin"
+cat << 'BIN_EOF' > "$FAKE_GROKGOD_HOME/bin/grok"
+#!/bin/sh
+echo "EXISTING_SOURCE_BINARY"
+BIN_EOF
+chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
+GB_HEAD="$(git -C "$GB_WORKTREE" rev-parse HEAD)"
+FULL_PATCHSET="$(cat "$REPO_ROOT"/patches/*.patch | (shasum -a 256 2>/dev/null || sha256sum 2>/dev/null || cksum 2>/dev/null) | awk '{print $1}')"
+printf "SHA=%s\nPATCHSET=%s\nVERSION=%s\nMODE=source\n" "$GB_HEAD" "$FULL_PATCHSET" "$GB_HEAD" > "$FAKE_GROKGOD_HOME/.source-version"
+INITIAL_AE_STAMP="$(cat "$FAKE_GROKGOD_HOME/.source-version")"
+INITIAL_AE_BIN="$(cat "$FAKE_GROKGOD_HOME/bin/grok")"
+rm -f "$CARGO_INVOKED_FILE"
+
+set +e
+AE_OUT="$(
+  PATH="$FAKE_BIN_SHADOW:$PATH" \
+  HOME="$FAKE_HOME" \
+  GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+  GROKGOD_SRC="$BEHIND_AE" \
+  GROK_BUILD_SRC="$GB_WORKTREE" \
+  BIN_DIR="$FAKE_BIN_DIR" \
+  CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+  sh "$BEHIND_AE/install.sh" --from-source --no-upgrade 2>&1
+)"
+AE_STATUS=$?
+set -eu
+if [ "$AE_STATUS" -ne 0 ]; then
+  echo "FAIL: Test (ae) - install exited $AE_STATUS ($AE_OUT)"; exit 1
+fi
+
+if [ -f "$CARGO_INVOKED_FILE" ]; then
+  echo "FAIL: Test (ae) - cargo invoked"; exit 1
+fi
+AFTER_AE_STAMP="$(cat "$FAKE_GROKGOD_HOME/.source-version")"
+AFTER_AE_BIN="$(cat "$FAKE_GROKGOD_HOME/bin/grok")"
+if [ "$INITIAL_AE_STAMP" != "$AFTER_AE_STAMP" ]; then
+  echo "FAIL: Test (ae) - stamp modified"; exit 1
+fi
+if [ "$INITIAL_AE_BIN" != "$AFTER_AE_BIN" ]; then
+  echo "FAIL: Test (ae) - live binary modified"; exit 1
+fi
+BEHIND_AE_HEAD="$(git -C "$BEHIND_AE" rev-parse HEAD)"
+if [ "$BEHIND_AE_HEAD" != "$ORIGIN_AE_SHA" ]; then
+  echo "FAIL: Test (ae) - GROKGOD_SRC HEAD ($BEHIND_AE_HEAD) is not origin ($ORIGIN_AE_SHA)"; exit 1
+fi
+if [ ! -f "$BEHIND_AE/deepseek-eval.md" ] || [ "$(cat "$BEHIND_AE/deepseek-eval.md")" != "unique eval notes" ]; then
+  echo "FAIL: Test (ae) - unique untracked file lost or modified"; exit 1
+fi
+echo "PASS: Test (ae) - Src-behind dirty tracked match + blocker match + unique untracked file"
+
+# ─────────────────────────────────────────────────────────
+# Test (af): grokgod src behind origin with differing tracked file fails closed
+# ─────────────────────────────────────────────────────────
+echo "Test (af): Src-behind differing tracked file fails closed"
+setup_sandbox "test_af"
+reset_worktree
+
+BEHIND_AF="$TEST_DIR/grokgod_behind_af"
+git clone --quiet "$ORIGIN_AE" "$BEHIND_AF"
+git -C "$BEHIND_AF" reset --hard "$OLD_AE_SHA" >/dev/null 2>&1
+printf '%s\n' 'differing tracked edit' > "$BEHIND_AF/tracked.txt"
+
+mkdir -p "$FAKE_GROKGOD_HOME/bin"
+cat << 'BIN_EOF' > "$FAKE_GROKGOD_HOME/bin/grok"
+#!/bin/sh
+echo "EXISTING_SOURCE_BINARY"
+BIN_EOF
+chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
+printf "SHA=%s\nPATCHSET=%s\nVERSION=%s\nMODE=source\n" "$GB_HEAD" "$FULL_PATCHSET" "$GB_HEAD" > "$FAKE_GROKGOD_HOME/.source-version"
+INITIAL_AF_BIN="$(cat "$FAKE_GROKGOD_HOME/bin/grok")"
+
+set +e
+AF_OUT="$(
+  PATH="$FAKE_BIN_SHADOW:$PATH" \
+  HOME="$FAKE_HOME" \
+  GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+  GROKGOD_SRC="$BEHIND_AF" \
+  GROK_BUILD_SRC="$GB_WORKTREE" \
+  BIN_DIR="$FAKE_BIN_DIR" \
+  CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+  sh "$BEHIND_AF/install.sh" --from-source --no-upgrade 2>&1
+)"
+AF_STATUS=$?
+set -eu
+if [ "$AF_STATUS" -eq 0 ]; then
+  echo "FAIL: Test (af) - install expected to fail on differing tracked file ($AF_OUT)"; exit 1
+fi
+echo "$AF_OUT" | grep -q "grokgod: src differs from origin/main: tracked.txt" || {
+  echo "FAIL: Test (af) - missing expected differing message ($AF_OUT)"; exit 1
+}
+AFTER_AF_BIN="$(cat "$FAKE_GROKGOD_HOME/bin/grok")"
+if [ "$INITIAL_AF_BIN" != "$AFTER_AF_BIN" ]; then
+  echo "FAIL: Test (af) - live binary modified"; exit 1
+fi
+if [ "$(cat "$BEHIND_AF/tracked.txt")" != "differing tracked edit" ]; then
+  echo "FAIL: Test (af) - differing file was modified"; exit 1
+fi
+BEHIND_AF_HEAD="$(git -C "$BEHIND_AF" rev-parse HEAD)"
+if [ "$BEHIND_AF_HEAD" != "$OLD_AE_SHA" ]; then
+  echo "FAIL: Test (af) - HEAD was modified ($BEHIND_AF_HEAD vs $OLD_AE_SHA)"; exit 1
+fi
+echo "PASS: Test (af) - Src-behind differing tracked file fails closed"
+
 echo "=== All install.sh tests passed successfully! ==="

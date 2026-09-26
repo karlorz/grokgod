@@ -131,6 +131,136 @@ echo "$SHIM_PULL_OUT" | grep -q "INSTALL_OLD" && {
 echo "PASS: Test 2"
 echo "PASS: Test 2c"
 
+# Test 2d: behind clone whose tracked file is dirty but byte-identical to origin/main,
+# plus an untracked file that matches a file origin added, plus an untracked file origin does not have.
+echo "Test 2d: Update dirty tracked match + blocker match + unique untracked"
+SHIM_ORIGIN_2D="$TMP_DIR/shim_origin_2d"
+SHIM_BEHIND_2D="$TMP_DIR/shim_behind_2d"
+mkdir -p "$SHIM_ORIGIN_2D"
+git -C "$SHIM_ORIGIN_2D" init -b main >/dev/null 2>&1
+git -C "$SHIM_ORIGIN_2D" config user.name "CI"
+git -C "$SHIM_ORIGIN_2D" config user.email "ci@example.com"
+printf '%s\n' '#!/bin/sh' 'echo INSTALL_OLD' > "$SHIM_ORIGIN_2D/install.sh"
+printf '%s\n' 'tracked old' > "$SHIM_ORIGIN_2D/tracked.txt"
+chmod +x "$SHIM_ORIGIN_2D/install.sh"
+git -C "$SHIM_ORIGIN_2D" add install.sh tracked.txt
+git -C "$SHIM_ORIGIN_2D" commit -m "old src" >/dev/null 2>&1
+OLD_SHIM_2D_SHA="$(git -C "$SHIM_ORIGIN_2D" rev-parse HEAD)"
+
+printf '%s\n' '#!/bin/sh' 'echo INSTALL_NEW' > "$SHIM_ORIGIN_2D/install.sh"
+printf '%s\n' 'tracked new' > "$SHIM_ORIGIN_2D/tracked.txt"
+printf '%s\n' 'blocker from origin' > "$SHIM_ORIGIN_2D/blocker.txt"
+git -C "$SHIM_ORIGIN_2D" add install.sh tracked.txt blocker.txt
+git -C "$SHIM_ORIGIN_2D" commit -m "new src" >/dev/null 2>&1
+ORIGIN_2D_SHA="$(git -C "$SHIM_ORIGIN_2D" rev-parse HEAD)"
+
+git clone --quiet "$SHIM_ORIGIN_2D" "$SHIM_BEHIND_2D"
+git -C "$SHIM_BEHIND_2D" reset --hard "$OLD_SHIM_2D_SHA" >/dev/null 2>&1
+
+# Tracked file dirty but byte-identical to origin/main
+printf '%s\n' 'tracked new' > "$SHIM_BEHIND_2D/tracked.txt"
+# Untracked file that matches a file origin added
+printf '%s\n' 'blocker from origin' > "$SHIM_BEHIND_2D/blocker.txt"
+# Untracked file origin does not have
+printf '%s\n' 'unique eval notes' > "$SHIM_BEHIND_2D/deepseek-eval.md"
+
+SHIM_2D_OUT="$(
+  HOME="$TEST_HOME" \
+  GROKGOD_HOME="$TEST_GROKGOD_HOME" \
+  GROKGOD_SRC="$SHIM_BEHIND_2D" \
+  GROK_BUILD_SRC="${TEST_GROK_BUILD_SRC:-$TMP_DIR/nonexistent_grok_build}" \
+  TMP_DIR="$TMP_DIR" \
+  sh "$SHIM_SRC" update
+)"
+echo "$SHIM_2D_OUT" | grep -q "INSTALL_NEW" || {
+  echo "FAIL: Test 2d - expected pulled install.sh ($SHIM_2D_OUT)"; exit 1
+}
+echo "$SHIM_2D_OUT" | grep -q "INSTALL_OLD" && {
+  echo "FAIL: Test 2d - ran stale src install.sh ($SHIM_2D_OUT)"; exit 1
+}
+SHIM_2D_HEAD="$(git -C "$SHIM_BEHIND_2D" rev-parse HEAD)"
+if [ "$SHIM_2D_HEAD" != "$ORIGIN_2D_SHA" ]; then
+  echo "FAIL: Test 2d - HEAD ($SHIM_2D_HEAD) does not equal origin ($ORIGIN_2D_SHA)"; exit 1
+fi
+if [ ! -f "$SHIM_BEHIND_2D/deepseek-eval.md" ] || [ "$(cat "$SHIM_BEHIND_2D/deepseek-eval.md")" != "unique eval notes" ]; then
+  echo "FAIL: Test 2d - unique untracked file was lost or corrupted"; exit 1
+fi
+echo "PASS: Test 2d"
+
+# Test 2e: behind clone, one tracked file differs from origin. update exits non-zero,
+# does not print INSTALL_NEW, the differing bytes are still in the file, HEAD is still the old commit.
+echo "Test 2e: Update differing tracked file fails closed"
+SHIM_BEHIND_2E="$TMP_DIR/shim_behind_2e"
+git clone --quiet "$SHIM_ORIGIN_2D" "$SHIM_BEHIND_2E"
+git -C "$SHIM_BEHIND_2E" reset --hard "$OLD_SHIM_2D_SHA" >/dev/null 2>&1
+printf '%s\n' 'local differing tracked edit' > "$SHIM_BEHIND_2E/tracked.txt"
+
+set +e
+SHIM_2E_OUT="$(
+  HOME="$TEST_HOME" \
+  GROKGOD_HOME="$TEST_GROKGOD_HOME" \
+  GROKGOD_SRC="$SHIM_BEHIND_2E" \
+  GROK_BUILD_SRC="${TEST_GROK_BUILD_SRC:-$TMP_DIR/nonexistent_grok_build}" \
+  TMP_DIR="$TMP_DIR" \
+  sh "$SHIM_SRC" update 2>&1
+)"
+SHIM_2E_STATUS=$?
+set -eu
+if [ "$SHIM_2E_STATUS" -eq 0 ]; then
+  echo "FAIL: Test 2e - expected non-zero exit from shim update ($SHIM_2E_OUT)"; exit 1
+fi
+echo "$SHIM_2E_OUT" | grep -q "INSTALL_NEW" && {
+  echo "FAIL: Test 2e - unexpectedly ran new install.sh ($SHIM_2E_OUT)"; exit 1
+}
+echo "$SHIM_2E_OUT" | grep -q "grokgod: src differs from origin/main: tracked.txt" || {
+  echo "FAIL: Test 2e - missing expected differing message ($SHIM_2E_OUT)"; exit 1
+}
+if [ "$(cat "$SHIM_BEHIND_2E/tracked.txt")" != "local differing tracked edit" ]; then
+  echo "FAIL: Test 2e - differing tracked file modified"; exit 1
+fi
+SHIM_2E_HEAD="$(git -C "$SHIM_BEHIND_2E" rev-parse HEAD)"
+if [ "$SHIM_2E_HEAD" != "$OLD_SHIM_2D_SHA" ]; then
+  echo "FAIL: Test 2e - HEAD modified from old commit ($SHIM_2E_HEAD vs $OLD_SHIM_2D_SHA)"; exit 1
+fi
+echo "PASS: Test 2e"
+
+# Test 2f: behind clone plus one local commit not on origin. update exits non-zero,
+# that commit is still HEAD, no reset.
+echo "Test 2f: Update behind clone with local commits fails closed"
+SHIM_BEHIND_2F="$TMP_DIR/shim_behind_2f"
+git clone --quiet "$SHIM_ORIGIN_2D" "$SHIM_BEHIND_2F"
+git -C "$SHIM_BEHIND_2F" reset --hard "$OLD_SHIM_2D_SHA" >/dev/null 2>&1
+printf '%s\n' 'local unique commit' > "$SHIM_BEHIND_2F/local_file.txt"
+git -C "$SHIM_BEHIND_2F" add local_file.txt
+git -C "$SHIM_BEHIND_2F" commit -m "local commit" >/dev/null 2>&1
+LOCAL_2F_SHA="$(git -C "$SHIM_BEHIND_2F" rev-parse HEAD)"
+
+set +e
+SHIM_2F_OUT="$(
+  HOME="$TEST_HOME" \
+  GROKGOD_HOME="$TEST_GROKGOD_HOME" \
+  GROKGOD_SRC="$SHIM_BEHIND_2F" \
+  GROK_BUILD_SRC="${TEST_GROK_BUILD_SRC:-$TMP_DIR/nonexistent_grok_build}" \
+  TMP_DIR="$TMP_DIR" \
+  sh "$SHIM_SRC" update 2>&1
+)"
+SHIM_2F_STATUS=$?
+set -eu
+if [ "$SHIM_2F_STATUS" -eq 0 ]; then
+  echo "FAIL: Test 2f - expected non-zero exit from shim update ($SHIM_2F_OUT)"; exit 1
+fi
+echo "$SHIM_2F_OUT" | grep -q "INSTALL_NEW" && {
+  echo "FAIL: Test 2f - unexpectedly ran new install.sh ($SHIM_2F_OUT)"; exit 1
+}
+echo "$SHIM_2F_OUT" | grep -q "grokgod: src has local commits (not fast-forward)" || {
+  echo "FAIL: Test 2f - missing expected local commits message ($SHIM_2F_OUT)"; exit 1
+}
+SHIM_2F_HEAD="$(git -C "$SHIM_BEHIND_2F" rev-parse HEAD)"
+if [ "$SHIM_2F_HEAD" != "$LOCAL_2F_SHA" ]; then
+  echo "FAIL: Test 2f - HEAD changed from local commit ($SHIM_2F_HEAD vs $LOCAL_2F_SHA)"; exit 1
+fi
+echo "PASS: Test 2f"
+
 # Test 3: Status subcommand
 echo "Test 3: Status subcommand"
 echo "v1.0.0-test" > "$TEST_GROKGOD_HOME/.source-version"
