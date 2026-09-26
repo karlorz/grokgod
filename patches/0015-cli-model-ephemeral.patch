@@ -1,0 +1,155 @@
+diff --git a/crates/codegen/xai-grok-pager/src/app/app_view.rs b/crates/codegen/xai-grok-pager/src/app/app_view.rs
+--- a/crates/codegen/xai-grok-pager/src/app/app_view.rs
++++ b/crates/codegen/xai-grok-pager/src/app/app_view.rs
+@@ -890,6 +890,9 @@ pub struct AppView {
+     /// CLI model override (`-m` / `--model`).
+     /// Seeded into every new `AgentSession.deferred_model_switch` so the model is applied once the session is created.
+     pub cli_model_override: Option<acp::ModelId>,
++    /// The startup `-m` switch is for this process only. The first successful
++    /// switch to that id does not write `[models].default`. `/model` still does.
++    pub cli_model_ephemeral: bool,
+     /// CLI effort token (`--reasoning-effort` / `--effort`). Applied on session create.
+     pub cli_effort_token: Option<String>,
+     /// Default YOLO for new sessions, seeded at startup from `effective_yolo_for_launch`.
+@@ -1521,6 +1524,7 @@ impl AppView {
+             welcome_tick: 0,
+             welcome_shimmer_frame: 0,
+             cli_model_override: None,
++            cli_model_ephemeral: false,
+             cli_effort_token: None,
+             default_yolo: false,
+             permission_mode_from_soft_default: true,
+diff --git a/crates/codegen/xai-grok-pager/src/app/app_view_tests.rs b/crates/codegen/xai-grok-pager/src/app/app_view_tests.rs
+--- a/crates/codegen/xai-grok-pager/src/app/app_view_tests.rs
++++ b/crates/codegen/xai-grok-pager/src/app/app_view_tests.rs
+@@ -113,6 +113,7 @@ pub(crate) fn test_app() -> AppView {
+         tips: Vec::new(),
+         tip: None,
+         cli_model_override: None,
++        cli_model_ephemeral: false,
+         cli_effort_token: None,
+         default_yolo: false,
+         permission_mode_from_soft_default: true,
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
+@@ -1880,6 +1880,9 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
+     result: Result<(), SwitchModelError>,
+     prev_model_id: Option<acp::ModelId>,
+ ) -> Vec<Effect> {
++    let suppress_cli_persist = app.cli_model_ephemeral
++        && app.cli_model_override.as_ref() == Some(&model_id);
++    let mut consumed_cli_persist = false;
+     if let Some(agent) = app.agents.get_mut(&agent_id) {
+         agent.session.model_switch_pending = false;
+         let mut effects = match result {
+@@ -1914,6 +1917,9 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
+                 }
+                 if unchanged {
+                     vec![]
++                } else if suppress_cli_persist {
++                    consumed_cli_persist = true;
++                    vec![]
+                 } else {
+                     vec![Effect::PersistPreferredModel {
+                         model_id: model_id.clone(),
+@@ -1938,6 +1944,9 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
+         let drain = maybe_drain_queue(agent, &mut app.pending_image_notices);
+         effects.extend(drain.effects);
+         note_peek_page_flip(app, agent_id, drain.page_flip_entry);
++        if consumed_cli_persist {
++            app.cli_model_ephemeral = false;
++        }
+         effects
+     } else {
+         vec![]
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
+@@ -123,6 +123,7 @@ fn test_app() -> AppView {
+         tips: Vec::new(),
+         tip: None,
+         cli_model_override: None,
++        cli_model_ephemeral: false,
+         cli_effort_token: None,
+         default_yolo: false,
+         permission_mode_from_soft_default: true,
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs
+@@ -1288,6 +1288,64 @@ fn switch_model_complete_success_updates_model_and_pushes_message() {
+     ));
+ }
+ 
++#[test]
++fn switch_model_complete_skips_persist_for_cli_model_once() {
++    let mut app = test_app_with_agent();
++    let id = AgentId(0);
++    let model_id = acp::ModelId::new(std::sync::Arc::from("flash-max"));
++    app.cli_model_override = Some(model_id.clone());
++    app.cli_model_ephemeral = true;
++
++    let agent = app.agents.get_mut(&id).unwrap();
++    agent.session.models.available.insert(
++        model_id.clone(),
++        acp::ModelInfo::new(model_id.clone(), "flash-max".to_string()),
++    );
++    agent.session.model_switch_pending = true;
++
++    let effects = dispatch(
++        Action::TaskComplete(TaskResult::SwitchModelComplete {
++            agent_id: id,
++            model_id: model_id.clone(),
++            effort: None,
++            result: Ok(()),
++            prev_model_id: None,
++        }),
++        &mut app,
++    );
++
++    assert!(
++        !effects
++            .iter()
++            .any(|e| matches!(e, Effect::PersistPreferredModel { .. })),
++        "startup -m must not write the saved default"
++    );
++    assert!(!app.cli_model_ephemeral);
++    assert_eq!(
++        expect_agent(&app, id).session.models.current,
++        Some(model_id.clone())
++    );
++
++    app.agents.get_mut(&id).unwrap().session.models.current = None;
++    app.agents.get_mut(&id).unwrap().session.model_switch_pending = true;
++    let again = dispatch(
++        Action::TaskComplete(TaskResult::SwitchModelComplete {
++            agent_id: id,
++            model_id: model_id.clone(),
++            effort: None,
++            result: Ok(()),
++            prev_model_id: None,
++        }),
++        &mut app,
++    );
++    assert!(
++        again
++            .iter()
++            .any(|e| matches!(e, Effect::PersistPreferredModel { .. })),
++        "a later switch to the same id still saves"
++    );
++}
++
+ #[test]
+ fn switch_model_complete_skips_message_and_persist_when_unchanged() {
+     let mut app = test_app_with_agent();
+diff --git a/crates/codegen/xai-grok-pager/src/app/event_loop.rs b/crates/codegen/xai-grok-pager/src/app/event_loop.rs
+--- a/crates/codegen/xai-grok-pager/src/app/event_loop.rs
++++ b/crates/codegen/xai-grok-pager/src/app/event_loop.rs
+@@ -1168,6 +1168,7 @@ pub(crate) async fn run(
+         .model
+         .as_deref()
+         .map(agent_client_protocol::ModelId::new);
++    app.cli_model_ephemeral = app.cli_model_override.is_some();
+     app.cli_effort_token = args.reasoning_effort.clone();
+     app.auth_use_oauth = args.oauth;
+     app.show_resolved_model = remote_settings

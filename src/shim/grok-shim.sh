@@ -298,6 +298,7 @@ case "$cmd" in
     echo "  0012-protoc-dependency-output-portable: $patch_status"
     echo "  0013-same-session-compaction-warning: $patch_status"
     echo "  0014-deepseek-tool-image-hoist: $patch_status"
+    echo "  0015-cli-model-ephemeral: $patch_status"
     echo "  overlay-pin: $overlay_status"
     echo "  eval-home: $eval_home_status"
     echo "  weekly-pin: global-default"

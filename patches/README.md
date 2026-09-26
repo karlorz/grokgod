@@ -22,6 +22,7 @@ DeepSeek fixes remain `0009` and `0010`.
 - `0012-protoc-dependency-output-portable.patch`: Makes `xai-proto-build` protoc dependency discovery portable by replacing Unix-only `/dev/stdout` and `/dev/null` output paths with temporary files. Parses the Make dependency target separator without breaking Windows drive letters, allowing native Windows release builds.
 - `0013-same-session-compaction-warning.patch`: Counts successful same-session compactions separately from legacy attempt telemetry, persists the count, and shows an existing prompt-adjacent warning at the configurable limit (default 3; `0` disables). At the next round it recommends saving SkillWiki progress and handing off to a new session. Builtin status-line item `compacts` always paints `C0`, `C1`, … from that count (amber at the limit); grokgod install merges it into `~/.grok/config.toml`. Overlay allowlist `[session] compaction_round_warning_limit`. It does not add a default context footer or create/close sessions.
 - `0014-deepseek-tool-image-hoist.patch`: Hoists tool-result images into an immediately following user message (`Attached image(s) from tool result:`) when `input_modalities` includes `"image"`, allowing DeepSeek and OpenAI Chat Completions endpoints to consume tool-returned images without protocol errors.
+- `0015-cli-model-ephemeral.patch`: A startup `-m` / `--model` switch applies to that process only and does not write `[models].default`. A later `/model` still saves the preferred model.
 
 ## Target Commit
 
