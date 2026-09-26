@@ -64,9 +64,8 @@ ls -la ~/.local/bin/grok ~/.local/bin/grok.orig
 ## 4. Post-v1 automation model facts (context, no action)
 
 - Interactive default stays `~/.grok/config.toml` `[models] default`
-  (currently `grok-4.6`). The old Saturday `~/.grokgod/pin/orca-pin.toml`
-  overlay is deprecated as of 2026-09-23; a missing pin file is expected and
-  is not an anomaly.
+  (currently `grok-4.6`). The shim does not apply `orca-pin.toml` even if
+  the file remains; a missing pin file is expected and is not an anomaly.
 - Orca desktop v1.4.206-1 publishes each automation's model field (`-m`),
   reasoning effort, and optional `minimal` profile (`--agent minimal`). Daily
   `04136086` and Weekly `f91e2fc7` use the model from the Orca automation

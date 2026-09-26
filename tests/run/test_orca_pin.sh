@@ -86,9 +86,9 @@ run_pin() {
 echo "=== Running Orca Pin Test Suite ==="
 
 # ─────────────────────────────────────────────────────────
-# Test (a): automation argv (grok -- <prompt>) + ORCA_WORKTREE_ID set + overlay file exists → GROK_CONFIG_PATH exported
+# Test (a): leftover orca-pin.toml + ORCA_WORKTREE_ID + run_shim -- "hello" → GROK_CONFIG_PATH NOT set
 # ─────────────────────────────────────────────────────────
-echo "Test (a): automation argv (grok -- <prompt>) + ORCA_WORKTREE_ID set + overlay file exists -> GROK_CONFIG_PATH exported"
+echo "Test (a): leftover orca-pin.toml + ORCA_WORKTREE_ID + run_shim -- \"hello\" -> GROK_CONFIG_PATH NOT set"
 cat << 'EOF' > "$TEST_GROKGOD_HOME/pin/orca-pin.toml"
 [models]
 default = "flash-max"
@@ -97,8 +97,8 @@ EOF
 
 OUT_A="$(ORCA_WORKTREE_ID="orca-ws-123" run_shim -- "hello")"
 echo "$OUT_A" | grep -q "FAKE_BIN_SUCCESS" || { echo "FAIL: Fake bin not called in Test (a)"; exit 1; }
-grep -q "GROK_CONFIG_PATH=$TEST_GROKGOD_HOME/pin/orca-pin.toml" "$INVOCATIONS_FILE" || {
-  echo "FAIL: GROK_CONFIG_PATH not exported in Test (a)"; cat "$INVOCATIONS_FILE"; exit 1
+grep -q "GROK_CONFIG_PATH=NOT_SET" "$INVOCATIONS_FILE" || {
+  echo "FAIL: GROK_CONFIG_PATH was set unexpectedly in Test (a)"; cat "$INVOCATIONS_FILE"; exit 1
 }
 echo "PASS: Test (a)"
 
@@ -232,9 +232,9 @@ echo "$ERR_G" | grep -q "pin_check fail orca_pin default_model=grok-4.6 expect=f
 echo "PASS: Test (g)"
 
 # ─────────────────────────────────────────────────────────
-# Test (h): status shows orca-pin: enabled when file exists, disabled when missing
+# Test (h): status shows orca-pin: present, not applied when file exists, absent when missing
 # ─────────────────────────────────────────────────────────
-echo "Test (h): status shows orca-pin: enabled / disabled"
+echo "Test (h): status shows orca-pin: present, not applied / absent"
 # h1: when file exists
 cat << 'EOF' > "$TEST_GROKGOD_HOME/pin/orca-pin.toml"
 [models]
@@ -242,16 +242,16 @@ default = "flash-max"
 EOF
 
 STATUS_H1="$(run_shim status)"
-echo "$STATUS_H1" | grep -q "  orca-pin: enabled" || {
-  echo "FAIL: Expected 'orca-pin: enabled' in Test (h1), got: $STATUS_H1"
+echo "$STATUS_H1" | grep -q "  orca-pin: present, not applied" || {
+  echo "FAIL: Expected 'orca-pin: present, not applied' in Test (h1), got: $STATUS_H1"
   exit 1
 }
 
 # h2: when file missing
 rm -f "$TEST_GROKGOD_HOME/pin/orca-pin.toml"
 STATUS_H2="$(run_shim status)"
-echo "$STATUS_H2" | grep -q "  orca-pin: disabled" || {
-  echo "FAIL: Expected 'orca-pin: disabled' in Test (h2), got: $STATUS_H2"
+echo "$STATUS_H2" | grep -q "  orca-pin: absent" || {
+  echo "FAIL: Expected 'orca-pin: absent' in Test (h2), got: $STATUS_H2"
   exit 1
 }
 echo "PASS: Test (h)"

@@ -14,8 +14,8 @@ Before any other work in this repo, read and run
 4. Pin facts: interactive default stays ~/.grok/config.toml (currently
    grok-4.6). Orca desktop v1.4.206-1 publishes each automation's model
    field (`-m`), reasoning effort, and optional `minimal` profile
-   (`--agent minimal`); use that record, not ~/.grokgod/pin/orca-pin.toml.
-   A missing pin file is expected. Do not use `grokgod pin check
+   (`--agent minimal`). The shim ignores a leftover
+   ~/.grokgod/pin/orca-pin.toml. A missing pin file is expected. Do not use `grokgod pin check
    --expect-orca-pin` as a session-start failure. `grokgod run` remains for
    the disabled DEV-TEST fixture. Historical Weekly id 0bbdc998 is retired.
    launchd retired. Codex Scheduled copies stay PAUSED.

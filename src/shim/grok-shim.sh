@@ -302,9 +302,9 @@ case "$cmd" in
     echo "  eval-home: $eval_home_status"
     echo "  weekly-pin: global-default"
     if [ -f "$GROKGOD_HOME/pin/orca-pin.toml" ]; then
-      echo "  orca-pin: enabled"
+      echo "  orca-pin: present, not applied"
     else
-      echo "  orca-pin: disabled"
+      echo "  orca-pin: absent"
     fi
 
     compute_source_drift
@@ -428,13 +428,7 @@ case "$cmd" in
       exit "$bin_exit"
     fi
 
-    # Orca automation overlay: Orca launches automations as `grok -- <prompt>`.
-    # Interactive Orca grok tags (bare `grok` / `-m` / `--resume`) keep
-    # config.toml default. Do NOT overwrite a caller-set GROK_CONFIG_PATH.
-    ORCA_PIN_FILE="$GROKGOD_HOME/pin/orca-pin.toml"
-    if [ "${1:-}" = "--" ] && [ -n "${ORCA_WORKTREE_ID:-}" ] && [ -z "${GROK_CONFIG_PATH:-}" ] && [ -f "$ORCA_PIN_FILE" ]; then
-        export GROK_CONFIG_PATH="$ORCA_PIN_FILE"
-    fi
+    # Orca automations select the model with -m. Do not overlay orca-pin.toml.
     exec "$GROKGOD_BIN" "$@"
     ;;
 esac

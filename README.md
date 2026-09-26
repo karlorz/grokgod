@@ -164,7 +164,7 @@ grokgod run --automation-root DIR --dry-run
 
 - **Official Env First**: Grok Build 1.0.5 natively supports `GROK_CONFIG_PATH=<toml> grok` for full interactive TUI sessions and headless `-p` runs as an overlay layer atop `~/.grok/config.toml`. This is official grok-build functionality, not a grokgod TUI patch.
 - **Automation Helper**: `grokgod run --pin` / `--overlay` / `--automation-root` serves as the `-p` helper and enforces file/security guards. It sets `GROK_CONFIG_PATH` before invoking `$GROKGOD_BIN -p "<prompt>"`. It never passes `-m` (which is the wrong API).
-- **Interactive Isolation**: Interactive shim execution (bare `grok ...`, `grok -m ...`, `grok --resume`) never sets `GROK_CONFIG_PATH`. Historically, for Orca automation runs (`ORCA_WORKTREE_ID` set and argv `grok -- <prompt>`), the shim injects the opt-in `~/.grokgod/pin/orca-pin.toml` overlay if present (see `examples/orca-pin.toml` and [docs/orca-automation-model-pin.md](docs/orca-automation-model-pin.md)); this overlay is deprecated as of 2026-09-23. The current model path is the Orca automation model field on desktop v1.4.206-1. Interactive Orca grok tags keep the `config.toml` default.
+- **Interactive Isolation**: Shim execution never sets `GROK_CONFIG_PATH` from a leftover `orca-pin.toml`. Orca automations select the model on the automation record (`-m`). Interactive grok tags keep the `config.toml` default.
 - **Safety Guards**:
   - Rejects `--automation-root` set to `$HOME`, `~/.grok`, or `~/.grokgod`.
   - Rejects overlays containing forbidden full-config sections or keys (`[mcp_servers]`, `[auth]`, `[plugins]`, `[subagents]`, or `api_key`).

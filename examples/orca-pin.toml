@@ -1,7 +1,6 @@
-# Opt-in overlay for Orca AUTOMATION grok only (argv: grok -- <prompt>).
-# Interactive Orca grok tags (bare grok / -m / --resume) do not load this file.
-# Copy to ~/.grokgod/pin/orca-pin.toml to enable.
-# GROK_CONFIG_PATH merges this ON TOP of config.toml at startup.
+# Historical template for Orca automation overlay pin.
+# The shim no longer loads this file; Orca automations select the model with -m.
+# GROK_CONFIG_PATH merges overlays ON TOP of config.toml when set.
 # Allowlisted sections only: [models], [features], [toolset.bash],
 # [toolset.web_search], [shell_environment_policy].
 # NOTE: [model.<id>] per-model sections are NOT in the overlay allowlist
