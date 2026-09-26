@@ -131,7 +131,7 @@ Seeds `~/.grokgod/eval-home` from [`examples/eval-home`](examples/eval-home): em
 
 Paste or `@`-attach images for native DeepSeek vision. Do not type `read /path/to.jpg` — `read_file` is a path placeholder, which is why a full grok-build session POSTed the screenshot to Poe.
 
-`--reset` re-copies the templates. `--home DIR` uses another empty home. Interactive daily grok is unchanged (`~/.grok/config.toml`). POSIX only; Windows `grokgod eval` errors closed.
+`--reset` re-copies the templates. `--home DIR` uses another empty home. Interactive daily grok is unchanged (`~/.grok/config.toml`). POSIX only; Windows `grokgod eval` errors closed. Orca `grok --agent minimal` loads `~/.grok/agents/minimal.md`, installed from `examples/daily-minimal/minimal.md` (`write`, `search_replace`, `permissionMode: acceptEdits`). The eval-home agent stays write-free.
 
 ## grokgod run (overlay pin)
 

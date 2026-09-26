@@ -1114,6 +1114,10 @@ if [ "$MODE" = "source" ]; then
         cp "$SCRIPT_DIR/examples/eval-home/assets/vision-probe.jpg" "$GROKGOD_HOME/src/examples/eval-home/assets/vision-probe.jpg"
       fi
     fi
+    if [ -f "$SCRIPT_DIR/examples/daily-minimal/minimal.md" ]; then
+      mkdir -p "$GROKGOD_HOME/src/examples/daily-minimal"
+      cp "$SCRIPT_DIR/examples/daily-minimal/minimal.md" "$GROKGOD_HOME/src/examples/daily-minimal/minimal.md"
+    fi
     log_info "Synced runtime files to $GROKGOD_HOME/src"
   fi
 
@@ -1175,6 +1179,37 @@ write_launcher "$GROK_HOME/bin/grok" 1
 
 # Flush shell hash cache
 hash -r 2>/dev/null || true
+
+# ─────────────────────────────────────────────────────────
+# DAILY MINIMAL AGENT SETUP
+# ─────────────────────────────────────────────────────────
+maybe_install_daily_minimal() {
+  target="$GROK_HOME/agents/minimal.md"
+  template=""
+  if [ -f "$SCRIPT_DIR/examples/daily-minimal/minimal.md" ]; then
+    template="$SCRIPT_DIR/examples/daily-minimal/minimal.md"
+  elif [ -n "${GROKGOD_SRC:-}" ] && [ -f "$GROKGOD_SRC/examples/daily-minimal/minimal.md" ]; then
+    template="$GROKGOD_SRC/examples/daily-minimal/minimal.md"
+  elif [ -f "$GROKGOD_HOME/src/examples/daily-minimal/minimal.md" ]; then
+    template="$GROKGOD_HOME/src/examples/daily-minimal/minimal.md"
+  fi
+
+  if [ -z "$template" ]; then
+    log_warn "Daily minimal agent template not found (examples/daily-minimal/minimal.md); skipping."
+    return 0
+  fi
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log_dry "Would copy daily minimal agent template: $template -> $target"
+    return 0
+  fi
+
+  mkdir -p "$GROK_HOME/agents"
+  cp "$template" "$target"
+  log_info "Installed daily minimal agent to $target"
+}
+
+maybe_install_daily_minimal
 
 # ─────────────────────────────────────────────────────────
 # PIN OVERLAY SETUP

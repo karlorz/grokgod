@@ -19,7 +19,9 @@ _Avoid_: Mach-O hex edit, plugin.json rewrite as the engine fix
 Wrapper isolation for DeepSeek Harness **Minimal** (`grokgod eval` →
 `--agent minimal`). This is not a 1:1 DeepSeek Harness clone: only Standard
 and Minimal exist here. Daily grok stays **Standard**. Private `GROK_HOME` seeded
-from `examples/eval-home` plus `src/grokgod-eval.sh`. Not a numbered source
+from `examples/eval-home` plus `src/grokgod-eval.sh`. The daily Orca profile is a
+separate file, `examples/daily-minimal/minimal.md`, copied to `~/.grok/agents/minimal.md`,
+and that file may write. Not a numbered source
 patch: `GROK_CONFIG` cannot disable plugins/memory, and an empty curated
 toolset is rejected by grok-build. Persist stamp `eval-home: wrapper|missing`.
 _Avoid_: loading daily `~/.grok` plugins into an eval session, asking the
