@@ -111,8 +111,16 @@ cmp -s "$TEMPLATE" "$INSTALLED" || fail "second install did not replace a stale 
 
 echo "=== Live install: dry-run does not write the agent ==="
 HOME_B="$TMP_DIR/home-b"
-prepare_fast_path "$HOME_B" "$SRC"
-DRY="$(run_install "$HOME_B" "$SRC" --dry-run)"
+mkdir -p "$HOME_B"
+# --dry-run exits before maybe_install_daily_minimal in every mode.
+DRY="$(
+  env -u GROKGOD_SRC \
+    HOME="$HOME_B" \
+    GROKGOD_HOME="$HOME_B/.grokgod" \
+    GROK_HOME="$HOME_B/.grok" \
+    BIN_DIR="$HOME_B/.local/bin" \
+    sh "$INSTALL_SCRIPT" --dry-run
+)"
 printf '%s\n' "$DRY" | grep -q "Dry-run completed successfully" || fail "dry-run did not complete"
 if [ -e "$HOME_B/.grok/agents/minimal.md" ]; then
   fail "dry-run wrote the daily agent"

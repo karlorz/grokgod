@@ -1199,11 +1199,6 @@ maybe_install_daily_minimal() {
     return 0
   fi
 
-  if [ "$DRY_RUN" -eq 1 ]; then
-    log_dry "Would copy daily minimal agent template: $template -> $target"
-    return 0
-  fi
-
   mkdir -p "$GROK_HOME/agents"
   cp "$template" "$target"
   log_info "Installed daily minimal agent to $target"
