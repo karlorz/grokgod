@@ -33,10 +33,11 @@ echo "=== Running daily minimal tests ==="
 # 1. examples/daily-minimal/minimal.md exists
 [ -f "$DAILY_MINIMAL" ] || fail "examples/daily-minimal/minimal.md does not exist"
 
-# 2. Daily minimal tools list is exactly todo_write, write, search_replace
+# 2. Daily minimal tools list includes read_file so search_replace can start
 DAILY_TOOLS="$(frontmatter_list tools "$DAILY_MINIMAL")"
 EXPECTED_DAILY_TOOLS=$(cat << 'EOF'
 todo_write
+read_file
 write
 search_replace
 EOF
@@ -47,11 +48,14 @@ EOF
 DAILY_PERM="$(frontmatter_val permissionMode "$DAILY_MINIMAL")"
 [ "$DAILY_PERM" = "acceptEdits" ] || fail "daily minimal permissionMode is '$DAILY_PERM', expected 'acceptEdits'"
 
-# 4. Daily minimal disallowedTools includes read_file, search_tool, use_tool, Bash, run_terminal_cmd
+# 4. Daily minimal disallowedTools keeps shell and MCP off, and does not deny read_file
 DAILY_DISALLOWED="$(frontmatter_list disallowedTools "$DAILY_MINIMAL")"
-for tool in read_file search_tool use_tool Bash run_terminal_cmd; do
+for tool in search_tool use_tool Bash run_terminal_cmd; do
   printf '%s\n' "$DAILY_DISALLOWED" | grep -qx "$tool" || fail "daily minimal disallowedTools missing $tool"
 done
+if printf '%s\n' "$DAILY_DISALLOWED" | grep -qx read_file; then
+  fail "daily minimal must allow read_file so search_replace can start"
+fi
 
 # 5. examples/eval-home/agents/minimal.md exists
 [ -f "$EVAL_MINIMAL" ] || fail "examples/eval-home/agents/minimal.md does not exist"
