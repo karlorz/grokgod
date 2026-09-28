@@ -1,5 +1,102 @@
+diff --git a/crates/codegen/xai-grok-pager/src/app/acp_handler/session_notification.rs b/crates/codegen/xai-grok-pager/src/app/acp_handler/session_notification.rs
+index 51b0f5cf..217ad626 100644
+--- a/crates/codegen/xai-grok-pager/src/app/acp_handler/session_notification.rs
++++ b/crates/codegen/xai-grok-pager/src/app/acp_handler/session_notification.rs
+@@ -1795,6 +1795,7 @@ pub(super) fn apply_retry_state(
+     is_api_key_auth: bool,
+ ) {
+     let mut is_credit_limit = false;
++    let mut is_free_usage = false;
+     let mut is_reauth = false;
+     use xai_grok_shell::extensions::notification::RetryState;
+     match retry {
+@@ -1832,7 +1833,7 @@ pub(super) fn apply_retry_state(
+                 );
+             }
+             is_credit_limit = super::super::dispatch::is_credit_limit_error(None, reason);
+-            let is_free_usage = *rate_limited
++            is_free_usage = *rate_limited
+                 && xai_grok_shell::sampling::error::is_free_usage_exhausted_error(reason);
+             if is_credit_limit {
+                 session.credit_limit_blocked = true;
+@@ -1904,7 +1905,7 @@ pub(super) fn apply_retry_state(
+                 .map(|m| m.0.to_string())
+                 .unwrap_or_default(),
+         });
+-    } else if !is_reauth {
++    } else if !is_reauth && !is_free_usage && !matches!(retry, RetryState::Retrying { .. }) {
+         session.in_flight_prompt = None;
+     }
+ }
+diff --git a/crates/codegen/xai-grok-pager/src/app/acp_handler/tests/session_events.rs b/crates/codegen/xai-grok-pager/src/app/acp_handler/tests/session_events.rs
+index 5d652c9e..b77b54b1 100644
+--- a/crates/codegen/xai-grok-pager/src/app/acp_handler/tests/session_events.rs
++++ b/crates/codegen/xai-grok-pager/src/app/acp_handler/tests/session_events.rs
+@@ -316,7 +316,7 @@
+     }
+ 
+     #[test]
+-    fn apply_retry_state_retrying_clears_in_flight_prompt() {
++    fn apply_retry_state_retrying_preserves_in_flight_prompt_until_terminal_state() {
+         let mut session = make_session(Some("s1"));
+         let mut scrollback = ScrollbackState::new();
+         session.in_flight_prompt = Some(InFlightPrompt {
+@@ -334,8 +334,8 @@
+         };
+         apply_retry_state(&retry, &mut session, &mut scrollback, false);
+         assert!(
+-            session.in_flight_prompt.is_none(),
+-            "RetryState bypasses session/update in_flight hook"
++            session.in_flight_prompt.is_some(),
++            "Retrying must retain the prompt until the terminal retry state identifies free usage"
+         );
+     }
+ 
+@@ -433,6 +433,13 @@
+     fn retry_exhausted_non_rate_limited_does_not_set_flag() {
+         let mut session = make_session(Some("s1"));
+         let mut scrollback = ScrollbackState::new();
++        session.in_flight_prompt = Some(InFlightPrompt {
++            text: "ordinary failure".into(),
++            images: Vec::new(),
++            scrollback_entry: EntryId::new(2),
++            combined_scrollback_entries: Vec::new(),
++            chip_elements: Vec::new(),
++        });
+ 
+         apply_retry_state(
+             &RetryState::Exhausted {
+@@ -446,6 +453,10 @@
+             !session.rate_limited,
+             "rate_limited flag must not be set when is_rate_limited is false"
+         );
++        assert!(
++            session.in_flight_prompt.is_none(),
++            "ordinary exhausted retries must retain their existing clear behavior"
++        );
+     }
+ 
+     /// A rate-limit exhaustion whose flattened reason carries the free-usage code sets both flags and pushes NO generic block.
+@@ -483,9 +494,10 @@
+             "no RetryFailed marker — the paywall modal shows instead"
+         );
+         assert!(
+-            session.in_flight_prompt.is_none(),
+-            "free-usage exhaustion clears in_flight_prompt like other failures"
++            session.in_flight_prompt.is_some(),
++            "free-usage exhaustion must preserve in_flight_prompt for PromptResponse"
+         );
++        assert_eq!(session.in_flight_prompt.unwrap().text, "try me again");
+     }
+ 
+     #[test]
+@@ -1754,4 +1766,3 @@
+         assert!(!modal.hooks_collapsed_groups.contains("/src1"));
+         assert!(modal.hooks_collapsed_groups.contains("/src2"));
+     }
+-
 diff --git a/crates/codegen/xai-grok-pager/src/app/actions.rs b/crates/codegen/xai-grok-pager/src/app/actions.rs
-index ae4727fc17c275042e457c2b4bdba5f7e658a69f..3955df09412e2080863ee8a884c95f957b10e05f 100644
+index ae4727fc..3955df09 100644
 --- a/crates/codegen/xai-grok-pager/src/app/actions.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/actions.rs
 @@ -67,8 +67,11 @@ pub enum Action {
@@ -15,8 +112,22 @@ index ae4727fc17c275042e457c2b4bdba5f7e658a69f..3955df09412e2080863ee8a884c95f95
      /// Open a semantic scrollback link.
      OpenLink(crate::render::osc8::LinkTarget),
      /// Open grok.com managed connectors, appending session teamId when set.
+diff --git a/crates/codegen/xai-grok-pager/src/app/agent.rs b/crates/codegen/xai-grok-pager/src/app/agent.rs
+index 1ad54e8d..fefea2d9 100644
+--- a/crates/codegen/xai-grok-pager/src/app/agent.rs
++++ b/crates/codegen/xai-grok-pager/src/app/agent.rs
+@@ -754,7 +754,8 @@ pub struct AgentSession {
+     pub bg_tool_call_to_task: HashMap<String, String>,
+     /// Active scheduled tasks, keyed by task_id.
+     pub scheduled_tasks: HashMap<String, ScheduledTaskInfo>,
+-    /// Plain-text prompt currently in flight, captured at send time and cleared once the server emits any activity (chunk, tool call, retry, etc.).
++    /// Plain-text prompt currently in flight, captured at send time and cleared once the server emits content/tool activity or a terminal non-recoverable retry state.
++    /// Retry progress retains it until exhaustion identifies whether the free-usage paywall must offer an exact model-switch resend.
+     /// Used by `do_cancel_turn` to "rewind" a prompt back to the input box if the user cancels before any response arrives.
+     /// `None` for skill-injected prompts (cannot be reversed) and bash/cron.
+     pub in_flight_prompt: Option<InFlightPrompt>,
 diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/input.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/input.rs
-index 3db01e62a23af4ed9c170546049128f521d2da8e..04c44f48739700c8cc73b2708d9c41a7e113f12c 100644
+index 3db01e62..04c44f48 100644
 --- a/crates/codegen/xai-grok-pager/src/app/agent_view/input.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/agent_view/input.rs
 @@ -26,6 +26,29 @@ pub(crate) enum ExternalPromptEditorAccess {
@@ -76,7 +187,7 @@ index 3db01e62a23af4ed9c170546049128f521d2da8e..04c44f48739700c8cc73b2708d9c41a7
              }
              ActionId::ShortcutsHelp => {
 diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs
-index c827fb4257e343464c33e16da0b5af86eaa13591..16c164657ab8e5a6c1d5c31332a05537d82e0bdd 100644
+index c827fb42..16c16465 100644
 --- a/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs
 @@ -634,7 +634,10 @@ impl AgentView {
@@ -92,7 +203,7 @@ index c827fb4257e343464c33e16da0b5af86eaa13591..16c164657ab8e5a6c1d5c31332a05537
          }
          outcome
 diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
-index a9151404efeef27da6fb4b2af4441c1c0d150d05..cadc790507c594093bda7a09822268473151bb3e 100644
+index a9151404..cadc7905 100644
 --- a/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
 @@ -865,10 +865,14 @@ pub struct AgentView {
@@ -145,12 +256,12 @@ index a9151404efeef27da6fb4b2af4441c1c0d150d05..cadc790507c594093bda7a0982226847
                  xai_grok_telemetry::events::SuperGrokUpsellClicked {
                      source,
 diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/notices.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/notices.rs
-index 719a85dc65abab639ee7751c20aa3bab41fd76fd..c506683d889050ceb23c6866ea9d50a52e0eb1dc 100644
+index 719a85dc..c506683d 100644
 --- a/crates/codegen/xai-grok-pager/src/app/agent_view/notices.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/agent_view/notices.rs
 @@ -460,10 +460,7 @@ pub(crate) enum ImagesDroppedBy {
  }
-
+ 
  /// Build the session warning for a completed auto-compaction count.
 -pub(crate) fn compaction_warning_message(
 -    round_count: u64,
@@ -183,7 +294,7 @@ index 719a85dc65abab639ee7751c20aa3bab41fd76fd..c506683d889050ceb23c6866ea9d50a5
 +            ))
 +        );
      }
-
+ 
      #[test]
 @@ -517,11 +519,17 @@ mod mouse_off_banner_tests {
          let mut view = make_running_agent();
@@ -215,9 +326,9 @@ index 719a85dc65abab639ee7751c20aa3bab41fd76fd..c506683d889050ceb23c6866ea9d50a5
 +            )
          );
      }
-
+ 
 diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
-index 888d610e4a92d897d63bc260e88cd2877ded7dfe..3f4ef37d996d49382c6d0d071eda7bf0c4c5d564 100644
+index 888d610e..3f4ef37d 100644
 --- a/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
 @@ -194,6 +194,7 @@ impl AgentView {
@@ -229,7 +340,7 @@ index 888d610e4a92d897d63bc260e88cd2877ded7dfe..3f4ef37d996d49382c6d0d071eda7bf0
              active_modal: None,
              modal_buttons: Vec::new(),
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/billing.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/billing.rs
-index 658d74689077d62ba63066fa5dc5b087d9be6afa..2b353c80427690042550491448ec9589dec48d4f 100644
+index 658d7468..2b353c80 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/billing.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/billing.rs
 @@ -74,6 +74,19 @@ pub(crate) fn is_credit_limit_error(http_status: Option<u16>, message: &str) ->
@@ -249,12 +360,12 @@ index 658d74689077d62ba63066fa5dc5b087d9be6afa..2b353c80427690042550491448ec9589
 +        id: Some(USAGE_LIMIT_SWITCH_MODEL_OPTION_ID.into()),
 +    }
 +}
-
+ 
  struct CreditLimitCopy {
      heading: &'static str,
 @@ -85,8 +98,8 @@ struct CreditLimitCopy {
  }
-
+ 
  /// Open the credit-limit upsell Q&A on the given agent.
 -/// Non-max-tier: Upgrade tier + buy-credits (or PAYG) + Try Again.
 -/// Max-tier (SuperGrok Heavy): buy-credits (or PAYG) + Try Again — no upgrade option. URL options carry the target in `id` so the submit handler is position-independent.
@@ -274,7 +385,7 @@ index 658d74689077d62ba63066fa5dc5b087d9be6afa..2b353c80427690042550491448ec9589
 @@ -181,7 +195,9 @@ pub(super) fn open_credit_limit_upsell(
      agent.prompt.set_text("");
  }
-
+ 
 -/// Open the free-usage paywall on the given agent: a Q&A modal in the [`open_credit_limit_upsell`] style with two upgrade options.
 +/// Open the free-usage paywall on the given agent: a Q&A modal in the
 +/// [`open_credit_limit_upsell`] style with three upgrade options and a direct
@@ -284,7 +395,7 @@ index 658d74689077d62ba63066fa5dc5b087d9be6afa..2b353c80427690042550491448ec9589
  pub(super) fn open_free_usage_upsell(agent: &mut AgentView, auth_method: Option<String>) {
 @@ -244,7 +260,7 @@ fn open_supergrok_upsell(
      });
-
+ 
      // /supergrok lists all plans; every upgrade option lands there.
 -    let options = vec![
 +    let mut options = vec![
@@ -304,16 +415,16 @@ index 658d74689077d62ba63066fa5dc5b087d9be6afa..2b353c80427690042550491448ec9589
 @@ -491,7 +510,7 @@ pub(super) fn handle_credit_limit_recheck_complete(
      drain.effects
  }
-
+ 
 -/// Resubmit the prompt that hit the credit limit (modal option or card button).
 +/// Resubmit the prompt that hit a credit or free-usage limit.
  pub(super) fn dispatch_retry_credit_limit_prompt(app: &mut AppView) -> Vec<Effect> {
      use crate::app::app_view::ActiveView;
-
+ 
 @@ -526,6 +545,23 @@ pub(super) fn dispatch_retry_credit_limit_prompt(app: &mut AppView) -> Vec<Effec
      drain.effects
  }
-
+ 
 +/// Open the existing direct `/model` argument picker in the active session and
 +/// arm a one-shot retry for the usage-limit flow that selected it.
 +pub(super) fn dispatch_open_credit_limit_model_picker(app: &mut AppView) -> Vec<Effect> {
@@ -332,10 +443,10 @@ index 658d74689077d62ba63066fa5dc5b087d9be6afa..2b353c80427690042550491448ec9589
 +}
 +
  // Action handlers.
-
+ 
  pub(super) fn dispatch_open_supergrok_url(app: &mut AppView) -> Vec<Effect> {
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/mod.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/mod.rs
-index a57df79bcb4d819ee5e25964c0b02eba003ab579..79bf00be6a238b4569e1c2156461c5379b5f25e4 100644
+index a57df79b..79bf00be 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/mod.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/mod.rs
 @@ -39,7 +39,8 @@ mod voice;
@@ -349,12 +460,12 @@ index a57df79bcb4d819ee5e25964c0b02eba003ab579..79bf00be6a238b4569e1c2156461c537
  pub(crate) use dashboard::{DashboardStopReadiness, dashboard_stop_readiness};
  pub(crate) use modes::{downgrade_displayed_auto_if_gated, effective_auto};
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
-index e6f28c24db6b1d1963cfdafe26463c1199d77f0c..f98c54db02fd354b4da32c695dd2f96da30871ae 100644
+index e6f28c24..f98c54db 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
 @@ -1607,8 +1607,11 @@ pub(super) fn handle_prompt_response(
          }
-
+ 
          // Stash the complete in-flight prompt before finish_turn clears it.
 -        // Used by CreditLimitRecheckComplete to retry after a tier upgrade.
 -        if credit_limit_blocked && let Some(prompt) = agent.session.in_flight_prompt.clone() {
@@ -367,7 +478,7 @@ index e6f28c24db6b1d1963cfdafe26463c1199d77f0c..f98c54db02fd354b4da32c695dd2f96d
          }
          // Stash for AuthComplete after 401
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs
-index f550b1b3f61e7984825fb459dc91c54b60d76c23..fdc75f41f394963aa073cf4755cd6adfb6fa5a86 100644
+index f550b1b3..fdc75f41 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs
 @@ -1193,6 +1193,9 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
@@ -381,7 +492,7 @@ index f550b1b3f61e7984825fb459dc91c54b60d76c23..fdc75f41f394963aa073cf4755cd6adf
              if url.starts_with("file://") {
                  let opened = url::Url::parse(&url)
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
-index 5a2d07bb6fd044407a2c2a8ad75a3c11cca48b76..81f932fd381dbe8f20826970be0583c67dd9fdbd 100644
+index 5a2d07bb..81f932fd 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
 @@ -1883,10 +1883,13 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
@@ -434,12 +545,12 @@ index 5a2d07bb6fd044407a2c2a8ad75a3c11cca48b76..81f932fd381dbe8f20826970be0583c6
          effects.extend(drain.effects);
          note_peek_page_flip(app, agent_id, drain.page_flip_entry);
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
-index d9c6c966fcb0f9bcef68b210db241d51e4901652..788bf5f0babe78fa2bf8f8015c5a6717ca767e4c 100644
+index d9c6c966..788bf5f0 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
 @@ -1798,6 +1798,9 @@ pub(in crate::app::dispatch) fn set_default_model(
      };
-
+ 
      if !available_has_new {
 +        if let Some(agent) = app.agents.get_mut(&aid) {
 +            agent.credit_limit_model_retry_pending = false;
@@ -448,7 +559,7 @@ index d9c6c966fcb0f9bcef68b210db241d51e4901652..788bf5f0babe78fa2bf8f8015c5a6717
              target: "settings",
              key = "default_model",
 @@ -1810,6 +1813,9 @@ pub(in crate::app::dispatch) fn set_default_model(
-
+ 
      // Idempotent: the same model already active is a no-op
      if prev_id.as_ref() == Some(&new_id) {
 +        if let Some(agent) = app.agents.get_mut(&aid) {
@@ -456,9 +567,9 @@ index d9c6c966fcb0f9bcef68b210db241d51e4901652..788bf5f0babe78fa2bf8f8015c5a6717
 +        }
          return vec![];
      }
-
+ 
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs
-index 2149d4916be58610c8a274ec8d028b1891351ba0..edc859dcab60fcd3e15b5da3c9411100a26d9fc7 100644
+index 2149d491..6ae3f303 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs
 @@ -301,7 +301,7 @@ fn credit_limit_translate_retry_option_dispatches_retry() {
@@ -472,7 +583,7 @@ index 2149d4916be58610c8a274ec8d028b1891351ba0..edc859dcab60fcd3e15b5da3c9411100
          .take()
 @@ -313,7 +313,7 @@ fn credit_limit_translate_retry_option_dispatches_retry() {
  }
-
+ 
  #[test]
 -fn credit_limit_translate_max_tier_retry_is_second_option() {
 +fn credit_limit_translate_max_tier_retry_is_third_option() {
@@ -491,7 +602,7 @@ index 2149d4916be58610c8a274ec8d028b1891351ba0..edc859dcab60fcd3e15b5da3c9411100
 @@ -338,6 +338,71 @@ fn credit_limit_translate_max_tier_retry_is_second_option() {
      }
  }
-
+ 
 +#[test]
 +fn credit_limit_translate_switch_model_option_dispatches_distinct_action() {
 +    use crate::app::agent_view::translate_local_submit_for_test;
@@ -593,7 +704,7 @@ index 2149d4916be58610c8a274ec8d028b1891351ba0..edc859dcab60fcd3e15b5da3c9411100
 +    assert_eq!(option_at(q, 2).label, "Switch model & retry");
 +    assert_eq!(option_at(q, 3).label, "Try Again");
  }
-
+ 
  #[test]
 @@ -499,7 +570,8 @@ fn upsell_non_max_unified_shows_buy_credits() {
          option_at(q, 1).description,
@@ -603,7 +714,7 @@ index 2149d4916be58610c8a274ec8d028b1891351ba0..edc859dcab60fcd3e15b5da3c9411100
 +    assert_eq!(option_at(q, 2).label, "Switch model & retry");
 +    assert_eq!(option_at(q, 3).label, "Try Again");
  }
-
+ 
  #[test]
 @@ -514,12 +586,17 @@ fn upsell_max_unified_qa_omits_upgrade() {
      );
@@ -637,7 +748,7 @@ index 2149d4916be58610c8a274ec8d028b1891351ba0..edc859dcab60fcd3e15b5da3c9411100
 +    assert_eq!(option_at(q, 1).label, "Switch model & retry");
 +    assert_eq!(option_at(q, 2).label, "Try Again");
  }
-
+ 
  #[test]
 @@ -672,9 +750,10 @@ fn upsell_max_tier_opens_qa_without_upgrade_payg_on() {
      );
@@ -650,11 +761,11 @@ index 2149d4916be58610c8a274ec8d028b1891351ba0..edc859dcab60fcd3e15b5da3c9411100
 +    assert_eq!(option_at(q, 1).label, "Switch model & retry");
 +    assert_eq!(option_at(q, 2).label, "Try Again");
  }
-
+ 
  #[test]
 @@ -1271,7 +1350,7 @@ fn free_usage_upsell_displaces_feedback_before_opening_question() {
  }
-
+ 
  #[test]
 -fn free_usage_upsell_shows_three_options_with_exact_labels() {
 +fn free_usage_upsell_shows_upgrade_urls_then_switch_model_retry() {
@@ -673,58 +784,95 @@ index 2149d4916be58610c8a274ec8d028b1891351ba0..edc859dcab60fcd3e15b5da3c9411100
      ];
      assert_eq!(q.options.len(), expected.len());
      for (opt, (label, desc, id)) in q.options.iter().zip(expected) {
-@@ -1313,9 +1397,10 @@ fn free_usage_upsell_shows_three_options_with_exact_labels() {
+@@ -1312,15 +1396,31 @@ fn free_usage_upsell_shows_three_options_with_exact_labels() {
+     }
  }
-
- /// Replay the REAL free-usage sequence (send, `RetryState::Retrying`, `Exhausted`, PromptResponse error) through the production handlers.
+ 
+-/// Replay the REAL free-usage sequence (send, `RetryState::Retrying`, `Exhausted`, PromptResponse error) through the production handlers.
 -/// The paywall modal must open on the turn-end error.
-+/// The paywall modal must open on the turn-end error and the exact in-flight
-+/// prompt must be captured before `finish_turn` clears it.
++/// Replay the real free-usage sequence end-to-end: send, retrying, exhausted,
++/// PromptResponse, switch selection, and successful live-session model switch.
++/// The exact sent prompt must be captured by production code (never seeded in
++/// `credit_limit_stashed_prompt`) and resent exactly once on the new model.
  #[test]
 -fn free_usage_failure_opens_paywall_modal() {
-+fn free_usage_failure_captures_exact_prompt_before_finish_turn() {
++fn free_usage_send_retry_exhausted_switch_retries_exact_prompt_once() {
      use crate::app::acp_handler::apply_session_event_for_test;
++    use crate::app::agent_view::translate_local_submit_for_test;
++    use crate::app::app_view::InputOutcome;
++    use crate::views::question_view::QuestionSelection;
      use xai_grok_shell::extensions::notification::{RetryState, SessionUpdate};
-
-@@ -1330,6 +1415,28 @@ fn free_usage_failure_opens_paywall_modal() {
+ 
+     let mut app = test_app_with_agent();
+     let id = AgentId(0);
++    let model_id = acp::ModelId::new(std::sync::Arc::from("free-usage-alternate"));
++    app.agents
++        .get_mut(&id)
++        .unwrap()
++        .session
++        .models
++        .available
++        .insert(
++            model_id.clone(),
++            acp::ModelInfo::new(model_id.clone(), "Free Usage Alternate".to_string()),
++        );
+ 
+     // 1. Real send.
+     let effects = dispatch(Action::SendPrompt("draw me a cat".into()), &mut app);
+@@ -1330,6 +1430,15 @@ fn free_usage_failure_opens_paywall_modal() {
      );
      let prompt_id = test_agent(&app, id).session.current_prompt_id.clone();
      assert!(prompt_id.is_some(), "send must mint a prompt id");
-+    {
-+        let agent = app.agents.get_mut(&id).unwrap();
-+        let mut image = crate::prompt_images::from_clipboard_data(&crate::clipboard::ImageData {
-+            data: vec![1, 2, 3],
-+            mime_type: "image/png".into(),
-+        });
-+        image.display_number = 7;
-+        agent.session.in_flight_prompt = Some(crate::app::agent::InFlightPrompt {
-+            text: "draw [Image #7] plus context".into(),
-+            images: vec![image],
-+            scrollback_entry: crate::scrollback::EntryId::new(41),
-+            combined_scrollback_entries: vec![
-+                crate::scrollback::EntryId::new(39),
-+                crate::scrollback::EntryId::new(40),
-+            ],
-+            chip_elements: vec![crate::app::agent::ChipElement {
-+                range: 5..15,
-+                kind: crate::views::prompt_widget::KIND_IMAGE,
-+                display: None,
-+            }],
-+        });
-+    }
-
++    assert_eq!(
++        test_agent(&app, id)
++            .session
++            .in_flight_prompt
++            .as_ref()
++            .map(|prompt| prompt.text.as_str()),
++        Some("draw me a cat")
++    );
++    assert!(test_agent(&app, id).credit_limit_stashed_prompt.is_none());
+ 
      // 2 and 3. Real notification sequence through the production handler.
      {
-@@ -1359,7 +1466,7 @@ fn free_usage_failure_opens_paywall_modal() {
+@@ -1344,6 +1453,15 @@ fn free_usage_failure_opens_paywall_modal() {
+             &mut agent.session,
+             &mut agent.scrollback,
+         );
++        assert_eq!(
++            agent
++                .session
++                .in_flight_prompt
++                .as_ref()
++                .map(|prompt| prompt.text.as_str()),
++            Some("draw me a cat"),
++            "Retrying must retain the prompt until the terminal reason is known"
++        );
+         apply_session_event_for_test(
+             &SessionUpdate::RetryState(RetryState::Exhausted {
+                 attempts: 2,
+@@ -1356,10 +1474,19 @@ fn free_usage_failure_opens_paywall_modal() {
+             &mut agent.scrollback,
+         );
+         assert!(agent.session.free_usage_blocked);
++        assert_eq!(
++            agent
++                .session
++                .in_flight_prompt
++                .as_ref()
++                .map(|prompt| prompt.text.as_str()),
++            Some("draw me a cat"),
++            "free-usage exhaustion must retain the prompt for PromptResponse"
++        );
      }
-
+ 
      // 4. Turn-end RPC error opens the upsell modal.
 -    let _ = dispatch(
 +    let completion_effects = dispatch(
          Action::TaskComplete(TaskResult::PromptResponse {
              agent_id: id,
              result: Err("rate limited".into()),
-@@ -1372,11 +1479,45 @@ fn free_usage_failure_opens_paywall_modal() {
+@@ -1372,11 +1499,113 @@ fn free_usage_failure_opens_paywall_modal() {
          test_agent(&app, id).question_view.is_some(),
          "paywall modal must open"
      );
@@ -738,30 +886,98 @@ index 2149d4916be58610c8a274ec8d028b1891351ba0..edc859dcab60fcd3e15b5da3c9411100
 +        .credit_limit_stashed_prompt
 +        .as_ref()
 +        .expect("free-usage prompt must survive finish_turn");
-+    assert_eq!(stashed.text, "draw [Image #7] plus context");
-+    assert_eq!(stashed.images.len(), 1);
-+    assert_eq!(stashed.images[0].display_number, 7);
-+    assert_eq!(stashed.images[0].mime_type, "image/png");
-+    assert_eq!(stashed.images[0].byte_len, 3);
++    assert_eq!(stashed.text, "draw me a cat");
++
++    // 5. Submit the paywall's switch option through the real translation path.
++    let mut qv = app
++        .agents
++        .get_mut(&id)
++        .unwrap()
++        .question_view
++        .take()
++        .expect("expected free-usage paywall");
++    set_first_selection(&mut qv, QuestionSelection::Single(Some(3)));
++    let kind = qv.local_kind.take().expect("free-usage local kind");
++    let InputOutcome::Action(open_picker) = translate_local_submit_for_test(&qv, kind, false)
++    else {
++        panic!("expected model-picker action");
++    };
++    assert!(matches!(open_picker, Action::OpenCreditLimitModelPicker));
++    assert!(dispatch(open_picker, &mut app).is_empty());
++    assert!(test_agent(&app, id).credit_limit_model_retry_pending);
++
++    // 6. Successful switch consumes and resends the production-captured stash once.
++    let retry_effects = dispatch(
++        Action::TaskComplete(TaskResult::SwitchModelComplete {
++            agent_id: id,
++            model_id: model_id.clone(),
++            effort: None,
++            result: Ok(()),
++            prev_model_id: None,
++        }),
++        &mut app,
++    );
++    let retry_sends = retry_effects
++        .iter()
++        .filter(|effect| {
++            matches!(
++                effect,
++                Effect::SendPrompt { .. } | Effect::SendPromptBlocks { .. }
++            )
++        })
++        .count();
++    assert_eq!(retry_sends, 1, "switch success must resend exactly once");
++    assert!(retry_effects.iter().any(
++        |effect| matches!(effect, Effect::SendPrompt { text, .. } if text == "draw me a cat")
++    ));
++    let agent = test_agent(&app, id);
++    assert_eq!(agent.session.models.current, Some(model_id.clone()));
++    assert!(!agent.credit_limit_model_retry_pending);
++    assert!(agent.credit_limit_stashed_prompt.is_none());
 +    assert_eq!(
-+        stashed.scrollback_entry,
-+        crate::scrollback::EntryId::new(41)
++        agent
++            .session
++            .in_flight_prompt
++            .as_ref()
++            .map(|prompt| prompt.text.as_str()),
++        Some("draw me a cat")
++    );
++    assert_ne!(
++        agent.toast.as_ref().map(|(message, _)| message.as_str()),
++        Some("No prompt to retry.")
++    );
++    assert!(
++        !(0..agent.scrollback.len()).any(|i| matches!(
++            &agent.scrollback.entry(i).unwrap().block,
++            crate::scrollback::block::RenderBlock::System(system)
++                if system.text.contains("No prompt to retry")
++        )),
++        "successful capture must not emit the missing-stash alert"
++    );
++
++    let duplicate_effects = dispatch(
++        Action::TaskComplete(TaskResult::SwitchModelComplete {
++            agent_id: id,
++            model_id,
++            effort: None,
++            result: Ok(()),
++            prev_model_id: None,
++        }),
++        &mut app,
 +    );
 +    assert_eq!(
-+        stashed.combined_scrollback_entries,
-+        vec![
-+            crate::scrollback::EntryId::new(39),
-+            crate::scrollback::EntryId::new(40),
-+        ]
-+    );
-+    assert_eq!(stashed.chip_elements.len(), 1);
-+    assert_eq!(stashed.chip_elements[0].range, 5..15);
-+    assert_eq!(
-+        stashed.chip_elements[0].kind,
-+        crate::views::prompt_widget::KIND_IMAGE
++        duplicate_effects
++            .iter()
++            .filter(|effect| matches!(
++                effect,
++                Effect::SendPrompt { .. } | Effect::SendPromptBlocks { .. }
++            ))
++            .count(),
++        0,
++        "the retry intent must be one-shot"
 +    );
  }
-
+ 
 -/// Answer translation: every upgrade option opens the upgrade URL.
 +/// Answer translation: every upgrade option opens the upgrade URL, while the
 +/// switch sentinel becomes the distinct direct-picker action before telemetry
@@ -772,7 +988,7 @@ index 2149d4916be58610c8a274ec8d028b1891351ba0..edc859dcab60fcd3e15b5da3c9411100
      use crate::app::agent_view::translate_local_submit_for_test;
      use crate::app::app_view::InputOutcome;
      use crate::views::question_view::{LocalQuestionKind, QuestionSelection};
-@@ -1396,6 +1537,115 @@ fn free_usage_translate_local_submit_maps_options() {
+@@ -1396,6 +1625,37 @@ fn free_usage_translate_local_submit_maps_options() {
              other => panic!("expected OpenUrl for option {idx}, got {other:?}"),
          }
      }
@@ -807,88 +1023,10 @@ index 2149d4916be58610c8a274ec8d028b1891351ba0..edc859dcab60fcd3e15b5da3c9411100
 +        InputOutcome::Action(Action::OpenUrl(url))
 +            if url == USAGE_LIMIT_SWITCH_MODEL_OPTION_ID
 +    ));
-+}
-+
-+#[test]
-+fn free_usage_switch_model_success_retries_stashed_prompt_once() {
-+    use crate::app::agent_view::translate_local_submit_for_test;
-+    use crate::app::app_view::InputOutcome;
-+    use crate::views::question_view::QuestionSelection;
-+
-+    let mut app = test_app_with_agent();
-+    let id = AgentId(0);
-+    let model_id = acp::ModelId::new(std::sync::Arc::from("free-usage-alternate"));
-+    {
-+        let agent = app.agents.get_mut(&id).unwrap();
-+        agent.session.models.available.insert(
-+            model_id.clone(),
-+            acp::ModelInfo::new(model_id.clone(), "Free Usage Alternate".to_string()),
-+        );
-+        agent.credit_limit_stashed_prompt = Some(test_stashed_prompt("retry free prompt"));
-+        open_free_usage_upsell(agent, None);
-+    }
-+    let mut qv = app
-+        .agents
-+        .get_mut(&id)
-+        .unwrap()
-+        .question_view
-+        .take()
-+        .expect("expected free-usage upsell modal");
-+    set_first_selection(&mut qv, QuestionSelection::Single(Some(3)));
-+    let kind = qv.local_kind.take().expect("free-usage local kind");
-+    let InputOutcome::Action(open_picker) = translate_local_submit_for_test(&qv, kind, false)
-+    else {
-+        panic!("expected model-picker action");
-+    };
-+    assert!(matches!(open_picker, Action::OpenCreditLimitModelPicker));
-+    assert!(dispatch(open_picker, &mut app).is_empty());
-+    assert!(test_agent(&app, id).credit_limit_model_retry_pending);
-+
-+    let effects = dispatch(
-+        Action::TaskComplete(TaskResult::SwitchModelComplete {
-+            agent_id: id,
-+            model_id: model_id.clone(),
-+            effort: None,
-+            result: Ok(()),
-+            prev_model_id: None,
-+        }),
-+        &mut app,
-+    );
-+    assert!(effects.iter().any(|effect| matches!(
-+        effect,
-+        Effect::SendPrompt { .. } | Effect::SendPromptBlocks { .. }
-+    )));
-+    let agent = test_agent(&app, id);
-+    assert_eq!(agent.session.models.current, Some(model_id.clone()));
-+    assert!(!agent.credit_limit_model_retry_pending);
-+    assert!(agent.credit_limit_stashed_prompt.is_none());
-+    assert_eq!(
-+        agent
-+            .session
-+            .in_flight_prompt
-+            .as_ref()
-+            .map(|prompt| prompt.text.as_str()),
-+        Some("retry free prompt")
-+    );
-+
-+    let duplicate_effects = dispatch(
-+        Action::TaskComplete(TaskResult::SwitchModelComplete {
-+            agent_id: id,
-+            model_id,
-+            effort: None,
-+            result: Ok(()),
-+            prev_model_id: None,
-+        }),
-+        &mut app,
-+    );
-+    assert!(!duplicate_effects.iter().any(|effect| matches!(
-+        effect,
-+        Effect::SendPrompt { .. } | Effect::SendPromptBlocks { .. }
-+    )));
  }
-
+ 
  /// Submitting a tier-restricted command opens the three-option SuperGrok upsell and neither runs the command nor leaks the text to the model.
-@@ -1439,6 +1689,11 @@ fn restricted_command_submit_opens_three_option_upsell() {
+@@ -1439,6 +1699,11 @@ fn restricted_command_submit_opens_three_option_upsell() {
      assert_eq!(option_at(q, 1).id.as_deref(), Some(UPSELL_URL_UPGRADE));
      assert_eq!(option_at(q, 2).label, "Upgrade to SuperGrok Heavy");
      assert_eq!(option_at(q, 2).id.as_deref(), Some(UPSELL_URL_UPGRADE));
@@ -898,10 +1036,10 @@ index 2149d4916be58610c8a274ec8d028b1891351ba0..edc859dcab60fcd3e15b5da3c9411100
 +        "restricted-command upsell must not expose the free-usage retry action"
 +    );
  }
-
+ 
  /// Aliases of a restricted command hit the same upsell (deny-list matching covers aliases via the registry).
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
-index 4b710c2f9e4f6280d2505520e220d4323be888c0..bfd8db533f0d1ac5d8aaa0537f29072d2442abfd 100644
+index 4b710c2f..bfd8db53 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
 @@ -24,7 +24,7 @@ mod turn;
@@ -914,7 +1052,7 @@ index 4b710c2f9e4f6280d2505520e220d4323be888c0..bfd8db533f0d1ac5d8aaa0537f29072d
  use super::cta::{
      CTA_MCP_ABSENT_MAX_ATTEMPTS, CTA_MCP_POLL_MAX_ATTEMPTS, cta_impression_plugin_name,
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
-index 0435365b04687db9fc122eaafd87b325549d7862..e2856c1310cabfd4bb09a944e69f56a168b8e16a 100644
+index 0435365b..e2856c13 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
 @@ -1400,11 +1400,32 @@ fn set_default_model_idempotent_when_already_current() {
@@ -951,13 +1089,13 @@ index 0435365b04687db9fc122eaafd87b325549d7862..e2856c1310cabfd4bb09a944e69f56a1
  /// `clamp_max_thoughts_width` clamps out-of-range values to the registered `[40, 500]` bounds.
  #[test]
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs
-index 31315a8d2ce9b6887c14d4f6f652320f1a1bb76b..2d98151a3202c378b75f30623c3df4ecce6ea425 100644
+index 31315a8d..2d98151a 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs
 @@ -13,6 +13,16 @@ fn expect_agent(app: &AppView, id: AgentId) -> &AgentView {
      agent
  }
-
+ 
 +fn credit_limit_prompt(text: &str) -> crate::app::agent::InFlightPrompt {
 +    crate::app::agent::InFlightPrompt {
 +        text: text.into(),
@@ -974,7 +1112,7 @@ index 31315a8d2ce9b6887c14d4f6f652320f1a1bb76b..2d98151a3202c378b75f30623c3df4ec
 @@ -1554,17 +1564,147 @@ fn switch_model_complete_failure_pushes_error_and_clears_pending() {
      );
  }
-
+ 
 +#[test]
 +fn credit_limit_model_switch_success_reuses_retry_once() {
 +    let mut app = test_app_with_agent();
@@ -1111,7 +1249,7 @@ index 31315a8d2ce9b6887c14d4f6f652320f1a1bb76b..2d98151a3202c378b75f30623c3df4ec
      let mut app = test_app_with_agent();
      let id = AgentId(0);
      let model_id = acp::ModelId::new(std::sync::Arc::from("cursor-model"));
-
+ 
 -    app.agents
 -        .get_mut(&id)
 -        .unwrap()
@@ -1122,7 +1260,7 @@ index 31315a8d2ce9b6887c14d4f6f652320f1a1bb76b..2d98151a3202c378b75f30623c3df4ec
 +    agent.credit_limit_model_retry_pending = true;
 +    agent.credit_limit_stashed_prompt = Some(credit_limit_prompt("retry me"));
      let initial_scrollback = expect_agent(&app, id).scrollback.len();
-
+ 
      let err = xai_grok_shell::agent::config::ModelSwitchIncompatibleAgentError {
 @@ -1591,6 +1731,14 @@ fn switch_model_incompatible_agent_shows_question_modal() {
      // No effects emitted (modal is synchronous state).
@@ -1140,13 +1278,13 @@ index 31315a8d2ce9b6887c14d4f6f652320f1a1bb76b..2d98151a3202c378b75f30623c3df4ec
      assert!(expect_agent(&app, id).question_view.is_some());
      let qv = expect_agent(&app, id).question_view.as_ref().unwrap();
 diff --git a/crates/codegen/xai-grok-pager/src/app/modals.rs b/crates/codegen/xai-grok-pager/src/app/modals.rs
-index b430bd0a09046b5b4f6947407914fa407fcf2ad8..651b2164b7a2db2ddb837be34eb4e7a75c70a172 100644
+index b430bd0a..651b2164 100644
 --- a/crates/codegen/xai-grok-pager/src/app/modals.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/modals.rs
 @@ -541,6 +541,17 @@ impl AgentView {
          }
      }
-
+ 
 +    /// Clear the one-shot retry only when the currently open picker is `/model`.
 +    fn clear_credit_limit_retry_for_active_model_picker(&mut self) {
 +        let is_model_picker = matches!(
@@ -1180,7 +1318,7 @@ index b430bd0a09046b5b4f6947407914fa407fcf2ad8..651b2164b7a2db2ddb837be34eb4e7a7
 @@ -2402,6 +2415,84 @@ impl AgentView {
      }
  }
-
+ 
 +#[cfg(test)]
 +mod credit_limit_model_picker_tests {
 +    use super::*;
@@ -1263,7 +1401,7 @@ index b430bd0a09046b5b4f6947407914fa407fcf2ad8..651b2164b7a2db2ddb837be34eb4e7a7
  #[path = "modals_tests.rs"]
  mod tests;
 diff --git a/crates/codegen/xai-grok-pager/src/views/question_view.rs b/crates/codegen/xai-grok-pager/src/views/question_view.rs
-index a02173cc9a454a5cc94fe72fb55bd2f3b135c7e5..a5d4bc400eed54c84431efa385d24300d74c6419 100644
+index a02173cc..a5d4bc40 100644
 --- a/crates/codegen/xai-grok-pager/src/views/question_view.rs
 +++ b/crates/codegen/xai-grok-pager/src/views/question_view.rs
 @@ -102,8 +102,10 @@ pub enum LocalQuestionKind {

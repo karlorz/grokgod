@@ -26,11 +26,16 @@ for needle in \
   'free_usage_blocked' \
   'UpsellReason::FreeUsageLimit' \
   'free_usage_upsell_shows_upgrade_urls_then_switch_model_retry' \
-  'free_usage_failure_captures_exact_prompt_before_finish_turn' \
+  'apply_retry_state_retrying_preserves_in_flight_prompt_until_terminal_state' \
+  '!matches!(retry, RetryState::Retrying { .. })' \
+  '!is_free_usage' \
+  'ordinary exhausted retries must retain their existing clear behavior' \
+  'free_usage_send_retry_exhausted_switch_retries_exact_prompt_once' \
   'free-usage prompt must survive finish_turn' \
+  'switch success must resend exactly once' \
+  'successful capture must not emit the missing-stash alert' \
   'free_usage_translate_local_submit_maps_upgrades_and_switch' \
   'restricted_command_translate_ignores_free_usage_switch_sentinel' \
-  'free_usage_switch_model_success_retries_stashed_prompt_once' \
   'restricted-command upsell must not expose the free-usage retry action' \
   'credit_limit_model_switch_success_reuses_retry_once' \
   'credit_limit_model_switch_failure_preserves_stash_and_sends_nothing' \
