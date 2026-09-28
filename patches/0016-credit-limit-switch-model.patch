@@ -900,6 +900,19 @@ index 2149d4916be58610c8a274ec8d028b1891351ba0..edc859dcab60fcd3e15b5da3c9411100
  }
 
  /// Aliases of a restricted command hit the same upsell (deny-list matching covers aliases via the registry).
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
+index 4b710c2f9e4f6280d2505520e220d4323be888c0..bfd8db533f0d1ac5d8aaa0537f29072d2442abfd 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
+@@ -24,7 +24,7 @@ mod turn;
+ mod voice;
+ use super::billing::{
+     CreditLimitUpsellMode, credit_limit_upsell_mode, is_max_tier, open_credit_limit_upsell,
+-    open_free_usage_upsell,
++    open_free_usage_upsell, open_restricted_command_upsell,
+ };
+ use super::cta::{
+     CTA_MCP_ABSENT_MAX_ATTEMPTS, CTA_MCP_POLL_MAX_ATTEMPTS, cta_impression_plugin_name,
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
 index 0435365b04687db9fc122eaafd87b325549d7862..e2856c1310cabfd4bb09a944e69f56a168b8e16a 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
