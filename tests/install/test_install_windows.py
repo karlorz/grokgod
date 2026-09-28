@@ -211,7 +211,28 @@ def main():
     check("Removing manifest-owned file:" in src or "Removed" in src, "Uninstall removes manifest-owned files")
     check("Assert-NotOfficialGrok" in src, "Uninstall asserts target is not official grok.exe")
 
-    # 25. Native Test Suite Portability (no Add-Type -OutputAssembly)
+    # 25. Daily Minimal Agent Installation
+    check("daily-minimal.md" in src, "install.ps1 references daily-minimal.md asset")
+    check("agents\\minimal.md" in src or "agents/minimal.md" in src, "install.ps1 resolves GROK_HOME agents\\minimal.md")
+    check("Install-DailyMinimalAgent" in src, "install.ps1 defines Install-DailyMinimalAgent")
+    check("Daily minimal agent template not found" in src and "skipping" in src, "install.ps1 warns and skips if template missing locally")
+    check("Checksum verification failed for asset daily-minimal.md" in src or "Checksum verification failed for asset $DailyMinimalAsset" in src, "install.ps1 enforces fail-closed checksum for daily-minimal.md")
+    # Verify $hasLocalDailyMinimal does NOT include the grokgod-home cache path as a skip-download condition
+    has_local_match = re.search(r'\$hasLocalDailyMinimal\s*=\s*([^;]+?)\r?\n\r?\n\s*if\s*\(-not\s*\$hasLocalDailyMinimal\)', src, re.DOTALL)
+    if has_local_match:
+        has_local_expr = has_local_match.group(1)
+        check("src\\examples\\daily-minimal" not in has_local_expr and "GrokgodHome" not in has_local_expr, "$hasLocalDailyMinimal skips download only for source checkouts, not grokgod-home cache")
+    else:
+        check(False, "Could not match $hasLocalDailyMinimal expression in install.ps1")
+    # Verify agent is NOT in manifest.files (uninstall must leave it in place)
+    manifest_files_match = re.search(r'\$allOwnedFiles\s*=\s*@\((.*?)\)', src, re.DOTALL)
+    if manifest_files_match:
+        mfiles = manifest_files_match.group(1)
+        check("minimal.md" not in mfiles and "DailyMinimal" not in mfiles, "Uninstall does not treat the agent as a manifest-owned file (agent path not in manifest.files)")
+    else:
+        check(False, "Could not find $allOwnedFiles block in install.ps1")
+
+    # 26. Native Test Suite Portability (no Add-Type -OutputAssembly)
     if os.path.isfile(NATIVE_SHIM_TEST):
         with open(NATIVE_SHIM_TEST, "r", encoding="utf-8") as f:
             shim_test_src = f.read()

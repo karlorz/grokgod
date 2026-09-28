@@ -86,6 +86,10 @@ function Normalize-DirPath([string]$p) {
 
 $OfficialGrokDirs = @()
 $OfficialGrokExes = @()
+if ($env:GROK_HOME) {
+    $OfficialGrokDirs += $env:GROK_HOME
+    $OfficialGrokExes += Join-Path $env:GROK_HOME "bin\grok.exe"
+}
 if ($env:USERPROFILE) {
     $OfficialGrokDirs += Join-Path $env:USERPROFILE ".grok"
     $OfficialGrokExes += Join-Path $env:USERPROFILE ".grok\bin\grok.exe"
@@ -142,6 +146,17 @@ function Assert-NotOfficialGrok([string]$filePath) {
         if ($_.ToString() -match "Refusing to mutate") { throw $_ }
     }
 }
+
+# Resolve invariant local repo root once (for shims and daily minimal template)
+$repoRootLocal = if ($PSScriptRoot) {
+    if (Test-Path (Join-Path $PSScriptRoot "src\shim\grok-shim.ps1")) {
+        $PSScriptRoot
+    } elseif (Test-Path (Join-Path $PSScriptRoot "..\..\src\shim\grok-shim.ps1")) {
+        Normalize-DirPath (Join-Path $PSScriptRoot "..\..")
+    } elseif (Test-Path (Join-Path $PSScriptRoot "..\src\shim\grok-shim.ps1")) {
+        Normalize-DirPath (Join-Path $PSScriptRoot "..")
+    } else { "" }
+} else { "" }
 
 # -----------------------------------------------------------------------------
 # 3. Failure Injection Helper
@@ -301,6 +316,50 @@ function Get-DurableBackupPath([string]$targetPath) {
 # -----------------------------------------------------------------------------
 # 7. Uninstall Logic (Manifest-based)
 # -----------------------------------------------------------------------------
+function Install-DailyMinimalAgent([string]$DownloadedPath = "") {
+    $target = if ($env:GROK_HOME) {
+        Join-Path $env:GROK_HOME "agents\minimal.md"
+    } else {
+        Join-Path $env:USERPROFILE ".grok\agents\minimal.md"
+    }
+
+    $cacheCopy = Join-Path $GrokgodHome "src\examples\daily-minimal\minimal.md"
+    $template = ""
+
+    if ($repoRootLocal -and (Test-Path (Join-Path $repoRootLocal "examples\daily-minimal\minimal.md"))) {
+        $template = Join-Path $repoRootLocal "examples\daily-minimal\minimal.md"
+    } elseif ($env:GROKGOD_SRC -and (Test-Path (Join-Path $env:GROKGOD_SRC "examples\daily-minimal\minimal.md"))) {
+        $template = Join-Path $env:GROKGOD_SRC "examples\daily-minimal\minimal.md"
+    } elseif ($DownloadedPath -and (Test-Path -LiteralPath $DownloadedPath)) {
+        $template = $DownloadedPath
+    } elseif (Test-Path -LiteralPath $cacheCopy) {
+        $template = $cacheCopy
+    }
+
+    if (-not $template) {
+        Write-Dim "Daily minimal agent template not found (examples/daily-minimal/minimal.md); skipping."
+        return
+    }
+
+    # Ensure grokgod cache directory exists and keep cache synced
+    $cacheDir = Split-Path -Path $cacheCopy -Parent
+    if (-not (Test-Path -LiteralPath $cacheDir)) {
+        New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+    }
+    $normTemplate = Normalize-DirPath $template
+    $normCacheCopy = Normalize-DirPath $cacheCopy
+    if (-not $normTemplate.Equals($normCacheCopy, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Copy-Item -LiteralPath $template -Destination $cacheCopy -Force
+    }
+
+    $targetDir = Split-Path -Path $target -Parent
+    if (-not (Test-Path -LiteralPath $targetDir)) {
+        New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+    }
+    Copy-Item -LiteralPath $template -Destination $target -Force
+    Write-OK "Installed daily minimal agent to $target"
+}
+
 if ($Uninstall) {
     Write-Step "Uninstalling grokgod..."
     Acquire-InstallLock
@@ -434,6 +493,7 @@ $CurrentSha = if ($Stamp.ContainsKey("SHA")) { $Stamp["SHA"] } else { "" }
 # Idempotence check: if -NoUpgrade is specified and target exists
 if ($NoUpgrade -and (Test-Path -LiteralPath $TargetExe) -and -not $Force) {
     Write-OK "Existing binary found at $TargetExe. Skipping download (-NoUpgrade)."
+    Install-DailyMinimalAgent
     exit 0
 }
 
@@ -563,6 +623,40 @@ try {
 
     Write-OK "Preflight verified candidate binary: $candidateVer"
 
+    # Resolve and stage/cache daily-minimal.md before already-up-to-date check and finally cleanup
+    $DailyMinimalAsset = "daily-minimal.md"
+    $downloadedDailyMinimal = ""
+    $hasLocalDailyMinimal = ($repoRootLocal -and (Test-Path (Join-Path $repoRootLocal "examples\daily-minimal\minimal.md"))) -or
+                            ($env:GROKGOD_SRC -and (Test-Path (Join-Path $env:GROKGOD_SRC "examples\daily-minimal\minimal.md")))
+
+    if (-not $hasLocalDailyMinimal) {
+        $dailyDlUrl = "$BaseUrl/$DailyMinimalAsset"
+        Write-Dim "Downloading daily minimal agent from $dailyDlUrl ..."
+        $tmpDailyDl = Join-Path $TmpDir $DailyMinimalAsset
+        try {
+            Invoke-WebRequest -Uri $dailyDlUrl -OutFile $tmpDailyDl -UseBasicParsing
+        } catch {
+            throw "Failed to download required asset '$DailyMinimalAsset' from $dailyDlUrl : $_"
+        }
+        if (-not (Test-Path -LiteralPath $tmpDailyDl)) {
+            throw "Download failed for asset '$DailyMinimalAsset'."
+        }
+
+        if (-not $ChecksumMap.ContainsKey($DailyMinimalAsset)) {
+            throw "Verification failed: No checksum entry found for asset '$DailyMinimalAsset' in SHA256SUMS."
+        }
+        $expDailyHash = $ChecksumMap[$DailyMinimalAsset]
+        $actDailyHash = (Get-FileHash -LiteralPath $tmpDailyDl -Algorithm SHA256).Hash.ToLower()
+        if ($actDailyHash -ne $expDailyHash) {
+            throw "Checksum verification failed for asset $DailyMinimalAsset (fail-closed). Expected: $expDailyHash, Actual: $actDailyHash"
+        }
+        Write-OK "Verified asset checksum: $DailyMinimalAsset ($actDailyHash)"
+        $downloadedDailyMinimal = $tmpDailyDl
+    }
+
+    # Ensure daily minimal agent is cached into GrokgodHome during download try
+    Install-DailyMinimalAgent -DownloadedPath $downloadedDailyMinimal
+
     # Check if already up to date when not forced
     if (-not $Force -and (Test-Path -LiteralPath $TargetExe) -and ($CurrentSha -eq $ActualHash)) {
         $IsAlreadyUpToDate = $true
@@ -574,16 +668,6 @@ try {
         $RequiredRuntimeScripts = @("grok-shim.ps1", "LauncherHelpers.ps1", "install.ps1")
         $RuntimeStagedFiles = @{}
 
-        # Resolve invariant local source locations once for all runtime assets.
-        $repoRootLocal = if ($PSScriptRoot) {
-            if (Test-Path (Join-Path $PSScriptRoot "src\shim\grok-shim.ps1")) {
-                $PSScriptRoot
-            } elseif (Test-Path (Join-Path $PSScriptRoot "..\..\src\shim\grok-shim.ps1")) {
-                Normalize-DirPath (Join-Path $PSScriptRoot "..\..")
-            } elseif (Test-Path (Join-Path $PSScriptRoot "..\src\shim\grok-shim.ps1")) {
-                Normalize-DirPath (Join-Path $PSScriptRoot "..")
-            } else { "" }
-        } else { "" }
         $thisInvPath = $MyInvocation.MyCommand.Path
         $externalInstallSource = $null
         if ($thisInvPath -and (Test-Path -LiteralPath $thisInvPath)) {

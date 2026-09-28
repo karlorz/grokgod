@@ -104,6 +104,7 @@ The Windows installer provides transactional install, update, and uninstall sema
 - **Destination-Volume Sibling Staging**: Stages candidate binary on the target volume (`candidate-<guid>.exe`) with bounded backups of prior components.
 - **Transactional Rollback**: Reverts completely to pristine prior state if candidate preflight fails, target is locked/running, or any failure occurs.
 - **Manifest Commit Point**: Commits `.source-version` (`SHA=...`, `PATCHSET=...`, `VERSION=07e35a3dfeed2f200d319ef6c893b5ea286d9a51`, `MODE=release`) and `manifest.json` last.
+- **Daily Minimal Agent**: Installs and updates the daily Minimal agent into `%USERPROFILE%\.grok\agents\minimal.md` (or `$env:GROK_HOME\agents\minimal.md`) from `examples/daily-minimal/minimal.md` (or release asset `daily-minimal.md`). This cooperating user agent is preserved on uninstall (never tracked in `manifest.files`). Official Grok invariant remains: never mutate `%USERPROFILE%\.grok\bin\grok.exe`.
 - **Clean Uninstall**: `install.ps1 -Uninstall` restores backups recorded in the manifest, deletes manifest-owned files, and preserves unrelated files.
 
 Source mode tracks upstream `origin/main` on bare `grok update` (fetching latest,

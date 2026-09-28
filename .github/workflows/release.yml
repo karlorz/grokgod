@@ -202,10 +202,11 @@ jobs:
           find downloaded-artifacts -type f \( -name "grokgod-*" ! -name "SHA256SUMS-*" \) -exec cp {} release-assets/ \;
           cp install.sh install.ps1 release-assets/
           cp src/shim/grok-shim.ps1 src/shim/LauncherHelpers.ps1 release-assets/
+          cp examples/daily-minimal/minimal.md release-assets/daily-minimal.md
 
-          # Append checksums for runtime scripts to SHA256SUMS
+          # Append checksums for runtime scripts and assets to SHA256SUMS
           cd release-assets
-          for script_asset in grok-shim.ps1 LauncherHelpers.ps1 install.ps1; do
+          for script_asset in grok-shim.ps1 LauncherHelpers.ps1 install.ps1 daily-minimal.md; do
             if command -v sha256sum >/dev/null 2>&1; then
               sha256sum "$script_asset" >> SHA256SUMS
             elif command -v shasum >/dev/null 2>&1; then
@@ -235,7 +236,7 @@ jobs:
             echo "::error::missing required asset release-assets/grokgod-windows-x64.exe"
             exit 1
           fi
-          for runtime in grok-shim.ps1 LauncherHelpers.ps1 install.ps1; do
+          for runtime in grok-shim.ps1 LauncherHelpers.ps1 install.ps1 daily-minimal.md; do
             if [ ! -s "release-assets/$runtime" ]; then
               echo "::error::missing required runtime asset release-assets/$runtime"
               exit 1

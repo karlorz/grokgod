@@ -62,6 +62,7 @@ $InstallScriptPath = (Resolve-Path $InstallScript).Path
 $RepoRoot = (Resolve-Path "$PSScriptRoot\..\..").Path
 $ShimSource = Join-Path $RepoRoot "src\shim\grok-shim.ps1"
 $HelpersSource = Join-Path $RepoRoot "src\shim\LauncherHelpers.ps1"
+$DailyMinimalSource = Join-Path $RepoRoot "examples\daily-minimal\minimal.md"
 
 # Determine host PowerShell engine to align child processes with outer suite
 $HostShell = if ($PSVersionTable.PSEdition -eq "Core") { "pwsh.exe" } else { "powershell.exe" }
@@ -219,18 +220,21 @@ if ($cscExe) {
 
 $mockExeHash = (Get-FileHash -LiteralPath $mockExeSrc -Algorithm SHA256).Hash.ToLower()
 
-# Copy runtime scripts to mock server
+# Copy runtime scripts and assets to mock server
 $mockShim = Join-Path $mockServerDir "grok-shim.ps1"
 $mockHelpers = Join-Path $mockServerDir "LauncherHelpers.ps1"
 $mockInstall = Join-Path $mockServerDir "install.ps1"
+$mockDailyMinimal = Join-Path $mockServerDir "daily-minimal.md"
 
 Copy-Item $ShimSource $mockShim -Force
 Copy-Item $HelpersSource $mockHelpers -Force
 Copy-Item $InstallScriptPath $mockInstall -Force
+Copy-Item $DailyMinimalSource $mockDailyMinimal -Force
 
 $mockShimHash = (Get-FileHash -LiteralPath $mockShim -Algorithm SHA256).Hash.ToLower()
 $mockHelpersHash = (Get-FileHash -LiteralPath $mockHelpers -Algorithm SHA256).Hash.ToLower()
 $mockInstallHash = (Get-FileHash -LiteralPath $mockInstall -Algorithm SHA256).Hash.ToLower()
+$mockDailyMinimalHash = (Get-FileHash -LiteralPath $mockDailyMinimal -Algorithm SHA256).Hash.ToLower()
 
 # Create SHA256SUMS containing exact entries for binary and all runtime scripts
 $sumsFile = Join-Path $mockServerDir "SHA256SUMS"
@@ -238,7 +242,8 @@ $sumsLines = @(
     "$mockExeHash *grokgod-windows-x64.exe",
     "$mockShimHash *grok-shim.ps1",
     "$mockHelpersHash *LauncherHelpers.ps1",
-    "$mockInstallHash *install.ps1"
+    "$mockInstallHash *install.ps1",
+    "$mockDailyMinimalHash *daily-minimal.md"
 )
 Set-Content -LiteralPath $sumsFile -Value ($sumsLines -join "`r`n") -Encoding ASCII
 
@@ -348,6 +353,14 @@ try {
     $resInstall = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile } -ScriptArgs @("-Prefix", $targetPrefix, "-Force")
     Assert-Test ($resInstall.ExitCode -eq 0) "Install succeeds with pre-existing launcher"
 
+    $expectedAgentPath = Join-Path $testUserProfile ".grok\agents\minimal.md"
+    Assert-Test (Test-Path -LiteralPath $expectedAgentPath) "Daily minimal agent installed to user profile .grok/agents/minimal.md"
+    if (Test-Path -LiteralPath $expectedAgentPath) {
+        $instAgentHash = (Get-FileHash -LiteralPath $expectedAgentPath -Algorithm SHA256).Hash
+        $tmplAgentHash = (Get-FileHash -LiteralPath $DailyMinimalSource -Algorithm SHA256).Hash
+        Assert-Test ($instAgentHash -eq $tmplAgentHash) "Installed daily minimal agent matches source template bytes"
+    }
+
     $installedGrokCmd = Join-Path $targetBin "grok.cmd"
     $manifestFile = Join-Path $stageHome "manifest.json"
     $backupDir = Join-Path $stageHome "backups"
@@ -366,6 +379,22 @@ try {
         $restoredContent = Get-Content -LiteralPath $preExistingGrokCmd -Raw
         Assert-Test ($restoredContent.Trim() -eq $preExistingContent.Trim()) "Restored launcher content matches original prior content exactly"
     }
+    Assert-Test (Test-Path -LiteralPath $expectedAgentPath) "Daily minimal agent survives uninstall (not owned by manifest)"
+
+    # Overwrite agent with STALE content and verify -Force reinstall refreshes it
+    Set-Content -LiteralPath $expectedAgentPath -Value "STALE" -Encoding ASCII
+    $resReinstallForce = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile } -ScriptArgs @("-Prefix", $targetPrefix, "-Force")
+    Assert-Test ($resReinstallForce.ExitCode -eq 0) "Force reinstall succeeds"
+    $refreshedAgentContent = Get-Content -LiteralPath $expectedAgentPath -Raw
+    $templateAgentContent = Get-Content -LiteralPath $DailyMinimalSource -Raw
+    Assert-Test ($refreshedAgentContent.Trim() -eq $templateAgentContent.Trim()) "Force reinstall replaces stale agent with template"
+
+    # Already-up-to-date / second install with identical exe hash still writes/refreshes the agent
+    Set-Content -LiteralPath $expectedAgentPath -Value "STALE_UP_TO_DATE" -Encoding ASCII
+    $resUpToDate = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile } -ScriptArgs @("-Prefix", $targetPrefix)
+    Assert-Test ($resUpToDate.ExitCode -eq 0) "Already-up-to-date install succeeds"
+    $upToDateAgentContent = Get-Content -LiteralPath $expectedAgentPath -Raw
+    Assert-Test ($upToDateAgentContent.Trim() -eq $templateAgentContent.Trim()) "Already-up-to-date install refreshes agent"
 
     # -------------------------------------------------------------------------
     # Test 5: Full Rollback Across All Failure Injection Points
@@ -590,6 +619,7 @@ try {
     # -NoUpgrade should exit 0 immediately
     $resNoUp = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile } -ScriptArgs @("-Prefix", $targetPrefix, "-NoUpgrade")
     Assert-Test ($resNoUp.ExitCode -eq 0) "-NoUpgrade exits 0 without upgrade"
+    Assert-Test (Test-Path -LiteralPath $expectedAgentPath) "-NoUpgrade path ensures daily minimal agent exists"
 
     # Corrupt stamp file -> installer detects and recovers cleanly on update with -Force
     Set-Content -LiteralPath (Join-Path $stageHome ".source-version") -Value "CORRUPTED_STAMP" -Encoding ASCII

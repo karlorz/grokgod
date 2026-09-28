@@ -190,6 +190,7 @@ assert 'release-assets/grokgod-windows-x64.exe' in content, 'Create Release miss
 assert 'grok-shim.ps1' in content, 'release.yml missing grok-shim.ps1 runtime asset'
 assert 'LauncherHelpers.ps1' in content, 'release.yml missing LauncherHelpers.ps1 runtime asset'
 assert 'install.ps1' in content, 'release.yml missing install.ps1 runtime asset'
+assert 'daily-minimal.md' in content, 'release.yml missing daily-minimal.md asset'
 assert 'release-assets/\$runtime' in content, 'release.yml missing runtime asset existence check'
 assert 'SHA256SUMS' in content, 'release.yml missing SHA256SUMS check'
 assert 'sort SHA256SUMS -o SHA256SUMS' in content, 'Release assembly must preserve duplicate checksum entries for validation'

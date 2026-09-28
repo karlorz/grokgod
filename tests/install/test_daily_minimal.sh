@@ -83,4 +83,11 @@ grep -q "examples/daily-minimal/minimal.md" "$INSTALL_SCRIPT" || fail "install.s
 grep -q 'target="\$GROK_HOME/agents/minimal.md"' "$INSTALL_SCRIPT" || fail "install.sh does not set the daily agent target"
 grep -q 'cp "\$template" "\$target"' "$INSTALL_SCRIPT" || fail "install.sh does not copy the daily template onto that target"
 
+# 11. install.ps1 contains references to daily minimal agent
+INSTALL_PS1="$REPO_ROOT/install.ps1"
+[ -f "$INSTALL_PS1" ] || fail "install.ps1 not found at $INSTALL_PS1"
+grep -q "daily-minimal.md" "$INSTALL_PS1" || fail "install.ps1 does not reference 'daily-minimal.md'"
+grep -q "examples/daily-minimal/minimal.md" "$INSTALL_PS1" || fail "install.ps1 does not reference 'examples/daily-minimal/minimal.md'"
+grep -q "Install-DailyMinimalAgent" "$INSTALL_PS1" || fail "install.ps1 does not define or call 'Install-DailyMinimalAgent'"
+
 echo "PASS: daily minimal assertions verified"
