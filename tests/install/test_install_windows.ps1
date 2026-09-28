@@ -719,13 +719,25 @@ try {
     # 4. Deterministic outer-command finalize failure after transaction commit:
     # Outer returns nonzero/actionable diagnostic, installed changed-updater marker and committed binary/stamp remain (no rollback), launchers remain committed
     # Stage an updated install.ps1 that contains a test-only failure condition during -Finalize when a test env var is set
-    $testFailureHookMarker = @"
-if (`$Finalize -and `$env:GROKGOD_TEST_FAIL_FINALIZE -eq "1") {
-    Write-Err "Test simulated failure inside finalize mode."
-    exit 42
-}
-"@
-    $failingInstallContent = "# UPDATED_INSTALLER_MARKER_V4_FAIL`r`n" + $testFailureHookMarker + "`r`n" + (Get-Content -LiteralPath $mockInstall -Raw)
+    $failingInstallBase = Get-Content -LiteralPath $mockInstall -Raw
+    $installerNewline = if ($failingInstallBase.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $testFailureHookMarker = @(
+        'if ($Finalize -and $env:GROKGOD_TEST_FAIL_FINALIZE -eq "1") {'
+        '    Write-Err "Test simulated failure inside finalize mode."'
+        '    exit 42'
+        '}'
+    ) -join $installerNewline
+    $failureHookAnchor = 'if ($Finalize) {' + $installerNewline + '    Write-Step "Running post-update finalize convergence..."' + $installerNewline
+    $failureHookAnchorCount = ([regex]::Matches($failingInstallBase, [regex]::Escape($failureHookAnchor))).Count
+    Assert-Test ($failureHookAnchorCount -eq 1) "Finalize failure fixture found exactly one finalize-branch hook anchor"
+    if ($failureHookAnchorCount -ne 1) {
+        throw "Expected exactly one finalize-branch hook anchor, found $failureHookAnchorCount."
+    }
+    $failingInstallContent = $failingInstallBase.Replace(
+        $failureHookAnchor,
+        $failureHookAnchor + $testFailureHookMarker + $installerNewline
+    )
+    $failingInstallContent = "# UPDATED_INSTALLER_MARKER_V4_FAIL$installerNewline" + $failingInstallContent
     Set-Content -LiteralPath $mockInstall -Value $failingInstallContent -Encoding UTF8
     $failingInstallHash = (Get-FileHash -LiteralPath $mockInstall -Algorithm SHA256).Hash.ToLower()
 
@@ -747,11 +759,9 @@ if (`$Finalize -and `$env:GROKGOD_TEST_FAIL_FINALIZE -eq "1") {
     Assert-Test ($postFailState.GrokCmdContent -match "grok-shim.ps1") "Committed grok.cmd launcher remains intact after finalize failure"
     Assert-Test ($postFailState.GrokgodCmdContent -match "grok-shim.ps1") "Committed grokgod.cmd launcher remains intact after finalize failure"
 
-    # Restore mockInstall with working content without failure hook for subsequent tests
-    Set-Content -LiteralPath $mockInstall -Value $updatedInstallContent -Encoding UTF8
-    Set-Content -LiteralPath $sumsFile -Value ($finalizeSumsLines -join "`r`n") -Encoding ASCII
-
-    # 5. If installer bytes did not change, finalize is NOT spawned
+    # 5. The failure hook is inert without its test-only environment variable.
+    # Keep the exact same installer bytes on the server so this run verifies
+    # that an unchanged installer does not spawn finalize.
     $resNoChange = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile } -ScriptArgs @("-Prefix", $targetPrefix, "-Force") -ScriptPath $installedUpdaterPath
     Assert-Test ($resNoChange.ExitCode -eq 0) "Second -Force install with unchanged installer succeeds"
     Assert-Test ($resNoChange.Combined -notmatch "Installer updated; invoking post-update convergence finalize") "Unchanged installer does NOT spawn finalize"
