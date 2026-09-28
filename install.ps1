@@ -30,7 +30,10 @@ param(
     [switch]$NoUpgrade,
     [switch]$Force,
     [switch]$Uninstall,
-    [string]$Prefix = ""
+    [string]$Prefix = "",
+    [switch]$Finalize,
+    [string]$FinalizeBaseUrl = "",
+    [string]$FinalizeTag = ""
 )
 
 Set-StrictMode -Version Latest
@@ -360,6 +363,113 @@ function Install-DailyMinimalAgent([string]$DownloadedPath = "") {
     Write-OK "Installed daily minimal agent to $target"
 }
 
+function Get-ChecksumMap([string]$SumsPath) {
+    if (-not (Test-Path -LiteralPath $SumsPath)) {
+        throw "Verification failed: Checksum file not found at '$SumsPath'."
+    }
+    $sumLines = Get-Content -LiteralPath $SumsPath -ErrorAction Stop
+    $map = @{}
+    foreach ($line in $sumLines) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith("#")) { continue }
+        if ($trimmed -match '^([0-9a-fA-F]{64})\s+[\* ]?(.+)$') {
+            $hash = $matches[1].ToLower()
+            $fileName = [System.IO.Path]::GetFileName($matches[2].Trim())
+            if ($map.ContainsKey($fileName)) {
+                throw "Verification failed: Multiple checksum entries found for '$fileName' in SHA256SUMS."
+            }
+            $map[$fileName] = $hash
+        }
+    }
+    return $map
+}
+
+# -----------------------------------------------------------------------------
+# Finalize Mode: Lightweight Post-Update Convergence
+# -----------------------------------------------------------------------------
+if ($Finalize) {
+    Write-Step "Running post-update finalize convergence..."
+
+    $effBaseUrl = ""
+    if ($FinalizeBaseUrl) {
+        $effBaseUrl = $FinalizeBaseUrl.TrimEnd('/')
+    } elseif ($FinalizeTag) {
+        $effTag = if ($FinalizeTag -eq "latest") { "latest" } elseif ($FinalizeTag -match "^v") { $FinalizeTag } else { "v$FinalizeTag" }
+        $effBaseUrl = if ($effTag -eq "latest") {
+            "https://github.com/$Repo/releases/latest/download"
+        } else {
+            "https://github.com/$Repo/releases/download/$effTag"
+        }
+    } elseif ($env:GROKGOD_DOWNLOAD_BASE_URL) {
+        $effBaseUrl = $env:GROKGOD_DOWNLOAD_BASE_URL.TrimEnd('/')
+    }
+
+    if (-not $effBaseUrl) {
+        Write-Err "Finalize failed: resolved release context base URL is empty."
+        exit 1
+    }
+
+    $finalizeTmpDir = Join-Path ([System.IO.Path]::GetTempPath()) "grokgod-finalize-$([Guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Force -Path $finalizeTmpDir | Out-Null
+
+    try {
+        $DailyMinimalAsset = "daily-minimal.md"
+        $dlSums = Join-Path $finalizeTmpDir "SHA256SUMS"
+        $dlAgent = Join-Path $finalizeTmpDir $DailyMinimalAsset
+
+        $sumsUrl = "$effBaseUrl/SHA256SUMS"
+        $agentUrl = "$effBaseUrl/$DailyMinimalAsset"
+
+        Write-Dim "Downloading SHA256SUMS from $sumsUrl ..."
+        try {
+            Invoke-WebRequest -Uri $sumsUrl -OutFile $dlSums -UseBasicParsing
+        } catch {
+            throw "Failed to download SHA256SUMS from $sumsUrl : $_"
+        }
+
+        if (-not (Test-Path -LiteralPath $dlSums)) {
+            throw "Download failed: SHA256SUMS missing in $finalizeTmpDir."
+        }
+
+        # Parse SHA256SUMS fail-closed
+        $finChecksumMap = Get-ChecksumMap -SumsPath $dlSums
+
+        if (-not $finChecksumMap.ContainsKey($DailyMinimalAsset)) {
+            throw "Verification failed: No checksum entry found for asset '$DailyMinimalAsset' in SHA256SUMS."
+        }
+
+        Write-Dim "Downloading $DailyMinimalAsset from $agentUrl ..."
+        try {
+            Invoke-WebRequest -Uri $agentUrl -OutFile $dlAgent -UseBasicParsing
+        } catch {
+            throw "Failed to download asset '$DailyMinimalAsset' from $agentUrl : $_"
+        }
+
+        if (-not (Test-Path -LiteralPath $dlAgent)) {
+            throw "Download failed: asset '$DailyMinimalAsset' missing in $finalizeTmpDir."
+        }
+
+        $expAgentHash = $finChecksumMap[$DailyMinimalAsset]
+        $actAgentHash = (Get-FileHash -LiteralPath $dlAgent -Algorithm SHA256).Hash.ToLower()
+        if ($actAgentHash -ne $expAgentHash) {
+            throw "Checksum verification failed for asset $DailyMinimalAsset (fail-closed). Expected: $expAgentHash, Actual: $actAgentHash"
+        }
+        Write-OK "Verified asset checksum: $DailyMinimalAsset ($actAgentHash)"
+
+        # Converge daily minimal agent
+        Install-DailyMinimalAgent -DownloadedPath $dlAgent
+        Write-OK "Post-update convergence finalize completed successfully."
+        exit 0
+    } catch {
+        Write-Err "Finalize convergence error: $_"
+        exit 1
+    } finally {
+        if (Test-Path -LiteralPath $finalizeTmpDir) {
+            Remove-Item -LiteralPath $finalizeTmpDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 if ($Uninstall) {
     Write-Step "Uninstalling grokgod..."
     Acquire-InstallLock
@@ -567,22 +677,7 @@ try {
     }
 
     # Checksum parsing: parse SHA256SUMS for TARGET_ASSET and runtime scripts
-    $SumsContent = Get-Content -LiteralPath $DownloadedSums -ErrorAction Stop
-    $ChecksumMap = @{}
-
-    foreach ($line in $SumsContent) {
-        $trimmed = $line.Trim()
-        if (-not $trimmed -or $trimmed.StartsWith("#")) { continue }
-        $parts = $trimmed -split '\s+', 2
-        if ($parts.Count -ge 2) {
-            $hashPart = $parts[0].Trim().ToLower()
-            $filePart = $parts[1].Trim().TrimStart('*')
-            if ($ChecksumMap.ContainsKey($filePart)) {
-                throw "Verification failed: Multiple checksum entries found for '$filePart' in SHA256SUMS."
-            }
-            $ChecksumMap[$filePart] = $hashPart
-        }
-    }
+    $ChecksumMap = Get-ChecksumMap -SumsPath $DownloadedSums
 
     if (-not $ChecksumMap.ContainsKey($TARGET_ASSET)) {
         throw "Verification failed: No checksum entry found for '$TARGET_ASSET' in SHA256SUMS."
@@ -940,6 +1035,13 @@ try {
     $installedHelpers = Join-Path $installedShimDir "LauncherHelpers.ps1"
     $installedSelf    = Join-Path $GrokgodHome "install.ps1"
 
+    $priorInstalledSelfHash = ""
+    if (Test-Path -LiteralPath $installedSelf) {
+        try {
+            $priorInstalledSelfHash = (Get-FileHash -LiteralPath $installedSelf -Algorithm SHA256).Hash.ToLower()
+        } catch {}
+    }
+
     Tx-BackupTarget $installedShimPs1
     Tx-BackupTarget $installedHelpers
     Tx-BackupTarget $installedSelf
@@ -1056,6 +1158,37 @@ MODE=release
     Write-OK "Installed binary:    $TargetExe"
     Write-OK "Installed launchers: $grokCmdPath and $grokgodCmdPath"
     Write-OK "Stamp recorded:      SHA=$ActualHash PATCHSET=$Tag VERSION=$StampVersion"
+
+    # -------------------------------------------------------------------------
+    # Post-Update Convergence: One-time Finalize Spawning
+    # -------------------------------------------------------------------------
+    # If the installer itself was updated (content bytes changed), invoke that
+    # newly installed updater exactly once in lightweight finalize mode after commit.
+    if ($RuntimeStagedFiles.ContainsKey("install.ps1") -and (Test-Path -LiteralPath $installedSelf)) {
+        $postInstalledSelfHash = ""
+        try {
+            $postInstalledSelfHash = (Get-FileHash -LiteralPath $installedSelf -Algorithm SHA256).Hash.ToLower()
+        } catch {}
+
+        $installerChanged = $postInstalledSelfHash -and ($priorInstalledSelfHash -ne $postInstalledSelfHash)
+        if ($installerChanged) {
+            Write-Step "Installer updated; invoking post-update convergence finalize..."
+            $childShell = if ($PSVersionTable.PSEdition -eq "Core") { "pwsh.exe" } else { "powershell.exe" }
+            $finArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $installedSelf, "-Finalize", "-FinalizeBaseUrl", $BaseUrl)
+            if ($Prefix) {
+                $finArgs += @("-Prefix", $Prefix)
+            }
+
+            & $childShell @finArgs
+            $finalizeExitCode = $LASTEXITCODE
+            if ($finalizeExitCode -ne 0) {
+                Write-Err "Post-update convergence finalize failed with exit code $finalizeExitCode."
+                exit $finalizeExitCode
+            }
+            Write-OK "Post-update convergence finalized successfully."
+        }
+    }
+
     exit 0
 
 } catch {

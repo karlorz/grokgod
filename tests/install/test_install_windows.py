@@ -87,6 +87,9 @@ def main():
         check("$Force" in pblock, "Param $Force present")
         check("$Uninstall" in pblock, "Param $Uninstall present")
         check("$Prefix" in pblock, "Param $Prefix present")
+        check("$Finalize" in pblock, "Param $Finalize present")
+        check("$FinalizeBaseUrl" in pblock, "Param $FinalizeBaseUrl present")
+        check("$FinalizeTag" in pblock, "Param $FinalizeTag present")
 
     # 4. Architecture check: rejects ARM64 before any network access
     arch_pos = src.find("PROCESSOR_ARCHITECTURE")
@@ -232,7 +235,15 @@ def main():
     else:
         check(False, "Could not find $allOwnedFiles block in install.ps1")
 
-    # 26. Native Test Suite Portability (no Add-Type -OutputAssembly)
+    # 26. Post-Update Convergence (Finalize Mode)
+    check("if ($Finalize)" in src, "install.ps1 implements Finalize branch")
+    check("Post-update convergence" in src, "install.ps1 includes post-update convergence messaging")
+    check("priorInstalledSelfHash" in src and "postInstalledSelfHash" in src, "install.ps1 checks installer byte hash change before spawning finalize")
+    check("Acquire-InstallLock" not in src[src.find("if ($Finalize)"):src.find("if ($Uninstall)")], "Finalize mode does not acquire install lock")
+    check("CandidateSibling" not in src[src.find("if ($Finalize)"):src.find("if ($Uninstall)")], "Finalize mode does not mutate binary candidate")
+    check("Write-ManifestFile" not in src[src.find("if ($Finalize)"):src.find("if ($Uninstall)")], "Finalize mode does not rewrite manifest")
+
+    # 27. Native Test Suite Portability (no Add-Type -OutputAssembly)
     if os.path.isfile(NATIVE_SHIM_TEST):
         with open(NATIVE_SHIM_TEST, "r", encoding="utf-8") as f:
             shim_test_src = f.read()
@@ -270,9 +281,20 @@ def main():
         test_9_count = len(re.findall(r'Write-Host\s+"Test 9:', install_test_src))
         test_10_count = len(re.findall(r'Write-Host\s+"Test 10:', install_test_src))
         test_11_count = len(re.findall(r'Write-Host\s+"Test 11:', install_test_src))
+        test_12_count = len(re.findall(r'Write-Host\s+"Test 12:', install_test_src))
         check(test_9_count == 1, f"Native install test contains exactly one Test 9 heading (found {test_9_count})")
         check(test_10_count == 1, f"Native install test contains exactly one Test 10 heading (found {test_10_count})")
         check(test_11_count == 1, f"Native install test contains exactly one Test 11 heading (found {test_11_count})")
+        check(test_12_count == 1, f"Native install test contains exactly one Test 12 heading (found {test_12_count})")
+        check("Test 12: Post-Update Convergence" in install_test_src, "Native install test includes Test 12 for post-update convergence")
+        check("Direct -Finalize leaves TargetExe hash unchanged" in install_test_src, "Native install test asserts TargetExe hash unchanged by finalize")
+        check("Direct -Finalize leaves grok.cmd content unchanged" in install_test_src, "Native install test asserts launchers unchanged by finalize")
+        check("Direct -Finalize leaves manifest unchanged" in install_test_src, "Native install test asserts manifest/stamp unchanged by finalize")
+        check("Direct -Finalize does not recurse" in install_test_src, "Native install test asserts direct finalize does not recurse")
+        check("Outer command contains exactly one finalize invocation" in install_test_src, "Native install test asserts single finalize invocation")
+        check("Outer command contains exactly one finalize completion" in install_test_src, "Native install test asserts single finalize completion")
+        check("Installed changed updater remains committed after finalize failure (no rollback)" in install_test_src, "Native install test asserts no rollback on finalize failure")
+        check("Committed binary remains intact after finalize failure" in install_test_src, "Native install test asserts binary intact on finalize failure")
         check("fakeOfficialDir" not in install_test_src, "Native install test contains no stale fakeOfficialDir references")
 
     if os.path.isfile(NATIVE_SHIM_TEST):

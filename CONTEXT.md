@@ -29,6 +29,18 @@ _Avoid_: loading daily `~/.grok` plugins into an eval session, asking the
 model to `read_file` a JPEG (placeholder, not native vision), renaming the
 default grok-build agent to Minimal
 
+**Post-update convergence (Windows)**:
+One-visible-command invocation of the updated `install.ps1` in a lightweight `-Finalize`
+mode following binary transaction commit and lock release. Triggered only when the installed
+updater script bytes change. Finalize operates under the resolved release context to converge
+auxiliary release assets (such as `daily-minimal.md` and `SHA256SUMS`) without re-downloading or
+re-checking binary assets, altering launchers, or acquiring transaction locks. Finalize errors
+fail closed as nonzero exits with actionable diagnostics while leaving the committed binary
+transaction intact. *Migration truth*: the first release containing this mechanism cannot
+retroactively patch an executing v1.0.38 installer; this first-hop boundary is documented, and
+all mechanism-equipped versions guarantee convergence for subsequent updater upgrades.
+_Avoid_: double-downloading binaries, recursive finalize chaining, silently swallowing finalize failures
+
 **Auth-decoupled hosted splice**:
 Decoupling of the server-side `HostedTool::WebSearch` splice from the client-side `WebSearchConfig`
 credential gate in grokgod `0007`. Prevents logout state from stripping server-side hosted web search

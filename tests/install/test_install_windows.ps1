@@ -25,6 +25,7 @@
      13. Manifest-based uninstall: restores backups, removes owned files, preserves unrelated files, idempotent
      14. Active and stale lock mutual exclusion policy
      15. Server health and readiness probe: fails closed with clear diagnostic if mock server cannot start
+     16. Post-update convergence: one-visible-command invocation of changed updater in finalize mode
 #>
 param(
     [string]$InstallScript = "$PSScriptRoot\..\..\install.ps1"
@@ -386,15 +387,15 @@ try {
     $resReinstallForce = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile } -ScriptArgs @("-Prefix", $targetPrefix, "-Force")
     Assert-Test ($resReinstallForce.ExitCode -eq 0) "Force reinstall succeeds"
     $refreshedAgentContent = Get-Content -LiteralPath $expectedAgentPath -Raw
-    $templateAgentContent = Get-Content -LiteralPath $DailyMinimalSource -Raw
-    Assert-Test ($refreshedAgentContent.Trim() -eq $templateAgentContent.Trim()) "Force reinstall replaces stale agent with template"
+    $expectedTmplContent = Get-Content -LiteralPath $DailyMinimalSource -Raw
+    Assert-Test ($refreshedAgentContent.Trim() -eq $expectedTmplContent.Trim()) "Force reinstall replaces stale agent with template"
 
     # Already-up-to-date / second install with identical exe hash still writes/refreshes the agent
     Set-Content -LiteralPath $expectedAgentPath -Value "STALE_UP_TO_DATE" -Encoding ASCII
     $resUpToDate = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile } -ScriptArgs @("-Prefix", $targetPrefix)
     Assert-Test ($resUpToDate.ExitCode -eq 0) "Already-up-to-date install succeeds"
     $upToDateAgentContent = Get-Content -LiteralPath $expectedAgentPath -Raw
-    Assert-Test ($upToDateAgentContent.Trim() -eq $templateAgentContent.Trim()) "Already-up-to-date install refreshes agent"
+    Assert-Test ($upToDateAgentContent.Trim() -eq $expectedTmplContent.Trim()) "Already-up-to-date install refreshes agent"
 
     # -------------------------------------------------------------------------
     # Test 5: Full Rollback Across All Failure Injection Points
@@ -647,6 +648,113 @@ try {
             $fileLockStream.Dispose()
         }
     }
+
+    # -------------------------------------------------------------------------
+    # Test 12: Post-Update Convergence (Finalize Mode)
+    # -------------------------------------------------------------------------
+    Write-Host "Test 12: Post-Update Convergence (Finalize Mode)"
+    # 1. Direct -Finalize invocation: verifies daily minimal agent convergence without binary/launcher mutation or lock acquisition
+    # Snapshot system state before direct -Finalize
+    $preDirectFinState = Get-SnapshotState
+    $testFinalizeAgent = Join-Path $testUserProfile ".grok\agents\minimal.md"
+    Set-Content -LiteralPath $testFinalizeAgent -Value "STALE_BEFORE_FINALIZE" -Encoding ASCII
+
+    $resDirectFin = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile } -ScriptArgs @("-Prefix", $targetPrefix, "-Finalize", "-FinalizeBaseUrl", $httpUrl) -ScriptPath $installedUpdaterPath
+    Assert-Test ($resDirectFin.ExitCode -eq 0) "Direct -Finalize invocation succeeds with exit 0"
+    $directFinAgentContent = Get-Content -LiteralPath $testFinalizeAgent -Raw
+    Assert-Test ($directFinAgentContent.Trim() -eq $expectedTmplContent.Trim()) "Finalize converged daily minimal agent to template"
+
+    # Invariance check: TargetExe hash, grok.cmd and grokgod.cmd content, shim/helper hashes, manifest/stamp must remain unchanged
+    $postDirectFinState = Get-SnapshotState
+    Assert-Test ($preDirectFinState.ExeHash -eq $postDirectFinState.ExeHash) "Direct -Finalize leaves TargetExe hash unchanged"
+    Assert-Test ($preDirectFinState.GrokCmdContent -eq $postDirectFinState.GrokCmdContent) "Direct -Finalize leaves grok.cmd content unchanged"
+    Assert-Test ($preDirectFinState.GrokgodCmdContent -eq $postDirectFinState.GrokgodCmdContent) "Direct -Finalize leaves grokgod.cmd content unchanged"
+    Assert-Test ($preDirectFinState.ShimPs1Hash -eq $postDirectFinState.ShimPs1Hash) "Direct -Finalize leaves shim hash unchanged"
+    Assert-Test ($preDirectFinState.HelpersPs1Hash -eq $postDirectFinState.HelpersPs1Hash) "Direct -Finalize leaves helpers hash unchanged"
+    Assert-Test ($preDirectFinState.ManifestContent -eq $postDirectFinState.ManifestContent) "Direct -Finalize leaves manifest unchanged"
+    Assert-Test ($preDirectFinState.StampContent -eq $postDirectFinState.StampContent) "Direct -Finalize leaves stamp unchanged"
+    Assert-Test ($preDirectFinState.InstallPs1Hash -eq $postDirectFinState.InstallPs1Hash) "Direct -Finalize leaves install.ps1 hash unchanged"
+
+    # Assert direct -Finalize does not recurse (does not contain child spawn logs or duplicate finalize steps)
+    $directFinStepMatches = [regex]::Matches($resDirectFin.Combined, "Running post-update finalize convergence")
+    Assert-Test ($directFinStepMatches.Count -eq 1) "Direct -Finalize does not recurse (contains exactly one finalize execution)"
+    Assert-Test ($resDirectFin.Combined -notmatch "Installer updated; invoking post-update convergence finalize") "Direct -Finalize does not spawn child updater"
+
+    # 2. Direct -Finalize failure produces nonzero exit code and actionable diagnostic
+    $resFailFin = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = "http://127.0.0.1:9/nonexistent"; "USERPROFILE" = $testUserProfile } -ScriptArgs @("-Prefix", $targetPrefix, "-Finalize", "-FinalizeBaseUrl", "http://127.0.0.1:9/nonexistent") -ScriptPath $installedUpdaterPath
+    Assert-Test ($resFailFin.ExitCode -ne 0) "Finalize failure exits nonzero"
+    Assert-Test ($resFailFin.Combined -match "Finalize convergence error" -or $resFailFin.Combined -match "Failed to download") "Finalize failure yields actionable error diagnostic"
+
+    # 3. Invoking changed updater spawns finalize once after commit/lock release
+    # Stage an updated install.ps1 on mock server with a unique marker comment
+    $updatedInstallContent = "# UPDATED_INSTALLER_MARKER_V3`r`n" + (Get-Content -LiteralPath $mockInstall -Raw)
+    Set-Content -LiteralPath $mockInstall -Value $updatedInstallContent -Encoding UTF8
+    $newInstallHash = (Get-FileHash -LiteralPath $mockInstall -Algorithm SHA256).Hash.ToLower()
+
+    # Update SHA256SUMS with new install.ps1 hash
+    $finalizeSumsLines = @(
+        "$mockExeHash *grokgod-windows-x64.exe",
+        "$newShimHash *grok-shim.ps1",
+        "$mockHelpersHash *LauncherHelpers.ps1",
+        "$newInstallHash *install.ps1",
+        "$mockDailyMinimalHash *daily-minimal.md"
+    )
+    Set-Content -LiteralPath $sumsFile -Value ($finalizeSumsLines -join "`r`n") -Encoding ASCII
+
+    # Stale the agent file before the update
+    Set-Content -LiteralPath $testFinalizeAgent -Value "STALE_BEFORE_CONVERGENCE_TEST" -Encoding ASCII
+
+    # Run upgrade using -Force with mock server providing changed install.ps1
+    $resConvergence = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile } -ScriptArgs @("-Prefix", $targetPrefix, "-Force") -ScriptPath $installedUpdaterPath
+    Assert-Test ($resConvergence.ExitCode -eq 0) "Upgrade with changed installer succeeds"
+    # Assert changed-installer outer command contains exactly one finalize invocation and exactly one completion
+    $finInvokeMatches = [regex]::Matches($resConvergence.Combined, "Installer updated; invoking post-update convergence finalize")
+    $finCompleteMatches = [regex]::Matches($resConvergence.Combined, "Post-update convergence finalized successfully")
+    Assert-Test ($finInvokeMatches.Count -eq 1) "Outer command contains exactly one finalize invocation"
+    Assert-Test ($finCompleteMatches.Count -eq 1) "Outer command contains exactly one finalize completion"
+
+    $convergedAgentContent = Get-Content -LiteralPath $testFinalizeAgent -Raw
+    Assert-Test ($convergedAgentContent.Trim() -eq $expectedTmplContent.Trim()) "Daily minimal agent converged via post-update finalize invocation"
+
+    # 4. Deterministic outer-command finalize failure after transaction commit:
+    # Outer returns nonzero/actionable diagnostic, installed changed-updater marker and committed binary/stamp remain (no rollback), launchers remain committed
+    # Stage an updated install.ps1 that contains a test-only failure condition during -Finalize when a test env var is set
+    $testFailureHookMarker = @"
+if (`$Finalize -and `$env:GROKGOD_TEST_FAIL_FINALIZE -eq "1") {
+    Write-Err "Test simulated failure inside finalize mode."
+    exit 42
+}
+"@
+    $failingInstallContent = "# UPDATED_INSTALLER_MARKER_V4_FAIL`r`n" + $testFailureHookMarker + "`r`n" + (Get-Content -LiteralPath $mockInstall -Raw)
+    Set-Content -LiteralPath $mockInstall -Value $failingInstallContent -Encoding UTF8
+    $failingInstallHash = (Get-FileHash -LiteralPath $mockInstall -Algorithm SHA256).Hash.ToLower()
+
+    $finalizeSumsLinesFail = $finalizeSumsLines -replace '^[0-9a-fA-F]{64}(\s+[\* ]?install\.ps1)$', "$failingInstallHash`$1"
+    Set-Content -LiteralPath $sumsFile -Value ($finalizeSumsLinesFail -join "`r`n") -Encoding ASCII
+
+    $resOuterFail = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile; "GROKGOD_TEST_FAIL_FINALIZE" = "1" } -ScriptArgs @("-Prefix", $targetPrefix, "-Force") -ScriptPath $installedUpdaterPath
+    Assert-Test ($resOuterFail.ExitCode -eq 42) "Outer command propagates finalize failure exit code (42)"
+    Assert-Test ($resOuterFail.Combined -match "Post-update convergence finalize failed with exit code 42") "Outer command reports actionable diagnostic for finalize failure"
+
+    # Verify no rollback: installed changed updater marker remains in place
+    $installedUpdaterContent = Get-Content -LiteralPath $installedUpdaterPath -Raw
+    Assert-Test ($installedUpdaterContent -match "UPDATED_INSTALLER_MARKER_V4_FAIL") "Installed changed updater remains committed after finalize failure (no rollback)"
+
+    # Binary, stamp, and launchers remain committed
+    $postFailState = Get-SnapshotState
+    Assert-Test ($postFailState.ExeHash -eq $mockExeHash) "Committed binary remains intact after finalize failure"
+    Assert-Test ($postFailState.StampContent -match "SHA=$mockExeHash") "Committed stamp remains intact after finalize failure"
+    Assert-Test ($postFailState.GrokCmdContent -match "grok-shim.ps1") "Committed grok.cmd launcher remains intact after finalize failure"
+    Assert-Test ($postFailState.GrokgodCmdContent -match "grok-shim.ps1") "Committed grokgod.cmd launcher remains intact after finalize failure"
+
+    # Restore mockInstall with working content without failure hook for subsequent tests
+    Set-Content -LiteralPath $mockInstall -Value $updatedInstallContent -Encoding UTF8
+    Set-Content -LiteralPath $sumsFile -Value ($finalizeSumsLines -join "`r`n") -Encoding ASCII
+
+    # 5. If installer bytes did not change, finalize is NOT spawned
+    $resNoChange = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile } -ScriptArgs @("-Prefix", $targetPrefix, "-Force") -ScriptPath $installedUpdaterPath
+    Assert-Test ($resNoChange.ExitCode -eq 0) "Second -Force install with unchanged installer succeeds"
+    Assert-Test ($resNoChange.Combined -notmatch "Installer updated; invoking post-update convergence finalize") "Unchanged installer does NOT spawn finalize"
 } finally {
     if ($serverProc -and -not $serverProc.HasExited) {
         $serverProc.Kill()
