@@ -1,7 +1,8 @@
 #!/bin/sh
 set -eu
 
-# Verify the credit-limit model-switch retry patch contract and stacked apply.
+# Verify paid credit/weekly-limit and free-plan usage-limit model-switch retry
+# contracts, plus stacked apply.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -10,17 +11,27 @@ PIN_SHA="07e35a3dfeed2f200d319ef6c893b5ea286d9a51"
 REAL_GROK_BUILD="${REAL_GROK_BUILD:-/Users/karlchow/Desktop/code/grok-build}"
 [ "${CI:-0}" = "1" ] && REAL_GROK_BUILD="/nonexistent"
 
-echo "=== Running 0016 credit-limit switch-model patch tests ==="
+echo "=== Running 0016 usage-limit switch-model patch tests ==="
 [ -s "$PATCH_0016" ] || { echo "FAIL: 0016 patch missing or empty" >&2; exit 1; }
 
 for needle in \
   'Switch model & retry' \
-  'CREDIT_LIMIT_SWITCH_MODEL_OPTION_ID' \
+  'USAGE_LIMIT_SWITCH_MODEL_OPTION_ID' \
   'switch-model-and-retry' \
   'OpenCreditLimitModelPicker' \
   'open_model_arg_picker' \
+  'switch_model_and_retry_option' \
   'credit_limit_model_retry_pending' \
   'dispatch_retry_credit_limit_prompt' \
+  'free_usage_blocked' \
+  'UpsellReason::FreeUsageLimit' \
+  'free_usage_upsell_shows_upgrade_urls_then_switch_model_retry' \
+  'free_usage_failure_captures_exact_prompt_before_finish_turn' \
+  'free-usage prompt must survive finish_turn' \
+  'free_usage_translate_local_submit_maps_upgrades_and_switch' \
+  'restricted_command_translate_ignores_free_usage_switch_sentinel' \
+  'free_usage_switch_model_success_retries_stashed_prompt_once' \
+  'restricted-command upsell must not expose the free-usage retry action' \
   'credit_limit_model_switch_success_reuses_retry_once' \
   'credit_limit_model_switch_failure_preserves_stash_and_sends_nothing' \
   'ordinary_model_switch_never_retries_credit_limit_stash' \
