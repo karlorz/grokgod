@@ -53,6 +53,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify patch files use LF bytes
+        shell: powershell
+        run: |
+          $patches = @(Get-ChildItem -Path patches -Filter *.patch -File)
+          if ($patches.Count -eq 0) {
+            throw "No patch files found matching patches/*.patch"
+          }
+          foreach ($patch in $patches) {
+            $bytes = [System.IO.File]::ReadAllBytes($patch.FullName)
+            if ($bytes -contains 13) {
+              throw "Patch contains a carriage-return byte after checkout: $($patch.FullName)"
+            }
+          }
+
       - name: Run Windows Dispatcher and Installer Suites (Windows PowerShell 5.1)
         shell: cmd
         run: |

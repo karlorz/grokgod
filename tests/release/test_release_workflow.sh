@@ -11,6 +11,7 @@ set -eu
 # 6. Checksum generation enforces exactly 1 checksum line matching the exact artifact name and fails if tooling is missing
 # 7. Create Release requires grokgod-windows-x64.exe
 # 8. Release creation is immutable: fails if release already exists, no --clobber
+# 9. Patch files are checkout-normalized to LF, contain no CR bytes, and are byte-checked on Windows
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -18,6 +19,8 @@ RELEASE_YML="$REPO_ROOT/.github/workflows/release.yml"
 COMPAT_YML="$REPO_ROOT/.github/workflows/compat-daily.yml"
 INSTALL_SH="$REPO_ROOT/install.sh"
 PATCHES_README="$REPO_ROOT/patches/README.md"
+GIT_ATTRIBUTES="$REPO_ROOT/.gitattributes"
+TEST_YML="$REPO_ROOT/.github/workflows/test.yml"
 
 echo "=== Running Release Workflow Invariant Tests ==="
 
@@ -211,5 +214,55 @@ assert 'immutable release policy forbids mutating or clobbering' in content, 'Mi
 assert 'gh release create \"\$tag\"' in content, 'Missing gh release create'
 "
 echo "PASS: Test 8"
+
+# Test 9: Patch files remain LF-only on every platform, including a real Windows checkout
+echo "Test 9: Patch files are LF-only and Windows verifies checkout bytes"
+if ! grep -Fqx 'patches/*.patch text eol=lf' "$GIT_ATTRIBUTES"; then
+  echo "FAIL: $GIT_ATTRIBUTES must contain: patches/*.patch text eol=lf" >&2
+  exit 1
+fi
+
+for patch_file in "$REPO_ROOT"/patches/*.patch; do
+  if [ ! -f "$patch_file" ]; then
+    echo "FAIL: No patch files found matching patches/*.patch" >&2
+    exit 1
+  fi
+  attrs="$(git -C "$REPO_ROOT" check-attr text eol -- "$patch_file")"
+  case "$attrs" in
+    *': text: set'*': eol: lf') ;;
+    *)
+      echo "FAIL: LF attributes are not effective for $patch_file" >&2
+      echo "$attrs" >&2
+      exit 1
+      ;;
+  esac
+done
+
+python3 - "$REPO_ROOT" "$TEST_YML" <<'PY'
+import pathlib
+import sys
+
+repo_root = pathlib.Path(sys.argv[1])
+workflow_path = pathlib.Path(sys.argv[2])
+patches = sorted((repo_root / "patches").glob("*.patch"))
+assert patches, "No patch files found matching patches/*.patch"
+for patch in patches:
+    assert b"\r" not in patch.read_bytes(), f"Patch contains a carriage-return byte: {patch}"
+
+content = workflow_path.read_text()
+windows_job = content.index("  test-windows:")
+checkout = content.index("      - name: Checkout", windows_job)
+byte_check = content.index("      - name: Verify patch files use LF bytes", checkout)
+native_tests = content.index(
+    "      - name: Run Windows Dispatcher and Installer Suites (Windows PowerShell 5.1)",
+    byte_check,
+)
+assert checkout < byte_check < native_tests, "Windows patch-byte verification must run immediately after checkout"
+verification = content[byte_check:native_tests]
+assert "[System.IO.File]::ReadAllBytes" in verification, "Windows check must inspect raw patch bytes"
+assert "$bytes -contains 13" in verification, "Windows check must reject carriage-return bytes"
+assert "No patch files found matching patches/*.patch" in verification, "Windows check must fail on an empty patch set"
+PY
+echo "PASS: Test 9"
 
 echo "=== All Release Workflow Invariant Tests Passed Successfully! ==="
