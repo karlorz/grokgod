@@ -1,0 +1,116 @@
+name: Rust Patch Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'patches/**'
+      - 'install.sh'
+      - '.github/workflows/rust-patch-validation.yml'
+  pull_request:
+    paths:
+      - 'patches/**'
+      - 'install.sh'
+      - '.github/workflows/rust-patch-validation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-patch-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused-pager-tests:
+    name: Focused xai-grok-pager tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CARGO_BUILD_JOBS: "1"
+      CARGO_PROFILE_TEST_CODEGEN_UNITS: "1"
+      CARGO_INCREMENTAL: "0"
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target/rust-patch-validation
+
+    steps:
+      - name: Checkout grokgod
+        uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config cmake libssl-dev
+
+      - name: Set up exact Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.0"
+
+      - name: Install dotslash
+        uses: taiki-e/install-action@v2
+        with:
+          tool: dotslash
+
+      - name: Verify tool versions
+        shell: bash
+        run: |
+          rustc_version="$(rustc --version)"
+          echo "$rustc_version"
+          case "$rustc_version" in
+            "rustc 1.94.0 "*) ;;
+            *)
+              echo "::error::Expected rustc 1.94.0, got: $rustc_version"
+              exit 1
+              ;;
+          esac
+          cargo --version
+          dotslash --version
+
+      - name: Fetch pinned grok-build commit
+        shell: bash
+        run: |
+          PIN_SHA="$(grep '^PINNED_BASE_SHA=' install.sh | cut -d= -f2- | tr -d '"' | tr -d "'" || true)"
+          if ! [[ "$PIN_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::PINNED_BASE_SHA in install.sh is missing or is not an exact 40-character SHA"
+            exit 1
+          fi
+
+          echo "PINNED_BASE_SHA resolved: $PIN_SHA"
+          mkdir grok-build
+          git -C grok-build init
+          git -C grok-build remote add origin https://github.com/xai-org/grok-build.git
+          git -C grok-build fetch --depth 1 origin "$PIN_SHA"
+          git -C grok-build checkout --detach "$PIN_SHA"
+
+          actual_sha="$(git -C grok-build rev-parse HEAD)"
+          echo "grok-build checked out at: $actual_sha"
+          if [ "$actual_sha" != "$PIN_SHA" ]; then
+            echo "::error::Checked out grok-build SHA ($actual_sha) does not match pinned SHA ($PIN_SHA)"
+            exit 1
+          fi
+
+      - name: Check and apply grokgod patches sequentially
+        shell: bash
+        run: |
+          mapfile -d '' patch_files < <(find "$GITHUB_WORKSPACE/patches" -maxdepth 1 -type f -name '*.patch' -print0 | sort -z)
+          if [ ${#patch_files[@]} -eq 0 ]; then
+            echo "::error::No patch files found matching patches/*.patch (fail-closed)"
+            exit 1
+          fi
+
+          for patch_file in "${patch_files[@]}"; do
+            patch_name="$(basename "$patch_file")"
+            echo "Checking $patch_name"
+            git -C grok-build apply --check "$patch_file"
+            echo "Applying $patch_name"
+            git -C grok-build apply "$patch_file"
+          done
+
+      - name: Run focused credit-limit pager tests
+        working-directory: grok-build
+        run: cargo test -p xai-grok-pager --lib credit_limit
+
+      - name: Run exact idempotent model-selection regression test
+        working-directory: grok-build
+        run: cargo test -p xai-grok-pager --lib app::dispatch::tests::settings::set_default_model_idempotent_when_already_current -- --exact
