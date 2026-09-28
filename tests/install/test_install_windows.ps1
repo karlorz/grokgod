@@ -479,7 +479,8 @@ try {
         "$mockExeHash *grokgod-windows-x64.exe",
         "$newShimHash *grok-shim.ps1",
         "$mockHelpersHash *LauncherHelpers.ps1",
-        "$mockInstallHash *install.ps1"
+        "$mockInstallHash *install.ps1",
+        "$mockDailyMinimalHash *daily-minimal.md"
     )
     Set-Content -LiteralPath $sumsFile -Value ($updatedSumsLines -join "`r`n") -Encoding ASCII
 
@@ -514,7 +515,8 @@ try {
         "$mockExeHash *grokgod-windows-x64.exe",
         "$newShimHash *grok-shim.ps1",
         "0000000000000000000000000000000000000000000000000000000000000000 *LauncherHelpers.ps1",
-        "$mockInstallHash *install.ps1"
+        "$mockInstallHash *install.ps1",
+        "$mockDailyMinimalHash *daily-minimal.md"
     )
     Set-Content -LiteralPath $sumsFile -Value ($corruptSumsLines -join "`r`n") -Encoding ASCII
 
@@ -534,7 +536,8 @@ try {
         "$mockExeHash *grokgod-windows-x64.exe",
         "$newShimHash *grok-shim.ps1",
         "$mockHelpersHash *LauncherHelpers.ps1",
-        "$mockInstallHash *install.ps1"
+        "$mockInstallHash *install.ps1",
+        "$mockDailyMinimalHash *daily-minimal.md"
     )
     Set-Content -LiteralPath $sumsFile -Value ($dupSumsLines -join "`r`n") -Encoding ASCII
 

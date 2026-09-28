@@ -230,6 +230,9 @@ echo "Test 2f: Update behind clone with local commits fails closed"
 SHIM_BEHIND_2F="$TMP_DIR/shim_behind_2f"
 git clone --quiet "$SHIM_ORIGIN_2D" "$SHIM_BEHIND_2F"
 git -C "$SHIM_BEHIND_2F" reset --hard "$OLD_SHIM_2D_SHA" >/dev/null 2>&1
+git -C "$SHIM_BEHIND_2F" config user.name "CI"
+git -C "$SHIM_BEHIND_2F" config user.email "ci@example.com"
+git -C "$SHIM_BEHIND_2F" config commit.gpgsign false
 printf '%s\n' 'local unique commit' > "$SHIM_BEHIND_2F/local_file.txt"
 git -C "$SHIM_BEHIND_2F" add local_file.txt
 git -C "$SHIM_BEHIND_2F" commit -m "local commit" >/dev/null 2>&1

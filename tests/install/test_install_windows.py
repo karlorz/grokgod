@@ -261,6 +261,7 @@ def main():
         check("-NoUpgrade exits 0 without upgrade" in install_test_src, "Native install test verifies -NoUpgrade fast path")
         check("currently running or locked" in install_test_src, "Native install test verifies locked executable fail-closed policy")
         check("Installed updater succeeds with hidden checkout" in install_test_src, "Native install test verifies updater self-containment with hidden checkout")
+        check(install_test_src.count("$mockDailyMinimalHash *daily-minimal.md") >= 4, "Native install test keeps daily-minimal.md in initial and rewritten SHA256SUMS")
         check("HostShell" in install_test_src and "PSEdition" in install_test_src, "Native install test aligns child runner with host PSEdition")
         check('$serverPsi.FileName = $HostShell' in install_test_src, "Native install test launches mock server with HostShell")
         check("Combined" in install_test_src, "Native install test uses combined output for robust stderr matching")
