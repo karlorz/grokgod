@@ -23,10 +23,11 @@ DeepSeek fixes remain `0009` and `0010`.
 - `0013-same-session-compaction-warning.patch`: Counts successful same-session compactions separately from legacy attempt telemetry, persists the count, and shows an existing prompt-adjacent warning at the configurable limit (default 3; `0` disables). At the next round it recommends saving SkillWiki progress and handing off to a new session. Builtin status-line item `compacts` always paints `C0`, `C1`, … from that count (amber at the limit); grokgod install merges it into `~/.grok/config.toml`. Overlay allowlist `[session] compaction_round_warning_limit`. It does not add a default context footer or create/close sessions.
 - `0014-deepseek-tool-image-hoist.patch`: Hoists tool-result images into an immediately following user message (`Attached image(s) from tool result:`) when `input_modalities` includes `"image"`, allowing DeepSeek and OpenAI Chat Completions endpoints to consume tool-returned images without protocol errors.
 - `0015-cli-model-ephemeral.patch`: A startup `-m` / `--model` switch applies to that process only and does not write `[models].default`. A later `/model` still saves the preferred model.
+- `0016-credit-limit-switch-model.patch`: Adds `Switch model & retry` immediately before `Try Again` in both credit-limit dialog variants. It opens the existing direct `/model` picker in the same session and, only after a successful switch from that picker, consumes the stashed failed prompt once through the existing front-queue retry path. Dismissal or switch failure keeps the prompt stashed and sends nothing on the old model; ordinary `/model` remains unchanged.
 
 ## Target Commit
 
-- Base commit: `grok-build` commit `07e35a3d` (`07e35a3dfeed2f200d319ef6c893b5ea286d9a51`) — origin/main 1.0.41; patches 0001–0014 are authored/rebased against this base. Source mode still tracks the moving `origin/main`; this is the patch-authorship/release pin.
+- Base commit: `grok-build` commit `07e35a3d` (`07e35a3dfeed2f200d319ef6c893b5ea286d9a51`) — origin/main 1.0.41; patches 0001–0016 are authored/rebased against this base. Source mode still tracks the moving `origin/main`; this is the patch-authorship/release pin.
 
 ## Verification
 

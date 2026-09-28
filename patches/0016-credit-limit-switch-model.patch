@@ -1,0 +1,821 @@
+diff --git a/crates/codegen/xai-grok-pager/src/app/actions.rs b/crates/codegen/xai-grok-pager/src/app/actions.rs
+index ae4727fc..20f42c15 100644
+--- a/crates/codegen/xai-grok-pager/src/app/actions.rs
++++ b/crates/codegen/xai-grok-pager/src/app/actions.rs
+@@ -69,6 +69,9 @@ pub enum Action {
+     OpenUrl(String),
+     /// Resubmit the prompt that last hit the credit/usage limit.
+     RetryCreditLimitPrompt,
++    /// Open the direct `/model` picker and retry the credit-limited prompt only
++    /// after that picker completes a successful live-session model switch.
++    OpenCreditLimitModelPicker,
+     /// Open a semantic scrollback link.
+     OpenLink(crate::render::osc8::LinkTarget),
+     /// Open grok.com managed connectors, appending session teamId when set.
+diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/input.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/input.rs
+index 3db01e62..04c44f48 100644
+--- a/crates/codegen/xai-grok-pager/src/app/agent_view/input.rs
++++ b/crates/codegen/xai-grok-pager/src/app/agent_view/input.rs
+@@ -26,6 +26,29 @@ pub(crate) enum ExternalPromptEditorAccess {
+     OwnedElsewhere,
+ }
+ impl AgentView {
++    /// Open the direct `/model` argument picker without routing through the
++    /// command palette. Returns whether a picker was installed.
++    pub(crate) fn open_model_arg_picker(&mut self) -> bool {
++        let command = "model";
++        let Some(cmd) = self.prompt.slash_controller.registry().get(command) else {
++            return false;
++        };
++        let ctx = self.prompt.slash_controller.app_ctx(&self.session.models);
++        let Some(items) = cmd.suggest_args(&ctx, "").filter(|items| !items.is_empty()) else {
++            return false;
++        };
++        self.active_modal = Some(crate::views::modal::ActiveModal::ArgPicker {
++            command: command.to_string(),
++            args_query: String::new(),
++            items: items.clone(),
++            original_items: items,
++            state: crate::views::picker::PickerState::input_active(),
++            previous_palette: None,
++            window: crate::views::modal_window::ModalWindowState::new(),
++        });
++        true
++    }
++
+     /// The composer is the editing target regardless of pane focus (like the other global chords); overlays and dropdowns still own input.
+     pub(crate) fn external_prompt_editor_access(&self) -> ExternalPromptEditorAccess {
+         let owned_elsewhere = !matches!(self.prompt_mode, super::PromptMode::Normal)
+@@ -1267,24 +1290,7 @@ impl AgentView {
+                 InputOutcome::Changed
+             }
+             ActionId::ModelPicker => {
+-                let command = "model";
+-                if let Some(cmd) = self.prompt.slash_controller.registry().get(command) {
+-                    let ctx = self.prompt.slash_controller.app_ctx(&self.session.models);
+-                    if let Some(items) = cmd.suggest_args(&ctx, "")
+-                        && !items.is_empty()
+-                    {
+-                        self.active_modal = Some(crate::views::modal::ActiveModal::ArgPicker {
+-                            command: command.to_string(),
+-                            args_query: String::new(),
+-                            items: items.clone(),
+-                            original_items: items,
+-                            state: crate::views::picker::PickerState::input_active(),
+-                            previous_palette: None,
+-                            window: crate::views::modal_window::ModalWindowState::new(),
+-                        });
+-                        return InputOutcome::Changed;
+-                    }
+-                }
++                self.open_model_arg_picker();
+                 InputOutcome::Changed
+             }
+             ActionId::ShortcutsHelp => {
+diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
+index a9151404..6390eae8 100644
+--- a/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
++++ b/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
+@@ -869,6 +869,9 @@ pub struct AgentView {
+     /// `CreditLimitRecheckComplete` to retry after a tier upgrade, and by
+     /// the upsell's Try Again option.
+     pub credit_limit_stashed_prompt: Option<crate::app::agent::InFlightPrompt>,
++    /// One-shot intent armed only by the credit-limit dialog's model picker.
++    /// Cleared on picker dismissal or switch failure; consumed on switch success.
++    pub(crate) credit_limit_model_retry_pending: bool,
+     /// Complete prompt stashed from a turn that failed because the login expired (401 / re-auth). Used by the `AuthComplete` handler to auto-resubmit the prompt after a successful mid-session re-auth so the user doesn't have to retype it.
+     pub reauth_stashed_prompt: Option<crate::app::agent::InFlightPrompt>,
+     /// Currently active modal dialog (blocks all other input).
+@@ -1628,6 +1631,9 @@ fn translate_local_submit(
+         LocalQuestionKind::CreditLimitUpsell { choices } => {
+             let option = qv.questions.first().and_then(|q| q.options.get(*idx));
+             let id = option.and_then(|o| o.id.as_deref());
++            if id == Some(super::dispatch::CREDIT_LIMIT_SWITCH_MODEL_OPTION_ID) {
++                return InputOutcome::Action(Action::OpenCreditLimitModelPicker);
++            }
+             if id == Some(super::dispatch::CREDIT_LIMIT_RETRY_OPTION_ID) {
+                 xai_grok_telemetry::session_ctx::log_event(
+                     xai_grok_telemetry::events::CreditLimitUpsellClicked {
+diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
+index 888d610e..3f4ef37d 100644
+--- a/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
++++ b/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
+@@ -194,6 +194,7 @@ impl AgentView {
+             prompt_stash: None,
+             draft_consumed: false,
+             credit_limit_stashed_prompt: None,
++            credit_limit_model_retry_pending: false,
+             reauth_stashed_prompt: None,
+             active_modal: None,
+             modal_buttons: Vec::new(),
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/billing.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/billing.rs
+index 658d7468..1040bd1e 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/billing.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/billing.rs
+@@ -74,6 +74,9 @@ pub(crate) fn is_credit_limit_error(http_status: Option<u16>, message: &str) ->
+ /// Option id for Try Again. Submit routes on this sentinel, not on position in the telemetry `choices` vec.
+ /// position in the telemetry `choices` vec.
+ pub(crate) const CREDIT_LIMIT_RETRY_OPTION_ID: &str = "retry-last-prompt";
++/// Option id for opening the direct model picker. This is intentionally not a
++/// URL or telemetry-choice id.
++pub(crate) const CREDIT_LIMIT_SWITCH_MODEL_OPTION_ID: &str = "switch-model-and-retry";
+ 
+ struct CreditLimitCopy {
+     heading: &'static str,
+@@ -85,8 +88,8 @@ struct CreditLimitCopy {
+ }
+ 
+ /// Open the credit-limit upsell Q&A on the given agent.
+-/// Non-max-tier: Upgrade tier + buy-credits (or PAYG) + Try Again.
+-/// Max-tier (SuperGrok Heavy): buy-credits (or PAYG) + Try Again — no upgrade option. URL options carry the target in `id` so the submit handler is position-independent.
++/// Non-max-tier: Upgrade tier + buy-credits (or PAYG) + Switch model & retry + Try Again.
++/// Max-tier (SuperGrok Heavy): buy-credits (or PAYG) + Switch model & retry + Try Again — no upgrade option. URL options carry the target in `id` so the submit handler is position-independent.
+ pub(super) fn open_credit_limit_upsell(
+     agent: &mut AgentView,
+     mode: CreditLimitUpsellMode,
+@@ -154,6 +157,12 @@ pub(super) fn open_credit_limit_upsell(
+         id: Some(UPSELL_URL_PAYG.into()),
+     });
+     choices.push(copy.second_choice);
++    options.push(QuestionOption {
++        label: "Switch model & retry".into(),
++        description: "Choose another model, then retry the last prompt automatically".into(),
++        preview: None,
++        id: Some(CREDIT_LIMIT_SWITCH_MODEL_OPTION_ID.into()),
++    });
+     options.push(QuestionOption {
+         label: "Try Again".into(),
+         description: "Resubmit the last prompt once you have usage again".into(),
+@@ -526,6 +535,23 @@ pub(super) fn dispatch_retry_credit_limit_prompt(app: &mut AppView) -> Vec<Effec
+     drain.effects
+ }
+ 
++/// Open the existing direct `/model` argument picker in the active session and
++/// arm a one-shot retry for this credit-limit flow only.
++pub(super) fn dispatch_open_credit_limit_model_picker(app: &mut AppView) -> Vec<Effect> {
++    use crate::app::app_view::ActiveView;
++
++    let ActiveView::Agent(agent_id) = app.active_view else {
++        return vec![];
++    };
++    let Some(agent) = app.agents.get_mut(&agent_id) else {
++        return vec![];
++    };
++    if agent.open_model_arg_picker() {
++        agent.credit_limit_model_retry_pending = true;
++    }
++    vec![]
++}
++
+ // Action handlers.
+ 
+ pub(super) fn dispatch_open_supergrok_url(app: &mut AppView) -> Vec<Effect> {
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/mod.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/mod.rs
+index a57df79b..231dc500 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/mod.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/mod.rs
+@@ -39,7 +39,8 @@ mod voice;
+ pub(crate) use auth::scrollback_has_recent_disk_full;
+ pub(in crate::app) use auth::scrollback_has_recent_error_banner;
+ pub(crate) use billing::{
+-    CREDIT_LIMIT_RETRY_OPTION_ID, UPSELL_URL_PAYG, UPSELL_URL_UPGRADE, is_credit_limit_error,
++    CREDIT_LIMIT_RETRY_OPTION_ID, CREDIT_LIMIT_SWITCH_MODEL_OPTION_ID, UPSELL_URL_PAYG,
++    UPSELL_URL_UPGRADE, is_credit_limit_error,
+ };
+ pub(crate) use dashboard::{DashboardStopReadiness, dashboard_stop_readiness};
+ pub(crate) use modes::{downgrade_displayed_auto_if_gated, effective_auto};
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs
+index f550b1b3..fdc75f41 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs
+@@ -1193,6 +1193,9 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
+         Action::CheckSubscription => vec![Effect::CheckSubscription { verify: None }],
+         Action::OpenSupergrokUrl => dispatch_open_supergrok_url(app),
+         Action::RetryCreditLimitPrompt => super::billing::dispatch_retry_credit_limit_prompt(app),
++        Action::OpenCreditLimitModelPicker => {
++            super::billing::dispatch_open_credit_limit_model_picker(app)
++        }
+         Action::OpenUrl(url) => {
+             if url.starts_with("file://") {
+                 let opened = url::Url::parse(&url)
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
+index 5a2d07bb..81f932fd 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
+@@ -1883,10 +1883,13 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
+     let suppress_cli_persist = app.cli_model_ephemeral
+         && app.cli_model_override.as_ref() == Some(&model_id);
+     let mut consumed_cli_persist = false;
++    let mut retry_credit_limit_prompt = false;
+     if let Some(agent) = app.agents.get_mut(&agent_id) {
+         agent.session.model_switch_pending = false;
+         let mut effects = match result {
+             Ok(()) => {
++                retry_credit_limit_prompt = agent.credit_limit_model_retry_pending;
++                agent.credit_limit_model_retry_pending = false;
+                 agent.session.user_model_preference = Some(model_id.clone());
+                 let display_name = agent
+                     .session
+@@ -1927,6 +1930,7 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
+                 }
+             }
+             Err(SwitchModelError::IncompatibleAgent { .. }) => {
++                agent.credit_limit_model_retry_pending = false;
+                 if let Some(ref prev) = prev_model_id {
+                     agent.session.models.set_current(prev.clone(), None);
+                 }
+@@ -1935,12 +1939,26 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
+                 return open_agent_type_mismatch_question(app, model_id, effort, &display_name);
+             }
+             Err(SwitchModelError::Other(msg)) => {
++                let suppress_drain = agent.credit_limit_model_retry_pending;
++                agent.credit_limit_model_retry_pending = false;
+                 agent
+                     .scrollback
+                     .push_block(RenderBlock::system(format!("Couldn't switch model: {msg}")));
++                if suppress_drain {
++                    return vec![];
++                }
+                 vec![]
+             }
+         };
++        if retry_credit_limit_prompt {
++            if consumed_cli_persist {
++                app.cli_model_ephemeral = false;
++            }
++            effects.extend(super::super::billing::dispatch_retry_credit_limit_prompt(
++                app,
++            ));
++            return effects;
++        }
+         let drain = maybe_drain_queue(agent, &mut app.pending_image_notices);
+         effects.extend(drain.effects);
+         note_peek_page_flip(app, agent_id, drain.page_flip_entry);
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
+index d9c6c966..788bf5f0 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
+@@ -1798,6 +1798,9 @@ pub(in crate::app::dispatch) fn set_default_model(
+     };
+ 
+     if !available_has_new {
++        if let Some(agent) = app.agents.get_mut(&aid) {
++            agent.credit_limit_model_retry_pending = false;
++        }
+         tracing::error!(
+             target: "settings",
+             key = "default_model",
+@@ -1810,6 +1813,9 @@ pub(in crate::app::dispatch) fn set_default_model(
+ 
+     // Idempotent: the same model already active is a no-op
+     if prev_id.as_ref() == Some(&new_id) {
++        if let Some(agent) = app.agents.get_mut(&aid) {
++            agent.credit_limit_model_retry_pending = false;
++        }
+         return vec![];
+     }
+ 
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs
+index 2149d491..dd64a75f 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs
+@@ -301,7 +301,7 @@ fn credit_limit_translate_retry_option_dispatches_retry() {
+         .question_view
+         .take()
+         .expect("expected credit-limit upsell modal");
+-    set_first_selection(&mut qv, QuestionSelection::Single(Some(2)));
++    set_first_selection(&mut qv, QuestionSelection::Single(Some(3)));
+     let kind = qv
+         .local_kind
+         .take()
+@@ -313,7 +313,7 @@ fn credit_limit_translate_retry_option_dispatches_retry() {
+ }
+ 
+ #[test]
+-fn credit_limit_translate_max_tier_retry_is_second_option() {
++fn credit_limit_translate_max_tier_retry_is_third_option() {
+     use crate::app::agent_view::translate_local_submit_for_test;
+     use crate::app::app_view::InputOutcome;
+     use crate::views::question_view::QuestionSelection;
+@@ -327,7 +327,7 @@ fn credit_limit_translate_max_tier_retry_is_second_option() {
+         .question_view
+         .take()
+         .expect("expected credit-limit upsell modal");
+-    set_first_selection(&mut qv, QuestionSelection::Single(Some(1)));
++    set_first_selection(&mut qv, QuestionSelection::Single(Some(2)));
+     let kind = qv
+         .local_kind
+         .take()
+@@ -338,6 +338,71 @@ fn credit_limit_translate_max_tier_retry_is_second_option() {
+     }
+ }
+ 
++#[test]
++fn credit_limit_translate_switch_model_option_dispatches_distinct_action() {
++    use crate::app::agent_view::translate_local_submit_for_test;
++    use crate::app::app_view::InputOutcome;
++    use crate::views::question_view::QuestionSelection;
++
++    let mut app = test_app_with_agent();
++    open_upsell_qa(&mut app, CreditLimitUpsellMode::UnifiedCredits);
++    let mut qv = app
++        .agents
++        .get_mut(&AgentId(0))
++        .unwrap()
++        .question_view
++        .take()
++        .expect("expected credit-limit upsell modal");
++    set_first_selection(&mut qv, QuestionSelection::Single(Some(2)));
++    let kind = qv
++        .local_kind
++        .take()
++        .expect("open_credit_limit_upsell sets local_kind");
++    assert!(matches!(
++        translate_local_submit_for_test(&qv, kind, false),
++        InputOutcome::Action(Action::OpenCreditLimitModelPicker)
++    ));
++}
++
++#[test]
++fn credit_limit_switch_model_action_opens_direct_picker_without_mutating_session_or_prompts() {
++    use crate::views::modal::ActiveModal;
++
++    let mut app = test_app_with_agent();
++    let id = AgentId(0);
++    let model_id = acp::ModelId::new(std::sync::Arc::from("alternate-model"));
++    let agent = app.agents.get_mut(&id).unwrap();
++    agent.session.models.available.insert(
++        model_id.clone(),
++        acp::ModelInfo::new(model_id, "Alternate Model".to_string()),
++    );
++    agent.prompt.set_text("draft stays here");
++    agent.credit_limit_stashed_prompt = Some(test_stashed_prompt("retry me"));
++    let session_id = agent.session.session_id.clone();
++
++    let effects = dispatch(Action::OpenCreditLimitModelPicker, &mut app);
++    assert!(effects.is_empty());
++    let agent = test_agent(&app, id);
++    assert!(matches!(
++        agent.active_modal,
++        Some(ActiveModal::ArgPicker {
++            ref command,
++            previous_palette: None,
++            ..
++        }) if command == "model"
++    ));
++    assert_eq!(agent.prompt.text(), "draft stays here");
++    assert_eq!(agent.session.session_id, session_id);
++    assert_eq!(
++        agent
++            .credit_limit_stashed_prompt
++            .as_ref()
++            .map(|prompt| prompt.text.as_str()),
++        Some("retry me")
++    );
++    assert!(agent.credit_limit_model_retry_pending);
++}
++
+ #[test]
+ fn is_max_tier_positive_match() {
+     assert!(is_max_tier(Some("supergrok_heavy")));
+@@ -376,14 +441,19 @@ fn upsell_non_max_shows_qa_with_retry_option() {
+         CreditLimitUpsellMode::LegacyPayg { enabled: false },
+     );
+     let q = first_question(agent_qv(&app));
+-    assert_eq!(q.options.len(), 3);
++    assert_eq!(q.options.len(), 4);
+     assert_eq!(option_at(q, 0).label, "Upgrade tier");
+     assert_eq!(option_at(q, 0).id.as_deref(), Some(UPSELL_URL_UPGRADE));
+     assert_eq!(option_at(q, 1).label, "Pay as you go");
+     assert_eq!(option_at(q, 1).id.as_deref(), Some(UPSELL_URL_PAYG));
+-    assert_eq!(option_at(q, 2).label, "Try Again");
++    assert_eq!(option_at(q, 2).label, "Switch model & retry");
+     assert_eq!(
+         option_at(q, 2).id.as_deref(),
++        Some(crate::app::dispatch::CREDIT_LIMIT_SWITCH_MODEL_OPTION_ID)
++    );
++    assert_eq!(option_at(q, 3).label, "Try Again");
++    assert_eq!(
++        option_at(q, 3).id.as_deref(),
+         Some(crate::app::dispatch::CREDIT_LIMIT_RETRY_OPTION_ID)
+     );
+ }
+@@ -396,9 +466,10 @@ fn upsell_non_max_payg_on_shows_increase_label() {
+         CreditLimitUpsellMode::LegacyPayg { enabled: true },
+     );
+     let q = first_question(agent_qv(&app));
+-    assert_eq!(q.options.len(), 3);
++    assert_eq!(q.options.len(), 4);
+     assert_eq!(option_at(q, 1).label, "Increase limit");
+-    assert_eq!(option_at(q, 2).label, "Try Again");
++    assert_eq!(option_at(q, 2).label, "Switch model & retry");
++    assert_eq!(option_at(q, 3).label, "Try Again");
+ }
+ 
+ #[test]
+@@ -499,7 +570,8 @@ fn upsell_non_max_unified_shows_buy_credits() {
+         option_at(q, 1).description,
+         "Purchase credits to keep using Grok Build"
+     );
+-    assert_eq!(option_at(q, 2).label, "Try Again");
++    assert_eq!(option_at(q, 2).label, "Switch model & retry");
++    assert_eq!(option_at(q, 3).label, "Try Again");
+ }
+ 
+ #[test]
+@@ -514,12 +586,17 @@ fn upsell_max_unified_qa_omits_upgrade() {
+     );
+     let q = first_question(agent_qv(&app));
+     assert!(q.question.contains("weekly limit"));
+-    assert_eq!(q.options.len(), 2);
++    assert_eq!(q.options.len(), 3);
+     assert_eq!(option_at(q, 0).label, "Buy more credits");
+     assert_eq!(option_at(q, 0).id.as_deref(), Some(UPSELL_URL_PAYG));
+-    assert_eq!(option_at(q, 1).label, "Try Again");
++    assert_eq!(option_at(q, 1).label, "Switch model & retry");
+     assert_eq!(
+         option_at(q, 1).id.as_deref(),
++        Some(crate::app::dispatch::CREDIT_LIMIT_SWITCH_MODEL_OPTION_ID)
++    );
++    assert_eq!(option_at(q, 2).label, "Try Again");
++    assert_eq!(
++        option_at(q, 2).id.as_deref(),
+         Some(crate::app::dispatch::CREDIT_LIMIT_RETRY_OPTION_ID)
+     );
+ }
+@@ -657,10 +734,11 @@ fn upsell_max_tier_opens_qa_without_upgrade_payg_off() {
+     assert_eq!(agent_scrollback_len(&app), before);
+     let q = first_question(agent_qv(&app));
+     assert!(q.question.contains("credit limit"));
+-    assert_eq!(q.options.len(), 2);
++    assert_eq!(q.options.len(), 3);
+     assert_eq!(option_at(q, 0).label, "Pay as you go");
+     assert_eq!(option_at(q, 0).id.as_deref(), Some(UPSELL_URL_PAYG));
+-    assert_eq!(option_at(q, 1).label, "Try Again");
++    assert_eq!(option_at(q, 1).label, "Switch model & retry");
++    assert_eq!(option_at(q, 2).label, "Try Again");
+ }
+ 
+ #[test]
+@@ -672,9 +750,10 @@ fn upsell_max_tier_opens_qa_without_upgrade_payg_on() {
+     );
+     let q = first_question(agent_qv(&app));
+     assert!(q.question.contains("spending cap"));
+-    assert_eq!(q.options.len(), 2);
++    assert_eq!(q.options.len(), 3);
+     assert_eq!(option_at(q, 0).label, "Increase limit");
+-    assert_eq!(option_at(q, 1).label, "Try Again");
++    assert_eq!(option_at(q, 1).label, "Switch model & retry");
++    assert_eq!(option_at(q, 2).label, "Try Again");
+ }
+ 
+ #[test]
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
+index 0435365b..e2856c13 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
+@@ -1400,11 +1400,32 @@ fn set_default_model_idempotent_when_already_current() {
+         .session
+         .models
+         .set_current(id.clone(), None);
++    {
++        let agent = app.agents.get_mut(&agent_id).unwrap();
++        agent.credit_limit_stashed_prompt = Some(crate::app::agent::InFlightPrompt {
++            text: "preserve me".into(),
++            images: Vec::new(),
++            scrollback_entry: crate::scrollback::EntryId::new(0),
++            combined_scrollback_entries: Vec::new(),
++            chip_elements: Vec::new(),
++        });
++        agent.credit_limit_model_retry_pending = true;
++    }
+     let effects = dispatch(Action::SetDefaultModel(id), &mut app);
+     assert!(
+         effects.is_empty(),
+         "re-dispatching same model must be idempotent (no effects), got {effects:?}",
+     );
++    let agent = expect_agent(&app, agent_id);
++    assert!(!agent.credit_limit_model_retry_pending);
++    assert_eq!(
++        agent
++            .credit_limit_stashed_prompt
++            .as_ref()
++            .map(|prompt| prompt.text.as_str()),
++        Some("preserve me")
++    );
++    assert!(agent.session.in_flight_prompt.is_none());
+ }
+ /// `clamp_max_thoughts_width` clamps out-of-range values to the registered `[40, 500]` bounds.
+ #[test]
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs
+index 31315a8d..2d98151a 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs
+@@ -13,6 +13,16 @@ fn expect_agent(app: &AppView, id: AgentId) -> &AgentView {
+     agent
+ }
+ 
++fn credit_limit_prompt(text: &str) -> crate::app::agent::InFlightPrompt {
++    crate::app::agent::InFlightPrompt {
++        text: text.into(),
++        images: Vec::new(),
++        scrollback_entry: crate::scrollback::EntryId::new(0),
++        combined_scrollback_entries: Vec::new(),
++        chip_elements: Vec::new(),
++    }
++}
++
+ use crate::app::subagent::{SubagentLifecycleReduction, SubagentLifecycleTransition};
+ use xai_grok_shell::session::helpers::session_compact::COMPACT_CANCELLED_MSG;
+ use xai_grok_shell::session::unified_list::ListScope;
+@@ -1554,17 +1564,147 @@ fn switch_model_complete_failure_pushes_error_and_clears_pending() {
+     );
+ }
+ 
++#[test]
++fn credit_limit_model_switch_success_reuses_retry_once() {
++    let mut app = test_app_with_agent();
++    let id = AgentId(0);
++    let model_id = acp::ModelId::new(std::sync::Arc::from("alternate-model"));
++    let agent = app.agents.get_mut(&id).unwrap();
++    agent.session.models.available.insert(
++        model_id.clone(),
++        acp::ModelInfo::new(model_id.clone(), "Alternate Model".to_string()),
++    );
++    agent.credit_limit_stashed_prompt = Some(credit_limit_prompt("retry me"));
++    agent.credit_limit_model_retry_pending = true;
++    agent.session.model_switch_pending = true;
++
++    let effects = dispatch(
++        Action::TaskComplete(TaskResult::SwitchModelComplete {
++            agent_id: id,
++            model_id: model_id.clone(),
++            effort: None,
++            result: Ok(()),
++            prev_model_id: None,
++        }),
++        &mut app,
++    );
++
++    assert!(effects.iter().any(|effect| matches!(
++        effect,
++        Effect::SendPrompt { .. } | Effect::SendPromptBlocks { .. }
++    )));
++    let agent = expect_agent(&app, id);
++    assert_eq!(agent.session.models.current, Some(model_id.clone()));
++    assert!(!agent.credit_limit_model_retry_pending);
++    assert!(agent.credit_limit_stashed_prompt.is_none());
++    assert_eq!(
++        agent
++            .session
++            .in_flight_prompt
++            .as_ref()
++            .map(|prompt| prompt.text.as_str()),
++        Some("retry me")
++    );
++    assert!(agent.session.pending_prompts.is_empty());
++
++    let duplicate_effects = dispatch(
++        Action::TaskComplete(TaskResult::SwitchModelComplete {
++            agent_id: id,
++            model_id,
++            effort: None,
++            result: Ok(()),
++            prev_model_id: None,
++        }),
++        &mut app,
++    );
++    assert!(!duplicate_effects.iter().any(|effect| matches!(
++        effect,
++        Effect::SendPrompt { .. } | Effect::SendPromptBlocks { .. }
++    )));
++}
++
++#[test]
++fn credit_limit_model_switch_failure_preserves_stash_and_sends_nothing() {
++    let mut app = test_app_with_agent();
++    let id = AgentId(0);
++    let agent = app.agents.get_mut(&id).unwrap();
++    agent.credit_limit_stashed_prompt = Some(credit_limit_prompt("retry me"));
++    agent.credit_limit_model_retry_pending = true;
++    agent.session.model_switch_pending = true;
++
++    let effects = dispatch(
++        Action::TaskComplete(TaskResult::SwitchModelComplete {
++            agent_id: id,
++            model_id: acp::ModelId::new(std::sync::Arc::from("bad-model")),
++            effort: None,
++            result: Err(SwitchModelError::Other("model not found".into())),
++            prev_model_id: None,
++        }),
++        &mut app,
++    );
++
++    assert!(effects.is_empty());
++    let agent = expect_agent(&app, id);
++    assert!(!agent.credit_limit_model_retry_pending);
++    assert_eq!(
++        agent
++            .credit_limit_stashed_prompt
++            .as_ref()
++            .map(|prompt| prompt.text.as_str()),
++        Some("retry me")
++    );
++    assert!(agent.session.in_flight_prompt.is_none());
++}
++
++#[test]
++fn ordinary_model_switch_never_retries_credit_limit_stash() {
++    let mut app = test_app_with_agent();
++    let id = AgentId(0);
++    let model_id = acp::ModelId::new(std::sync::Arc::from("ordinary-model"));
++    let agent = app.agents.get_mut(&id).unwrap();
++    agent.session.models.available.insert(
++        model_id.clone(),
++        acp::ModelInfo::new(model_id.clone(), "Ordinary Model".to_string()),
++    );
++    agent.credit_limit_stashed_prompt = Some(credit_limit_prompt("do not retry"));
++    agent.session.model_switch_pending = true;
++
++    let effects = dispatch(
++        Action::TaskComplete(TaskResult::SwitchModelComplete {
++            agent_id: id,
++            model_id,
++            effort: None,
++            result: Ok(()),
++            prev_model_id: None,
++        }),
++        &mut app,
++    );
++
++    assert!(!effects.iter().any(|effect| matches!(
++        effect,
++        Effect::SendPrompt { .. } | Effect::SendPromptBlocks { .. }
++    )));
++    let agent = expect_agent(&app, id);
++    assert_eq!(
++        agent
++            .credit_limit_stashed_prompt
++            .as_ref()
++            .map(|prompt| prompt.text.as_str()),
++        Some("do not retry")
++    );
++    assert!(agent.session.in_flight_prompt.is_none());
++}
++
+ #[test]
+ fn switch_model_incompatible_agent_shows_question_modal() {
+     let mut app = test_app_with_agent();
+     let id = AgentId(0);
+     let model_id = acp::ModelId::new(std::sync::Arc::from("cursor-model"));
+ 
+-    app.agents
+-        .get_mut(&id)
+-        .unwrap()
+-        .session
+-        .model_switch_pending = true;
++    let agent = app.agents.get_mut(&id).unwrap();
++    agent.session.model_switch_pending = true;
++    agent.credit_limit_model_retry_pending = true;
++    agent.credit_limit_stashed_prompt = Some(credit_limit_prompt("retry me"));
+     let initial_scrollback = expect_agent(&app, id).scrollback.len();
+ 
+     let err = xai_grok_shell::agent::config::ModelSwitchIncompatibleAgentError {
+@@ -1591,6 +1731,14 @@ fn switch_model_incompatible_agent_shows_question_modal() {
+     // No effects emitted (modal is synchronous state).
+     assert!(effects.is_empty());
+     assert!(!expect_agent(&app, id).session.model_switch_pending);
++    assert!(!expect_agent(&app, id).credit_limit_model_retry_pending);
++    assert_eq!(
++        expect_agent(&app, id)
++            .credit_limit_stashed_prompt
++            .as_ref()
++            .map(|prompt| prompt.text.as_str()),
++        Some("retry me")
++    );
+     // Question modal is open.
+     assert!(expect_agent(&app, id).question_view.is_some());
+     let qv = expect_agent(&app, id).question_view.as_ref().unwrap();
+diff --git a/crates/codegen/xai-grok-pager/src/app/modals.rs b/crates/codegen/xai-grok-pager/src/app/modals.rs
+index b430bd0a..651b2164 100644
+--- a/crates/codegen/xai-grok-pager/src/app/modals.rs
++++ b/crates/codegen/xai-grok-pager/src/app/modals.rs
+@@ -541,6 +541,17 @@ impl AgentView {
+         }
+     }
+ 
++    /// Clear the one-shot retry only when the currently open picker is `/model`.
++    fn clear_credit_limit_retry_for_active_model_picker(&mut self) {
++        let is_model_picker = matches!(
++            self.active_modal.as_ref(),
++            Some(ActiveModal::ArgPicker { command, .. }) if matches!(command.as_str(), "model" | "m")
++        );
++        if is_model_picker {
++            self.credit_limit_model_retry_pending = false;
++        }
++    }
++
+     /// Arg picker input, separate from the command palette to avoid borrow conflicts.
+     /// Stepping back from the model effort phase borrows both the slash registry and the session.
+     fn handle_arg_picker_input(&mut self, ev: &crossterm::event::Event) -> InputOutcome {
+@@ -631,6 +642,7 @@ impl AgentView {
+                 if in_effort_phase && self.try_arg_picker_step_back_from_effort() {
+                     return InputOutcome::Changed;
+                 }
++                self.clear_credit_limit_retry_for_active_model_picker();
+                 let snapshot = match self.active_modal.as_mut() {
+                     Some(ActiveModal::ArgPicker {
+                         previous_palette, ..
+@@ -1397,6 +1409,7 @@ impl AgentView {
+                     if self.try_arg_picker_step_back_from_effort() {
+                         return InputOutcome::Changed;
+                     }
++                    self.clear_credit_limit_retry_for_active_model_picker();
+                     // Match keyboard Esc: a closed SessionPicker may still have a list/search fetch in flight
+                     // The dispatch layer must invalidate it (its landing surface is gone)
+                     let closed_session_picker =
+@@ -2402,6 +2415,84 @@ impl AgentView {
+     }
+ }
+ 
++#[cfg(test)]
++mod credit_limit_model_picker_tests {
++    use super::*;
++    use crate::app::agent::InFlightPrompt;
++    use crate::app::agent_view::test_fixtures::make_agent;
++    use crossterm::event::{
++        Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
++    };
++    use ratatui::layout::Rect;
++
++    fn credit_limit_model_picker_agent() -> AgentView {
++        crate::appearance::cache::set_vim_mode(false);
++        let mut agent = make_agent();
++        let model_id = agent_client_protocol::ModelId::new(std::sync::Arc::from("alternate"));
++        agent.session.models.available.insert(
++            model_id.clone(),
++            agent_client_protocol::ModelInfo::new(model_id, "Alternate".to_string()),
++        );
++        agent.credit_limit_stashed_prompt = Some(InFlightPrompt {
++            text: "retry me".into(),
++            images: Vec::new(),
++            scrollback_entry: crate::scrollback::EntryId::new(0),
++            combined_scrollback_entries: Vec::new(),
++            chip_elements: Vec::new(),
++        });
++        assert!(agent.open_model_arg_picker());
++        agent.credit_limit_model_retry_pending = true;
++        agent
++    }
++
++    fn assert_retry_cancelled_with_prompt_preserved(agent: &AgentView) {
++        assert!(agent.active_modal.is_none());
++        assert!(!agent.credit_limit_model_retry_pending);
++        assert_eq!(
++            agent
++                .credit_limit_stashed_prompt
++                .as_ref()
++                .map(|prompt| prompt.text.as_str()),
++            Some("retry me")
++        );
++    }
++
++    #[test]
++    fn keyboard_esc_dismisses_credit_limit_model_picker_and_preserves_prompt() {
++        let mut agent = credit_limit_model_picker_agent();
++
++        let outcome = agent.handle_palette_or_arg_input(&Event::Key(KeyEvent::new(
++            KeyCode::Esc,
++            KeyModifiers::NONE,
++        )));
++
++        assert!(matches!(outcome, InputOutcome::Changed));
++        assert_retry_cancelled_with_prompt_preserved(&agent);
++    }
++
++    #[test]
++    fn mouse_window_close_dismisses_credit_limit_model_picker_and_preserves_prompt() {
++        let mut agent = credit_limit_model_picker_agent();
++        let Some(ActiveModal::ArgPicker { window, .. }) = agent.active_modal.as_mut() else {
++            panic!("expected model argument picker");
++        };
++        window.popup_area = Some(Rect::new(10, 5, 80, 30));
++
++        let outcome = agent.handle_modal_mouse_with_registry(
++            &MouseEvent {
++                kind: MouseEventKind::Down(MouseButton::Left),
++                column: 5,
++                row: 5,
++                modifiers: KeyModifiers::NONE,
++            },
++            &crate::actions::ActionRegistry::defaults(),
++        );
++
++        assert!(matches!(outcome, InputOutcome::Changed));
++        assert_retry_cancelled_with_prompt_preserved(&agent);
++    }
++}
++
+ #[cfg(test)]
+ #[path = "modals_tests.rs"]
+ mod tests;
