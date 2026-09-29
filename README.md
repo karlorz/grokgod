@@ -69,6 +69,22 @@ grokgod sessions prune                                       # dry-run old sessi
 grokgod pin check [--expect-default M] [--expect-no-overlay] [--expect-orca-pin M]  # fail-closed pin precheck assertion
 ```
 
+Release-mode installs also perform a cached update check on ordinary `grok`
+launches. If the last successful refresh found a newer semantic release, the
+shim immediately writes this notice to stderr without changing arguments or
+the native process exit status:
+
+```text
+[grokgod] vNEW available (installed: vOLD) — run 'grok update' to upgrade
+```
+
+The GitHub `releases/latest` cache lives at `~/.grokgod/.update-check`. Its
+network refresh is detached from startup, bounded by a short timeout, and its
+attempt time is recorded before launch to enforce a 24-hour interval. Refresh
+failures are silent. Source-mode
+installs and the `update`, `status`, and `cache` administrative commands never
+show the notice.
+
 ### Windows Dispatcher & Command Matrix
 
 On Windows, `grok.cmd` and `grokgod.cmd` forward commands with positional identity to `src/shim/grok-shim.ps1` (e.g. `"%POWERSHELL_EXE%" ... -File "grok-shim.ps1" grok %*`):

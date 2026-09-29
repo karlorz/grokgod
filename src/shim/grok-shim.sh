@@ -202,6 +202,136 @@ compute_source_drift() {
   return 0
 }
 
+is_release_version() {
+  printf '%s\n' "$1" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([.+-][0-9A-Za-z.-]+)?$'
+}
+
+version_core_greater() {
+  candidate="$1"
+  installed="$2"
+
+  if ! is_release_version "$candidate" || ! is_release_version "$installed"; then
+    return 1
+  fi
+
+  candidate_core="$(printf '%s\n' "$candidate" | sed 's/^v\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\).*$/\1.\2.\3/')"
+  installed_core="$(printf '%s\n' "$installed" | sed 's/^v\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\).*$/\1.\2.\3/')"
+
+  old_ifs="$IFS"
+  IFS=.
+  set -- $candidate_core
+  candidate_major="$1"
+  candidate_minor="$2"
+  candidate_patch="$3"
+  set -- $installed_core
+  installed_major="$1"
+  installed_minor="$2"
+  installed_patch="$3"
+  IFS="$old_ifs"
+
+  for pair in \
+    "$candidate_major:$installed_major" \
+    "$candidate_minor:$installed_minor" \
+    "$candidate_patch:$installed_patch"
+  do
+    candidate_part="${pair%%:*}"
+    installed_part="${pair#*:}"
+    candidate_part="$(printf '%s\n' "$candidate_part" | sed 's/^0*//')"
+    installed_part="$(printf '%s\n' "$installed_part" | sed 's/^0*//')"
+    [ -n "$candidate_part" ] || candidate_part=0
+    [ -n "$installed_part" ] || installed_part=0
+
+    if [ "${#candidate_part}" -gt "${#installed_part}" ]; then
+      return 0
+    fi
+    if [ "${#candidate_part}" -lt "${#installed_part}" ]; then
+      return 1
+    fi
+    if [ "$candidate_part" != "$installed_part" ]; then
+      highest="$(printf '%s\n%s\n' "$candidate_part" "$installed_part" | LC_ALL=C sort | tail -n 1)"
+      [ "$highest" = "$candidate_part" ]
+      return
+    fi
+  done
+
+  return 1
+}
+
+write_update_cache() {
+  checked_at="$1"
+  cached_version="$2"
+  update_cache="$GROKGOD_HOME/.update-check"
+  update_tmp="$update_cache.tmp.$$"
+
+  umask 077
+  {
+    printf 'CHECKED_AT=%s\n' "$checked_at"
+    if [ -n "$cached_version" ]; then
+      printf 'VERSION=%s\n' "$cached_version"
+    fi
+  } > "$update_tmp" || return 1
+  mv -f "$update_tmp" "$update_cache"
+}
+
+maybe_notice_and_refresh_update() {
+  [ "${GROKGOD_UPDATE_CHECK_DISABLE:-0}" != "1" ] || return 0
+  [ "$(basename "$0")" = "grok" ] || return 0
+
+  stamp="$GROKGOD_HOME/.source-version"
+  [ -f "$stamp" ] || return 0
+  installed_mode="$(grep '^MODE=' "$stamp" 2>/dev/null | cut -d= -f2- || true)"
+  installed_version="$(grep '^VERSION=' "$stamp" 2>/dev/null | cut -d= -f2- || true)"
+  [ "$installed_mode" = "release" ] || return 0
+  is_release_version "$installed_version" || return 0
+
+  update_cache="$GROKGOD_HOME/.update-check"
+  checked_at=""
+  cached_version=""
+  if [ -f "$update_cache" ]; then
+    checked_at="$(grep '^CHECKED_AT=' "$update_cache" 2>/dev/null | cut -d= -f2- || true)"
+    cached_version="$(grep '^VERSION=' "$update_cache" 2>/dev/null | cut -d= -f2- || true)"
+  fi
+
+  if is_release_version "$cached_version" && version_core_greater "$cached_version" "$installed_version"; then
+    printf '%s\n' "[grokgod] $cached_version available (installed: $installed_version) — run 'grok update' to upgrade" >&2
+  fi
+
+  now="$(date +%s 2>/dev/null || true)"
+  case "$now" in
+    ''|*[!0-9]*) refresh_due=1 ;;
+    *) case "$checked_at" in
+      ''|*[!0-9]*) refresh_due=1 ;;
+      *)
+      if [ "$now" -ge "$checked_at" ] && [ "$((now - checked_at))" -lt 86400 ]; then
+        refresh_due=0
+      else
+        refresh_due=1
+      fi
+      ;;
+    esac
+      ;;
+  esac
+  [ "$refresh_due" -eq 1 ] || return 0
+  [ -n "$now" ] || return 0
+
+  # Record this 24-hour refresh window before detaching. Preserve only a valid
+  # cached tag so a failed request stays silent without retrying every launch.
+  if ! is_release_version "$cached_version"; then
+    cached_version=""
+  fi
+  write_update_cache "$now" "$cached_version" 2>/dev/null || return 0
+
+  update_url="${GROKGOD_UPDATE_CHECK_URL:-https://api.github.com/repos/karlorz/grokgod/releases/latest}"
+  (
+    response="$(curl -fsSL --connect-timeout 2 --max-time 5 \
+      -H 'Accept: application/vnd.github+json' \
+      -H 'User-Agent: grokgod' "$update_url" 2>/dev/null)" || exit 0
+    latest_version="$(printf '%s\n' "$response" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+    is_release_version "$latest_version" || exit 0
+    write_update_cache "$now" "$latest_version" 2>/dev/null || true
+  ) </dev/null >/dev/null 2>&1 &
+}
+
 cmd="${1:-}"
 
 case "$cmd" in
@@ -379,6 +509,7 @@ case "$cmd" in
       echo "hint: run 'grokgod update' to build/install" >&2
       exit 127
     fi
+    maybe_notice_and_refresh_update
     exec "$GROKGOD_BIN" "$@"
     ;;
   run)
@@ -412,6 +543,8 @@ case "$cmd" in
       echo "hint: run 'grokgod update' to build/install" >&2
       exit 127
     fi
+
+    maybe_notice_and_refresh_update
 
     # Check for --version / -V to warn on stderr if source is behind origin/main
     if [ "$#" -gt 0 ] && { [ "$1" = "--version" ] || [ "$1" = "-V" ]; }; then

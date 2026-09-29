@@ -143,6 +143,21 @@ def main():
     check("grok sessions" in shim_src, "grokgod sessions hint mentions 'grok sessions'")
     check('"sessions"' in shim_src and '"cache"' in shim_src, "Explicitly guards 'sessions' and 'cache' under grokgod identity")
 
+    # Cached update notice contract: release stamp only, immediate cached read,
+    # detached short-timeout refresh, atomic cache replacement, and test hooks.
+    check("Invoke-ReleaseUpdateCheck" in shim_src, "Implements release update notice check")
+    check("Test-VersionCoreGreater" in shim_src and "Test-ReleaseVersion" in shim_src, "Compares validated semantic numeric cores")
+    check(".update-check" in shim_src and "CHECKED_AT=" in shim_src and "VERSION=" in shim_src, "Uses ~/.grokgod/.update-check cache fields")
+    check("MODE" in shim_src and "release" in shim_src, "Gates update notices on release-mode stamp")
+    check("https://api.github.com/repos/karlorz/grokgod/releases/latest" in shim_src, "Refreshes official latest-release endpoint")
+    check("Invoke-WebRequest" in shim_src and "-TimeoutSec 5" in shim_src, "Uses a bounded refresh request")
+    check("Start-UpdateCacheRefresh" in shim_src and "__grokgod_update_refresh" in shim_src, "Runs refresh in a detached child process")
+    check("[System.IO.File]::Replace" in shim_src and "[System.IO.File]::Move" in shim_src, "Commits update cache atomically")
+    check("GROKGOD_UPDATE_CHECK_DISABLE" in shim_src and "GROKGOD_UPDATE_CHECK_URL" in shim_src, "Provides deterministic update-check test hooks")
+    exact_notice = "[grokgod] $cachedVersion available (installed: $installedVersion) — run 'grok update' to upgrade"
+    check(exact_notice in shim_src, "Uses exact update notice stderr contract")
+    check('if ($subcommand -ne "cache")' in shim_src, "Suppresses notice for administrative cache command")
+
     # 5. Argument preservation and escaping rules
     check("ConvertTo-WindowsCommandLine" in shim_src, "Centralizes Windows native command-line argument quoting")
     check("escapedArguments.Add('\"\"')" in shim_src or 'escapedArguments.Add(\'""\')' in shim_src, "Preserves empty string argument ('\"\"')")

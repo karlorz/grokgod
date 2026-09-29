@@ -41,8 +41,14 @@ echo "$((count + 1))" > "$TMP_DIR/fake_bin_invocations.txt"
 echo "FAKE_BIN_CALLED"
 echo "GROK_DISABLE_AUTOUPDATER=${GROK_DISABLE_AUTOUPDATER:-NOT_SET}"
 echo "ARGS:$*"
+if [ "${1:-}" = "exit-42" ]; then
+  exit 42
+fi
 EOF
 chmod +x "$FAKE_BIN"
+
+TEST_GROK_LAUNCHER="$TMP_DIR/grok"
+ln -s "$SHIM_SRC" "$TEST_GROK_LAUNCHER"
 
 # Helper to run the shim with fake env
 run_shim() {
@@ -50,8 +56,19 @@ run_shim() {
   GROKGOD_HOME="$TEST_GROKGOD_HOME" \
   GROKGOD_SRC="$TEST_GROKGOD_SRC" \
   GROK_BUILD_SRC="${TEST_GROK_BUILD_SRC:-$TMP_DIR/nonexistent_grok_build}" \
+  GROKGOD_UPDATE_CHECK_DISABLE="${GROKGOD_UPDATE_CHECK_DISABLE:-1}" \
   TMP_DIR="$TMP_DIR" \
   sh "$SHIM_SRC" "$@"
+}
+
+run_grok_launcher() {
+  HOME="$TEST_HOME" \
+  GROKGOD_HOME="$TEST_GROKGOD_HOME" \
+  GROKGOD_SRC="$TEST_GROKGOD_SRC" \
+  GROK_BUILD_SRC="${TEST_GROK_BUILD_SRC:-$TMP_DIR/nonexistent_grok_build}" \
+  GROKGOD_UPDATE_CHECK_DISABLE="${GROKGOD_UPDATE_CHECK_DISABLE:-0}" \
+  TMP_DIR="$TMP_DIR" \
+  sh "$TEST_GROK_LAUNCHER" "$@"
 }
 
 echo "=== Running Shim Tests ==="
@@ -68,6 +85,68 @@ if [ "$INV_COUNT" -ne 1 ]; then
   echo "FAIL: Expected 1 invocation, got $INV_COUNT"; exit 1
 fi
 echo "PASS: Test 1"
+
+# Test 1b: release-mode update notice is immediate, exact, and transparent
+echo "Test 1b: Cached release update notice"
+NOW_EPOCH="$(date +%s)"
+printf "SHA=fake\nPATCHSET=v1.2.3\nVERSION=v1.2.3-preview.1\nMODE=release\n" > "$TEST_GROKGOD_HOME/.source-version"
+printf "CHECKED_AT=%s\nVERSION=v2.0.0-rc.1\n" "$NOW_EPOCH" > "$TEST_GROKGOD_HOME/.update-check"
+set +e
+NOTICE_ERR="$(run_grok_launcher exit-42 2>&1 >/dev/null)"
+NOTICE_STATUS=$?
+set -eu
+[ "$NOTICE_STATUS" -eq 42 ] || { echo "FAIL: update notice changed target exit status ($NOTICE_STATUS)"; exit 1; }
+EXPECTED_NOTICE="[grokgod] v2.0.0-rc.1 available (installed: v1.2.3-preview.1) — run 'grok update' to upgrade"
+[ "$NOTICE_ERR" = "$EXPECTED_NOTICE" ] || { echo "FAIL: unexpected update notice ($NOTICE_ERR)"; exit 1; }
+
+# Equal/older numeric cores, source mode, malformed stamps/caches, and the test
+# disable hook must all remain silent.
+for CACHED_VERSION in v1.2.3 v1.2.2 v0.99.999; do
+  printf "CHECKED_AT=%s\nVERSION=%s\n" "$NOW_EPOCH" "$CACHED_VERSION" > "$TEST_GROKGOD_HOME/.update-check"
+  SILENT_ERR="$(run_grok_launcher hello 2>&1 >/dev/null)"
+  [ -z "$SILENT_ERR" ] || { echo "FAIL: equal/older version emitted notice ($SILENT_ERR)"; exit 1; }
+done
+printf "SHA=fake\nPATCHSET=v1.2.3\nVERSION=v1.2.3\nMODE=source\n" > "$TEST_GROKGOD_HOME/.source-version"
+printf "CHECKED_AT=%s\nVERSION=v9.0.0\n" "$NOW_EPOCH" > "$TEST_GROKGOD_HOME/.update-check"
+[ -z "$(run_grok_launcher hello 2>&1 >/dev/null)" ] || { echo "FAIL: source mode emitted update notice"; exit 1; }
+printf "MODE=release\nVERSION=not-semver\n" > "$TEST_GROKGOD_HOME/.source-version"
+[ -z "$(run_grok_launcher hello 2>&1 >/dev/null)" ] || { echo "FAIL: malformed stamp emitted update notice"; exit 1; }
+printf "SHA=fake\nPATCHSET=v1.2.3\nVERSION=v1.2.3\nMODE=release\n" > "$TEST_GROKGOD_HOME/.source-version"
+printf "CHECKED_AT=%s\nVERSION=malformed\n" "$NOW_EPOCH" > "$TEST_GROKGOD_HOME/.update-check"
+[ -z "$(run_grok_launcher hello 2>&1 >/dev/null)" ] || { echo "FAIL: malformed cache emitted update notice"; exit 1; }
+rm -f "$TEST_GROKGOD_HOME/.update-check"
+GROKGOD_UPDATE_CHECK_DISABLE=1 run_grok_launcher hello >/dev/null 2>&1
+[ ! -e "$TEST_GROKGOD_HOME/.update-check" ] || { echo "FAIL: disabled update check wrote cache"; exit 1; }
+
+# Missing/stale cache refresh uses a fake curl and returns before the refresh
+# finishes; the next launch consumes the atomically written cache.
+FAKE_CURL_DIR="$TMP_DIR/fake_curl"
+CURL_COUNT_FILE="$TMP_DIR/curl_count"
+mkdir -p "$FAKE_CURL_DIR"
+printf '0\n' > "$CURL_COUNT_FILE"
+cat << 'EOF' > "$FAKE_CURL_DIR/curl"
+#!/bin/sh
+set -eu
+count="$(cat "$CURL_COUNT_FILE")"
+printf '%s\n' "$((count + 1))" > "$CURL_COUNT_FILE"
+printf '%s\n' '{"tag_name":"v3.4.5-build.7"}'
+EOF
+chmod +x "$FAKE_CURL_DIR/curl"
+GROKGOD_UPDATE_CHECK_DISABLE=0 PATH="$FAKE_CURL_DIR:$PATH" CURL_COUNT_FILE="$CURL_COUNT_FILE" run_grok_launcher hello >/dev/null 2>&1
+refresh_wait=0
+while [ "$refresh_wait" -lt 100 ] && ! grep -q '^VERSION=v3.4.5-build.7$' "$TEST_GROKGOD_HOME/.update-check" 2>/dev/null; do
+  sleep 0.02
+  refresh_wait=$((refresh_wait + 1))
+done
+grep -q '^VERSION=v3.4.5-build.7$' "$TEST_GROKGOD_HOME/.update-check" || { echo "FAIL: detached refresh did not update cache"; exit 1; }
+[ "$(cat "$CURL_COUNT_FILE")" -eq 1 ] || { echo "FAIL: expected one refresh request"; exit 1; }
+GROKGOD_UPDATE_CHECK_DISABLE=0 PATH="$FAKE_CURL_DIR:$PATH" CURL_COUNT_FILE="$CURL_COUNT_FILE" run_grok_launcher hello >/dev/null 2>&1
+[ "$(cat "$CURL_COUNT_FILE")" -eq 1 ] || { echo "FAIL: fresh cache refreshed again inside 24h"; exit 1; }
+
+# Administrative commands never surface the cached notice.
+ADMIN_STATUS_ERR="$(GROKGOD_UPDATE_CHECK_DISABLE=0 run_shim status 2>&1 >/dev/null)"
+[ -z "$ADMIN_STATUS_ERR" ] || { echo "FAIL: status emitted update notice ($ADMIN_STATUS_ERR)"; exit 1; }
+echo "PASS: Test 1b"
 
 # Test 2: Update dispatch to install.sh (including arguments and exit code)
 echo "Test 2: Update dispatch"

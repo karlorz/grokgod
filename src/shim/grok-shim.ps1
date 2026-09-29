@@ -35,7 +35,7 @@ if ($args.Count -lt 1) {
 
 $Identity = [string]$args[0]
 $normIdentity = "$Identity".ToLower().Trim()
-if ($normIdentity -ne "grok" -and $normIdentity -ne "grokgod") {
+if ($normIdentity -ne "grok" -and $normIdentity -ne "grokgod" -and $normIdentity -ne "__grokgod_update_refresh") {
     [Console]::Error.WriteLine("error: invalid identity '$Identity'. First argument must be 'grok' or 'grokgod'.")
     exit 1
 }
@@ -132,6 +132,124 @@ function Get-StampMap([string]$path) {
         } catch {}
     }
     return $map
+}
+
+# -----------------------------------------------------------------------------
+# Helpers: Release Update Notice (cached immediately, refresh detached)
+# -----------------------------------------------------------------------------
+function Test-ReleaseVersion([string]$version) {
+    return [bool]($version -match '^v[0-9]+\.[0-9]+\.[0-9]+([.+-][0-9A-Za-z.-]+)?$')
+}
+
+function Test-VersionCoreGreater([string]$candidate, [string]$installed) {
+    if (-not (Test-ReleaseVersion $candidate) -or -not (Test-ReleaseVersion $installed)) {
+        return $false
+    }
+
+    [void]($candidate -match '^v([0-9]+)\.([0-9]+)\.([0-9]+)')
+    $candidateCore = @($matches[1], $matches[2], $matches[3])
+    [void]($installed -match '^v([0-9]+)\.([0-9]+)\.([0-9]+)')
+    $installedCore = @($matches[1], $matches[2], $matches[3])
+    for ($i = 0; $i -lt 3; $i++) {
+        $candidatePart = $candidateCore[$i].TrimStart([char]'0')
+        $installedPart = $installedCore[$i].TrimStart([char]'0')
+        if ($candidatePart.Length -eq 0) { $candidatePart = '0' }
+        if ($installedPart.Length -eq 0) { $installedPart = '0' }
+        if ($candidatePart.Length -gt $installedPart.Length) { return $true }
+        if ($candidatePart.Length -lt $installedPart.Length) { return $false }
+        $comparison = [string]::CompareOrdinal($candidatePart, $installedPart)
+        if ($comparison -gt 0) { return $true }
+        if ($comparison -lt 0) { return $false }
+    }
+    return $false
+}
+
+function Get-UpdateCacheData([string]$path) {
+    $data = @{ CheckedAt = $null; Version = $null }
+    if (-not (Test-Path -LiteralPath $path)) { return $data }
+    try {
+        foreach ($line in (Get-Content -LiteralPath $path -ErrorAction Stop)) {
+            if ($line -match '^CHECKED_AT=([0-9]+)$') { $data.CheckedAt = [Int64]$matches[1] }
+            if ($line -match '^VERSION=(.+)$') { $data.Version = [string]$matches[1] }
+        }
+    } catch {}
+    return $data
+}
+
+function Set-UpdateCache([string]$path, [Int64]$checkedAt, [string]$version) {
+    $tempPath = "$path.tmp.$PID.$([Guid]::NewGuid().ToString('N'))"
+    try {
+        $content = "CHECKED_AT=$checkedAt`n"
+        if (Test-ReleaseVersion $version) { $content += "VERSION=$version`n" }
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($tempPath, $content, $utf8NoBom)
+        if (Test-Path -LiteralPath $path) {
+            [System.IO.File]::Replace($tempPath, $path, $null)
+        } else {
+            [System.IO.File]::Move($tempPath, $path)
+        }
+        return $true
+    } catch {
+        Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+}
+
+function Invoke-UpdateCacheRefresh([string]$cachePath, [string]$url, [Int64]$checkedAt) {
+    try {
+        $headers = @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'grokgod' }
+        $response = Invoke-WebRequest -UseBasicParsing -Uri $url -Headers $headers -TimeoutSec 5 -ErrorAction Stop
+        $payload = ConvertFrom-Json ([string]$response.Content) -ErrorAction Stop
+        $latestVersion = [string]$payload.tag_name
+        if (Test-ReleaseVersion $latestVersion) {
+            [void](Set-UpdateCache -path $cachePath -checkedAt $checkedAt -version $latestVersion)
+        }
+    } catch {}
+}
+
+function Start-UpdateCacheRefresh([string]$cachePath, [string]$url, [Int64]$checkedAt) {
+    try {
+        $hostExe = (Get-Process -Id $PID -ErrorAction Stop).Path
+        if (-not $hostExe -or -not $script:DispatcherScriptPath) { return }
+        $refreshArgs = @(
+            '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+            '-File', $script:DispatcherScriptPath,
+            '__grokgod_update_refresh', $cachePath, $url, ([string]$checkedAt)
+        )
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $hostExe
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        $psi.Arguments = ConvertTo-WindowsCommandLine -ArgumentList $refreshArgs
+        [void][System.Diagnostics.Process]::Start($psi)
+    } catch {}
+}
+
+function Invoke-ReleaseUpdateCheck {
+    if ($env:GROKGOD_UPDATE_CHECK_DISABLE -eq '1') { return }
+
+    $stamp = Get-StampMap -path $StampFile
+    if (-not $stamp.ContainsKey('MODE') -or -not $stamp.ContainsKey('VERSION')) { return }
+    $installedVersion = [string]$stamp['VERSION']
+    if ([string]$stamp['MODE'] -ne 'release' -or -not (Test-ReleaseVersion $installedVersion)) { return }
+
+    $cachePath = Join-Path $GrokgodHome '.update-check'
+    $cache = Get-UpdateCacheData -path $cachePath
+    $cachedVersion = [string]$cache.Version
+    if ((Test-ReleaseVersion $cachedVersion) -and (Test-VersionCoreGreater $cachedVersion $installedVersion)) {
+        [Console]::Error.WriteLine("[grokgod] $cachedVersion available (installed: $installedVersion) — run 'grok update' to upgrade")
+    }
+
+    $unixEpoch = [DateTimeOffset]::Parse('1970-01-01T00:00:00Z')
+    $now = [Int64][Math]::Floor(([DateTimeOffset]::UtcNow - $unixEpoch).TotalSeconds)
+    $refreshDue = ($cache.CheckedAt -eq $null -or $cache.CheckedAt -gt $now -or ($now - [Int64]$cache.CheckedAt) -ge 86400)
+    if (-not $refreshDue) { return }
+
+    # Record this refresh window atomically before spawning the network child.
+    $preservedVersion = if (Test-ReleaseVersion $cachedVersion) { $cachedVersion } else { $null }
+    if (-not (Set-UpdateCache -path $cachePath -checkedAt $now -version $preservedVersion)) { return }
+    $updateUrl = if ($env:GROKGOD_UPDATE_CHECK_URL) { $env:GROKGOD_UPDATE_CHECK_URL } else { 'https://api.github.com/repos/karlorz/grokgod/releases/latest' }
+    Start-UpdateCacheRefresh -cachePath $cachePath -url $updateUrl -checkedAt $now
 }
 
 # -----------------------------------------------------------------------------
@@ -469,6 +587,18 @@ function Invoke-PatchedExecutable([string[]]$argsList) {
 # -----------------------------------------------------------------------------
 $subcommand = if ($cmdArgs.Count -gt 0) { $cmdArgs[0] } else { "" }
 
+# Private detached refresh entry point. It is intentionally not exposed by the
+# launchers and never starts the native grok process.
+if ($normIdentity -eq "__grokgod_update_refresh") {
+    if ($cmdArgs.Count -eq 3) {
+        $refreshCheckedAt = 0L
+        if ([Int64]::TryParse($cmdArgs[2], [ref]$refreshCheckedAt)) {
+            Invoke-UpdateCacheRefresh -cachePath $cmdArgs[0] -url $cmdArgs[1] -checkedAt $refreshCheckedAt
+        }
+    }
+    exit 0
+}
+
 # 1. Update dispatch
 if ($subcommand -eq "update") {
     [string[]]$updateRest = @()
@@ -523,4 +653,7 @@ if ($normIdentity -eq "grokgod") {
 # 4. For 'grok':
 # All other arguments, including 'grok sessions ...', go directly to the patched binary
 # with GROK_DISABLE_AUTOUPDATER=1.
+if ($subcommand -ne "cache") {
+    Invoke-ReleaseUpdateCheck
+}
 Invoke-PatchedExecutable -argsList $cmdArgs

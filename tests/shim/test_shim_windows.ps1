@@ -161,8 +161,10 @@ public class MockGrok {
 
     $origUserProfile  = $env:USERPROFILE
     $origLocalAppData = $env:LOCALAPPDATA
+    $origUpdateCheckDisable = $env:GROKGOD_UPDATE_CHECK_DISABLE
     $env:USERPROFILE  = $isolatedProfile
     $env:LOCALAPPDATA = $isolatedLocalApp
+    $env:GROKGOD_UPDATE_CHECK_DISABLE = "1"
 
     # -------------------------------------------------------------------------
     # Test Group 1: Command Matrix
@@ -271,6 +273,40 @@ public class MockGrok {
         $p = Start-Process -FilePath $pwshExe -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$ShimPath`"", "grok", "--exit-code", "$code") -NoNewWindow -Wait -PassThru
         Assert-Condition ($p.ExitCode -eq $code) "Exit code $code preserved (got $($p.ExitCode))"
     }
+
+    # 2.3 Cached release notice is exact and does not alter native exit status.
+    $noticeStamp = Join-Path $fakeGrokgodHome ".source-version"
+    $noticeCache = Join-Path $fakeGrokgodHome ".update-check"
+    $noticeNow = [Int64][Math]::Floor(([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse('1970-01-01T00:00:00Z')).TotalSeconds)
+    Set-Content -LiteralPath $noticeStamp -Value "SHA=$mockExeHash`nPATCHSET=v1.2.3`nVERSION=v1.2.3-preview.1`nMODE=release" -Encoding ASCII
+    Set-Content -LiteralPath $noticeCache -Value "CHECKED_AT=$noticeNow`nVERSION=v2.0.0-rc.1" -Encoding ASCII
+    $noticeErrFile = Join-Path $testDir "update_notice_err.txt"
+    $env:GROKGOD_UPDATE_CHECK_DISABLE = "0"
+    $p = Start-Process -FilePath $pwshExe -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$ShimPath`"", "grok", "--exit-code", "42") -RedirectStandardError $noticeErrFile -NoNewWindow -Wait -PassThru
+    $noticeErr = if (Test-Path $noticeErrFile) { (Get-Content $noticeErrFile -Raw).Trim() } else { "" }
+    $expectedNotice = "[grokgod] v2.0.0-rc.1 available (installed: v1.2.3-preview.1) — run 'grok update' to upgrade"
+    Assert-Condition ($p.ExitCode -eq 42) "Update notice preserves native exit code 42"
+    Assert-Condition ($noticeErr -eq $expectedNotice) "Cached update notice matches exact stderr contract" $noticeErr
+
+    # Same numeric core (suffix-only difference), source mode, and administrative
+    # cache dispatch remain silent.
+    Set-Content -LiteralPath $noticeCache -Value "CHECKED_AT=$noticeNow`nVERSION=v1.2.3" -Encoding ASCII
+    $silentErrFile = Join-Path $testDir "update_notice_silent_err.txt"
+    $p = Start-Process -FilePath $pwshExe -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$ShimPath`"", "grok", "chat") -RedirectStandardError $silentErrFile -NoNewWindow -Wait -PassThru
+    $silentErr = if (Test-Path $silentErrFile) { (Get-Content $silentErrFile -Raw).Trim() } else { "" }
+    Assert-Condition ([string]::IsNullOrEmpty($silentErr)) "Equal numeric version core emits no notice"
+    Set-Content -LiteralPath $noticeStamp -Value "SHA=$mockExeHash`nPATCHSET=v1.2.3`nVERSION=v1.2.3`nMODE=source" -Encoding ASCII
+    Set-Content -LiteralPath $noticeCache -Value "CHECKED_AT=$noticeNow`nVERSION=v9.0.0" -Encoding ASCII
+    Remove-Item -LiteralPath $silentErrFile -Force -ErrorAction SilentlyContinue
+    $p = Start-Process -FilePath $pwshExe -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$ShimPath`"", "grok", "chat") -RedirectStandardError $silentErrFile -NoNewWindow -Wait -PassThru
+    $silentErr = if (Test-Path $silentErrFile) { (Get-Content $silentErrFile -Raw).Trim() } else { "" }
+    Assert-Condition ([string]::IsNullOrEmpty($silentErr)) "Source mode emits no update notice"
+    Set-Content -LiteralPath $noticeStamp -Value "SHA=$mockExeHash`nPATCHSET=v1.2.3`nVERSION=v1.2.3`nMODE=release" -Encoding ASCII
+    Remove-Item -LiteralPath $silentErrFile -Force -ErrorAction SilentlyContinue
+    $p = Start-Process -FilePath $pwshExe -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$ShimPath`"", "grok", "cache") -RedirectStandardError $silentErrFile -NoNewWindow -Wait -PassThru
+    $silentErr = if (Test-Path $silentErrFile) { (Get-Content $silentErrFile -Raw).Trim() } else { "" }
+    Assert-Condition ([string]::IsNullOrEmpty($silentErr)) "Administrative cache command emits no update notice"
+    $env:GROKGOD_UPDATE_CHECK_DISABLE = "1"
 
     # -------------------------------------------------------------------------
     # Test Group 3: Status Command & JSON Schema
@@ -493,6 +529,11 @@ exit 0
 } finally {
     if ($origUserProfile) { $env:USERPROFILE = $origUserProfile }
     if ($origLocalAppData) { $env:LOCALAPPDATA = $origLocalAppData }
+    if ($origUpdateCheckDisable -ne $null) {
+        $env:GROKGOD_UPDATE_CHECK_DISABLE = $origUpdateCheckDisable
+    } else {
+        Remove-Item Env:GROKGOD_UPDATE_CHECK_DISABLE -ErrorAction SilentlyContinue
+    }
     if ($isolatedProfile -and (Test-Path -LiteralPath $isolatedProfile)) { Remove-Item -LiteralPath $isolatedProfile -Recurse -Force -ErrorAction SilentlyContinue }
     if ($isolatedLocalApp -and (Test-Path -LiteralPath $isolatedLocalApp)) { Remove-Item -LiteralPath $isolatedLocalApp -Recurse -Force -ErrorAction SilentlyContinue }
     Remove-Item -LiteralPath $testDir -Recurse -Force -ErrorAction SilentlyContinue
