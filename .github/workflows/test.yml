@@ -44,6 +44,7 @@ jobs:
         env:
           CI: "1"
         run: |
+          sh tests/install/test_checksum_matcher.sh
           sh tests/install/test_install.sh
 
   test-windows:

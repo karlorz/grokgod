@@ -79,9 +79,11 @@ done
 [ -f "$INSTALL_SCRIPT" ] || fail "install.sh not found at $INSTALL_SCRIPT"
 grep -q "examples/daily-minimal/minimal.md" "$INSTALL_SCRIPT" || fail "install.sh does not contain 'examples/daily-minimal/minimal.md'"
 
-# 10. install.sh copies the daily template onto $GROK_HOME/agents/minimal.md
+# 10. install.sh installs the daily template onto $GROK_HOME/agents/minimal.md
+# through the transaction helper (temp file + same-directory rename), so the
+# agent is never left half-written.
 grep -q 'target="\$GROK_HOME/agents/minimal.md"' "$INSTALL_SCRIPT" || fail "install.sh does not set the daily agent target"
-grep -q 'cp "\$template" "\$target"' "$INSTALL_SCRIPT" || fail "install.sh does not copy the daily template onto that target"
+grep -q 'tx_write "\$template" "\$target"' "$INSTALL_SCRIPT" || fail "install.sh does not install the daily template onto that target transactionally"
 
 # 11. install.ps1 contains references to daily minimal agent
 INSTALL_PS1="$REPO_ROOT/install.ps1"
