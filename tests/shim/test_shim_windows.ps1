@@ -284,7 +284,9 @@ public class MockGrok {
     $env:GROKGOD_UPDATE_CHECK_DISABLE = "0"
     $p = Start-Process -FilePath $pwshExe -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$ShimPath`"", "grok", "--exit-code", "42") -RedirectStandardError $noticeErrFile -NoNewWindow -Wait -PassThru
     $noticeErr = if (Test-Path $noticeErrFile) { (Get-Content $noticeErrFile -Raw).Trim() } else { "" }
-    $expectedNotice = "[grokgod] v2.0.0-rc.1 available (installed: v1.2.3-preview.1) — run 'grok update' to upgrade"
+    # Build the em dash by code point so Windows PowerShell 5.1 can parse this
+    # UTF-8 test source even when it is loaded using the system code page.
+    $expectedNotice = "[grokgod] v2.0.0-rc.1 available (installed: v1.2.3-preview.1) " + [char]0x2014 + " run 'grok update' to upgrade"
     Assert-Condition ($p.ExitCode -eq 42) "Update notice preserves native exit code 42"
     Assert-Condition ($noticeErr -eq $expectedNotice) "Cached update notice matches exact stderr contract" $noticeErr
 
