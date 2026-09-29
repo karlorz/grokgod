@@ -237,7 +237,8 @@ function Invoke-ReleaseUpdateCheck {
     $cache = Get-UpdateCacheData -path $cachePath
     $cachedVersion = [string]$cache.Version
     if ((Test-ReleaseVersion $cachedVersion) -and (Test-VersionCoreGreater $cachedVersion $installedVersion)) {
-        [Console]::Error.WriteLine("[grokgod] $cachedVersion available (installed: $installedVersion) — run 'grok update' to upgrade")
+        $notice = '[grokgod] ' + $cachedVersion + ' available (installed: ' + $installedVersion + ') ' + [char]0x2014 + " run 'grok update' to upgrade"
+        [Console]::Error.WriteLine($notice)
     }
 
     $unixEpoch = [DateTimeOffset]::Parse('1970-01-01T00:00:00Z')

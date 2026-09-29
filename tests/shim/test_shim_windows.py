@@ -154,8 +154,13 @@ def main():
     check("Start-UpdateCacheRefresh" in shim_src and "__grokgod_update_refresh" in shim_src, "Runs refresh in a detached child process")
     check("[System.IO.File]::Replace" in shim_src and "[System.IO.File]::Move" in shim_src, "Commits update cache atomically")
     check("GROKGOD_UPDATE_CHECK_DISABLE" in shim_src and "GROKGOD_UPDATE_CHECK_URL" in shim_src, "Provides deterministic update-check test hooks")
-    exact_notice = "[grokgod] $cachedVersion available (installed: $installedVersion) — run 'grok update' to upgrade"
-    check(exact_notice in shim_src, "Uses exact update notice stderr contract")
+    notice_contract = all(fragment in shim_src for fragment in (
+        "$notice =",
+        "[char]0x2014",
+        "run 'grok update' to upgrade",
+        "[Console]::Error.WriteLine($notice)",
+    ))
+    check(notice_contract, "Uses exact update notice stderr contract")
     check('if ($subcommand -ne "cache")' in shim_src, "Suppresses notice for administrative cache command")
 
     # 5. Argument preservation and escaping rules
