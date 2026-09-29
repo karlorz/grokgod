@@ -189,6 +189,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Published assets are the committed installers, so refuse to publish a
+      # release whose committed bytes no longer match src/installer/.
+      - name: Verify generated installers are current
+        run: node src/installer/build.mjs --check
+
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:

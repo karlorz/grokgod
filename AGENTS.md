@@ -52,14 +52,22 @@ the runbook lists.
 
 ## Repo map
 
-- `install.sh` - ClawGod-style installer: fetch, `git apply --check`
-  fail-closed, `CARGO_TARGET_DIR=~/.grokgod/target`, 15 GiB disk guard,
-  launcher install, uninstall/restore.
+- `install.sh`, `install.ps1` - GENERATED. Do not edit them by hand: edit
+  `src/installer/{shared/,templates/,constants.json}` and run
+  `node src/installer/build.mjs`. `--check` is the drift guard (CI + ADR 0005).
+  Behavior: fetch, `git apply --check` fail-closed,
+  `CARGO_TARGET_DIR=~/.grokgod/target`, 15 GiB disk guard, launcher install,
+  uninstall/restore.
 - `patches/` - source patches against xai-org/grok-build (base SHA in
   `patches/README.md`).
-- `src/shim/grok-shim.sh` - PATH shim: update/status/cache/run/eval dispatch,
-  absolute-path exec, `GROK_DISABLE_AUTOUPDATER=1`.
+- `src/installer/` - canonical sources for the generated installers
+  (`build.mjs` compiles, `cut.mjs` re-derives templates from committed bytes).
+- `src/shim/grok-shim.sh` - GENERATED (see above). PATH shim:
+  update/status/cache/run/eval dispatch, absolute-path exec,
+  `GROK_DISABLE_AUTOUPDATER=1`.
 - `src/grokgod-run.sh` - overlay pin runner (`GROK_CONFIG_PATH`).
 - `src/grokgod-eval.sh` - isolated DeepSeek benchmark home (`GROK_HOME`).
 - `src/grokgod-cache.sh` - disk report + guarded clean.
 - `tests/` - run each suite standalone with `sh tests/<dir>/test_*.sh`.
+- `tests/installer/` - generated-installer contract suite (artifact bytes,
+  constants, text contracts, drift detection).

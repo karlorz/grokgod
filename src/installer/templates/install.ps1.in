@@ -7,7 +7,7 @@
     with full transactional safety:
       - Fail-closed early rejection of Windows ARM64 before any network operation
       - Fail-closed prefix overlap validation (never touches or overlaps official %USERPROFILE%\.grok)
-      - Exact SHA256 checksum matching (single matching line for grokgod-windows-x64.exe)
+      - Exact SHA256 checksum matching (single matching line for {{GROKGOD:windowsTargetAsset}})
       - Preflight validation of candidate binary (--version) before live mutation
       - Active/stale lock detection and atomic acquisition
       - Locked/running target binary detection with fail-closed message
@@ -51,9 +51,9 @@ try {
 } catch {}
 
 # Constants
-$PINNED_BASE_SHA = "07e35a3dfeed2f200d319ef6c893b5ea286d9a51"
-$REPO_DEFAULT    = "karlorz/grokgod"
-$TARGET_ASSET    = "grokgod-windows-x64.exe"
+$PINNED_BASE_SHA = "{{GROKGOD:grokBuildBaseSha}}"
+$REPO_DEFAULT    = "{{GROKGOD:githubRepoSlug}}"
+$TARGET_ASSET    = "{{GROKGOD:windowsTargetAsset}}"
 
 # Environment overrides
 if ($env:GROKGOD_VERSION -and $Version -eq "latest") { $Version = $env:GROKGOD_VERSION }

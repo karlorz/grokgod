@@ -1,0 +1,27 @@
+#@build:strip-header
+# Canonical PowerShell engine selection for the Windows launchers.
+#
+# Shared by src/shim/templates/grok.cmd.template, src/shim/templates/
+# grokgod.cmd.template and src/shim/LauncherHelpers.ps1, which previously
+# carried three hand-maintained copies of this flow. The block ends after the
+# `exit /b 127` line; each consumer supplies its own :powershell_ready label
+# and exec line, and keeps the blank line between them.
+#
+# Do not edit a generated launcher or LauncherHelpers.ps1 to change this
+# behavior. Edit this file and run: node src/installer/build.mjs
+#@build:end-header
+set "POWERSHELL_EXE="
+pwsh.exe -NoProfile -Command "exit 0" >nul 2>&1
+if errorlevel 1 goto try_powershell
+set "POWERSHELL_EXE=pwsh.exe"
+goto powershell_ready
+
+:try_powershell
+powershell.exe -NoProfile -Command "exit 0" >nul 2>&1
+if errorlevel 1 goto powershell_unavailable
+set "POWERSHELL_EXE=powershell.exe"
+goto powershell_ready
+
+:powershell_unavailable
+>&2 echo grokgod: no runnable PowerShell engine found (pwsh.exe or powershell.exe)
+exit /b 127

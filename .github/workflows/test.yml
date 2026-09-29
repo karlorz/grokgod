@@ -26,6 +26,11 @@ jobs:
           rustc --test tests/normalize/normalize_contract.rs -o target/normalize_contract
           ./target/normalize_contract
 
+      - name: Verify generated installers are current
+        run: |
+          node src/installer/build.mjs --check
+          python3 tests/installer/test_generated_installers.py
+
       - name: Run Shim, Cache, and Run Test Suites
         run: |
           sh tests/shim/test_shim.sh
@@ -66,6 +71,14 @@ jobs:
               throw "Patch contains a carriage-return byte after checkout: $($patch.FullName)"
             }
           }
+
+      - name: Verify generated installers are current
+        shell: cmd
+        run: |
+          node src/installer/build.mjs --check
+          if errorlevel 1 exit /b 1
+          python tests\installer\test_generated_installers.py
+          if errorlevel 1 exit /b 1
 
       - name: Run Windows Dispatcher and Installer Suites (Windows PowerShell 5.1)
         shell: cmd
