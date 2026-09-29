@@ -1,8 +1,8 @@
 diff --git a/crates/codegen/xai-grok-sampling-types/src/types.rs b/crates/codegen/xai-grok-sampling-types/src/types.rs
-index 4ef1b7829a907f8cca7a5ecd98dd48136122435a..2bb02be3b5e2444b3ea247b59a4deb9f35f0403b 100644
+index aca15b31..efe4d4e1 100644
 --- a/crates/codegen/xai-grok-sampling-types/src/types.rs
 +++ b/crates/codegen/xai-grok-sampling-types/src/types.rs
-@@ -524,8 +524,11 @@ impl ToolCallFunction {
+@@ -530,8 +530,11 @@ impl ToolCallFunction {
  
  #[derive(Debug, Serialize, Deserialize, Clone)]
  pub struct Usage {
@@ -14,7 +14,7 @@ index 4ef1b7829a907f8cca7a5ecd98dd48136122435a..2bb02be3b5e2444b3ea247b59a4deb9f
      pub total_tokens: u32,
      #[serde(default, skip_serializing_if = "Option::is_none")]
      pub prompt_tokens_details: Option<PromptTokensDetails>,
-@@ -539,21 +542,21 @@ pub struct Usage {
+@@ -545,21 +548,21 @@ pub struct Usage {
  
  #[derive(Debug, Serialize, Deserialize, Clone, Default)]
  pub struct PromptTokensDetails {
@@ -42,7 +42,7 @@ index 4ef1b7829a907f8cca7a5ecd98dd48136122435a..2bb02be3b5e2444b3ea247b59a4deb9f
      pub rejected_prediction_tokens: u32,
  }
  // ============ Streaming types ============
-@@ -1555,6 +1558,45 @@ mod tests {
+@@ -1653,6 +1656,45 @@ mod tests {
          assert!(delta.tool_calls.is_empty());
      }
  

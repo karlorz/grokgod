@@ -1,8 +1,8 @@
 diff --git a/crates/codegen/xai-grok-pager/src/app/acp_handler/session_notification.rs b/crates/codegen/xai-grok-pager/src/app/acp_handler/session_notification.rs
-index 51b0f5cf..217ad626 100644
+index 8bb33cee..e9680874 100644
 --- a/crates/codegen/xai-grok-pager/src/app/acp_handler/session_notification.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/acp_handler/session_notification.rs
-@@ -1795,6 +1795,7 @@ pub(super) fn apply_retry_state(
+@@ -1857,6 +1857,7 @@ pub(super) fn apply_retry_state(
      is_api_key_auth: bool,
  ) {
      let mut is_credit_limit = false;
@@ -10,7 +10,7 @@ index 51b0f5cf..217ad626 100644
      let mut is_reauth = false;
      use xai_grok_shell::extensions::notification::RetryState;
      match retry {
-@@ -1832,7 +1833,7 @@ pub(super) fn apply_retry_state(
+@@ -1894,7 +1895,7 @@ pub(super) fn apply_retry_state(
                  );
              }
              is_credit_limit = super::super::dispatch::is_credit_limit_error(None, reason);
@@ -19,7 +19,7 @@ index 51b0f5cf..217ad626 100644
                  && xai_grok_shell::sampling::error::is_free_usage_exhausted_error(reason);
              if is_credit_limit {
                  session.credit_limit_blocked = true;
-@@ -1904,7 +1905,7 @@ pub(super) fn apply_retry_state(
+@@ -1966,7 +1967,7 @@ pub(super) fn apply_retry_state(
                  .map(|m| m.0.to_string())
                  .unwrap_or_default(),
          });
@@ -29,7 +29,7 @@ index 51b0f5cf..217ad626 100644
      }
  }
 diff --git a/crates/codegen/xai-grok-pager/src/app/acp_handler/tests/session_events.rs b/crates/codegen/xai-grok-pager/src/app/acp_handler/tests/session_events.rs
-index 5d652c9e..b77b54b1 100644
+index 7f1f10aa..59c96b0a 100644
 --- a/crates/codegen/xai-grok-pager/src/app/acp_handler/tests/session_events.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/acp_handler/tests/session_events.rs
 @@ -316,7 +316,7 @@
@@ -90,16 +90,16 @@ index 5d652c9e..b77b54b1 100644
      }
  
      #[test]
-@@ -1754,4 +1766,3 @@
+@@ -1829,4 +1841,3 @@
          assert!(!modal.hooks_collapsed_groups.contains("/src1"));
          assert!(modal.hooks_collapsed_groups.contains("/src2"));
      }
 -
 diff --git a/crates/codegen/xai-grok-pager/src/app/actions.rs b/crates/codegen/xai-grok-pager/src/app/actions.rs
-index ae4727fc..3955df09 100644
+index e451efda..112c61ee 100644
 --- a/crates/codegen/xai-grok-pager/src/app/actions.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/actions.rs
-@@ -67,8 +67,11 @@ pub enum Action {
+@@ -86,8 +86,11 @@ pub enum Action {
      CheckSubscription,
      /// Open an arbitrary URL in the system browser (with scheme validation).
      OpenUrl(String),
@@ -113,7 +113,7 @@ index ae4727fc..3955df09 100644
      OpenLink(crate::render::osc8::LinkTarget),
      /// Open grok.com managed connectors, appending session teamId when set.
 diff --git a/crates/codegen/xai-grok-pager/src/app/agent.rs b/crates/codegen/xai-grok-pager/src/app/agent.rs
-index 1ad54e8d..fefea2d9 100644
+index 91edd9f7..69e59d86 100644
 --- a/crates/codegen/xai-grok-pager/src/app/agent.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/agent.rs
 @@ -754,7 +754,8 @@ pub struct AgentSession {
@@ -127,7 +127,7 @@ index 1ad54e8d..fefea2d9 100644
      /// `None` for skill-injected prompts (cannot be reversed) and bash/cron.
      pub in_flight_prompt: Option<InFlightPrompt>,
 diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/input.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/input.rs
-index 3db01e62..04c44f48 100644
+index 18c32b78..949f22a2 100644
 --- a/crates/codegen/xai-grok-pager/src/app/agent_view/input.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/agent_view/input.rs
 @@ -26,6 +26,29 @@ pub(crate) enum ExternalPromptEditorAccess {
@@ -160,7 +160,7 @@ index 3db01e62..04c44f48 100644
      /// The composer is the editing target regardless of pane focus (like the other global chords); overlays and dropdowns still own input.
      pub(crate) fn external_prompt_editor_access(&self) -> ExternalPromptEditorAccess {
          let owned_elsewhere = !matches!(self.prompt_mode, super::PromptMode::Normal)
-@@ -1267,24 +1290,7 @@ impl AgentView {
+@@ -1265,24 +1288,7 @@ impl AgentView {
                  InputOutcome::Changed
              }
              ActionId::ModelPicker => {
@@ -187,7 +187,7 @@ index 3db01e62..04c44f48 100644
              }
              ActionId::ShortcutsHelp => {
 diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs
-index c827fb42..16c16465 100644
+index 1dfeb8c2..372dd832 100644
 --- a/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs
 @@ -634,7 +634,10 @@ impl AgentView {
@@ -203,10 +203,10 @@ index c827fb42..16c16465 100644
          }
          outcome
 diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
-index a9151404..cadc7905 100644
+index 8176b829..ee2c0263 100644
 --- a/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
-@@ -865,10 +865,14 @@ pub struct AgentView {
+@@ -866,10 +866,14 @@ pub struct AgentView {
      pub prompt_stash: Option<PromptStashEntry>,
      /// Set by the send that consumed the user's draft this dispatch; see `note_draft_consumed`.
      pub(crate) draft_consumed: bool,
@@ -224,7 +224,7 @@ index a9151404..cadc7905 100644
      /// Complete prompt stashed from a turn that failed because the login expired (401 / re-auth). Used by the `AuthComplete` handler to auto-resubmit the prompt after a successful mid-session re-auth so the user doesn't have to retype it.
      pub reauth_stashed_prompt: Option<crate::app::agent::InFlightPrompt>,
      /// Currently active modal dialog (blocks all other input).
-@@ -1628,6 +1632,9 @@ fn translate_local_submit(
+@@ -1630,6 +1634,9 @@ fn translate_local_submit(
          LocalQuestionKind::CreditLimitUpsell { choices } => {
              let option = qv.questions.first().and_then(|q| q.options.get(*idx));
              let id = option.and_then(|o| o.id.as_deref());
@@ -234,7 +234,7 @@ index a9151404..cadc7905 100644
              if id == Some(super::dispatch::CREDIT_LIMIT_RETRY_OPTION_ID) {
                  xai_grok_telemetry::session_ctx::log_event(
                      xai_grok_telemetry::events::CreditLimitUpsellClicked {
-@@ -1652,12 +1659,17 @@ fn translate_local_submit(
+@@ -1654,12 +1661,17 @@ fn translate_local_submit(
              InputOutcome::Action(Action::OpenUrl(url.to_string()))
          }
          LocalQuestionKind::FreeUsageUpsell { source } => {
@@ -328,10 +328,10 @@ index 719a85dc..c506683d 100644
      }
  
 diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
-index 888d610e..3f4ef37d 100644
+index f290b5c3..f93a4ae8 100644
 --- a/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
-@@ -194,6 +194,7 @@ impl AgentView {
+@@ -193,6 +193,7 @@ impl AgentView {
              prompt_stash: None,
              draft_consumed: false,
              credit_limit_stashed_prompt: None,
@@ -340,7 +340,7 @@ index 888d610e..3f4ef37d 100644
              active_modal: None,
              modal_buttons: Vec::new(),
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/billing.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/billing.rs
-index 658d7468..2b353c80 100644
+index c7dd2b0b..7b6495e4 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/billing.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/billing.rs
 @@ -74,6 +74,19 @@ pub(crate) fn is_credit_limit_error(http_status: Option<u16>, message: &str) ->
@@ -412,7 +412,7 @@ index 658d7468..2b353c80 100644
      let question = Question {
          question: heading.into(),
          options,
-@@ -491,7 +510,7 @@ pub(super) fn handle_credit_limit_recheck_complete(
+@@ -505,7 +524,7 @@ pub(super) fn handle_credit_limit_recheck_complete(
      drain.effects
  }
  
@@ -421,7 +421,7 @@ index 658d7468..2b353c80 100644
  pub(super) fn dispatch_retry_credit_limit_prompt(app: &mut AppView) -> Vec<Effect> {
      use crate::app::app_view::ActiveView;
  
-@@ -526,6 +545,23 @@ pub(super) fn dispatch_retry_credit_limit_prompt(app: &mut AppView) -> Vec<Effec
+@@ -540,6 +559,23 @@ pub(super) fn dispatch_retry_credit_limit_prompt(app: &mut AppView) -> Vec<Effec
      drain.effects
  }
  
@@ -446,10 +446,10 @@ index 658d7468..2b353c80 100644
  
  pub(super) fn dispatch_open_supergrok_url(app: &mut AppView) -> Vec<Effect> {
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/mod.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/mod.rs
-index a57df79b..79bf00be 100644
+index d68eab6e..d895c82b 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/mod.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/mod.rs
-@@ -39,7 +39,8 @@ mod voice;
+@@ -37,7 +37,8 @@ mod voice;
  pub(crate) use auth::scrollback_has_recent_disk_full;
  pub(in crate::app) use auth::scrollback_has_recent_error_banner;
  pub(crate) use billing::{
@@ -457,13 +457,13 @@ index a57df79b..79bf00be 100644
 +    CREDIT_LIMIT_RETRY_OPTION_ID, UPSELL_URL_PAYG, UPSELL_URL_UPGRADE,
 +    USAGE_LIMIT_SWITCH_MODEL_OPTION_ID, is_credit_limit_error,
  };
- pub(crate) use dashboard::{DashboardStopReadiness, dashboard_stop_readiness};
- pub(crate) use modes::{downgrade_displayed_auto_if_gated, effective_auto};
+ #[cfg(test)]
+ pub(crate) use ctx::{SwitchCause, switch_to_agent};
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
-index e6f28c24..f98c54db 100644
+index d0207000..bf0c37e1 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
-@@ -1607,8 +1607,11 @@ pub(super) fn handle_prompt_response(
+@@ -1652,8 +1652,11 @@ pub(super) fn handle_prompt_response(
          }
  
          // Stash the complete in-flight prompt before finish_turn clears it.
@@ -478,10 +478,10 @@ index e6f28c24..f98c54db 100644
          }
          // Stash for AuthComplete after 401
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs
-index f550b1b3..fdc75f41 100644
+index 475b3f1c..4c46b140 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs
-@@ -1193,6 +1193,9 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
+@@ -1219,6 +1219,9 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
          Action::CheckSubscription => vec![Effect::CheckSubscription { verify: None }],
          Action::OpenSupergrokUrl => dispatch_open_supergrok_url(app),
          Action::RetryCreditLimitPrompt => super::billing::dispatch_retry_credit_limit_prompt(app),
@@ -492,16 +492,23 @@ index f550b1b3..fdc75f41 100644
              if url.starts_with("file://") {
                  let opened = url::Url::parse(&url)
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
-index 5a2d07bb..81f932fd 100644
+index 87998df9..37d71be3 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
-@@ -1883,10 +1883,13 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
-     let suppress_cli_persist = app.cli_model_ephemeral
+@@ -1891,15 +1891,19 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
+         model_id,
+         effort,
+         context_window_selection,
+-    } = choice;    let suppress_cli_persist = app.cli_model_ephemeral
++    } = choice;
++    let suppress_cli_persist = app.cli_model_ephemeral
          && app.cli_model_override.as_ref() == Some(&model_id);
      let mut consumed_cli_persist = false;
 +    let mut retry_credit_limit_prompt = false;
      if let Some(agent) = app.agents.get_mut(&agent_id) {
          agent.session.model_switch_pending = false;
+         let model_changed_during_switch =
+             std::mem::take(&mut agent.session.models.model_changed_during_switch);
          let mut effects = match result {
              Ok(()) => {
 +                retry_credit_limit_prompt = agent.credit_limit_model_retry_pending;
@@ -509,7 +516,7 @@ index 5a2d07bb..81f932fd 100644
                  agent.session.user_model_preference = Some(model_id.clone());
                  let display_name = agent
                      .session
-@@ -1927,6 +1930,7 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
+@@ -1948,6 +1952,7 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
                  }
              }
              Err(SwitchModelError::IncompatibleAgent { .. }) => {
@@ -517,15 +524,19 @@ index 5a2d07bb..81f932fd 100644
                  if let Some(ref prev) = prev_model_id {
                      agent.session.models.set_current(prev.clone(), None);
                  }
-@@ -1935,12 +1939,26 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
+@@ -1961,6 +1966,8 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
                  return open_agent_type_mismatch_question(app, model_id, effort, &display_name);
              }
              Err(SwitchModelError::Other(msg)) => {
 +                let suppress_drain = agent.credit_limit_model_retry_pending;
 +                agent.credit_limit_model_retry_pending = false;
-                 agent
-                     .scrollback
-                     .push_block(RenderBlock::system(format!("Couldn't switch model: {msg}")));
+                 let text = match context_window_selection {
+                     Some(selection) => {
+                         format!(
+@@ -1971,9 +1978,21 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
+                     None => format!("Couldn't switch model: {msg}"),
+                 };
+                 agent.scrollback.push_block(RenderBlock::system(text));
 +                if suppress_drain {
 +                    return vec![];
 +                }
@@ -545,7 +556,7 @@ index 5a2d07bb..81f932fd 100644
          effects.extend(drain.effects);
          note_peek_page_flip(app, agent_id, drain.page_flip_entry);
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
-index d9c6c966..788bf5f0 100644
+index 6a802fe1..9560addb 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
 @@ -1798,6 +1798,9 @@ pub(in crate::app::dispatch) fn set_default_model(
@@ -1039,11 +1050,11 @@ index 2149d491..6ae3f303 100644
  
  /// Aliases of a restricted command hit the same upsell (deny-list matching covers aliases via the registry).
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
-index 4b710c2f..bfd8db53 100644
+index 70c7221f..d6d9ae0d 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
-@@ -24,7 +24,7 @@ mod turn;
- mod voice;
+@@ -25,7 +25,7 @@ mod voice;
+ mod voice_clip;
  use super::billing::{
      CreditLimitUpsellMode, credit_limit_upsell_mode, is_max_tier, open_credit_limit_upsell,
 -    open_free_usage_upsell,
@@ -1052,10 +1063,10 @@ index 4b710c2f..bfd8db53 100644
  use super::cta::{
      CTA_MCP_ABSENT_MAX_ATTEMPTS, CTA_MCP_POLL_MAX_ATTEMPTS, cta_impression_plugin_name,
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
-index 0435365b..e2856c13 100644
+index ae0f990e..cb104e82 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
-@@ -1400,11 +1400,32 @@ fn set_default_model_idempotent_when_already_current() {
+@@ -1395,11 +1395,32 @@ fn set_default_model_idempotent_when_already_current() {
          .session
          .models
          .set_current(id.clone(), None);
@@ -1089,7 +1100,7 @@ index 0435365b..e2856c13 100644
  /// `clamp_max_thoughts_width` clamps out-of-range values to the registered `[40, 500]` bounds.
  #[test]
 diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs
-index 31315a8d..2d98151a 100644
+index 29d6657c..25ab8d29 100644
 --- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs
 @@ -13,6 +13,16 @@ fn expect_agent(app: &AppView, id: AgentId) -> &AgentView {
@@ -1107,9 +1118,9 @@ index 31315a8d..2d98151a 100644
 +}
 +
  use crate::app::subagent::{SubagentLifecycleReduction, SubagentLifecycleTransition};
- use xai_grok_shell::session::helpers::session_compact::COMPACT_CANCELLED_MSG;
- use xai_grok_shell::session::unified_list::ListScope;
-@@ -1554,17 +1564,147 @@ fn switch_model_complete_failure_pushes_error_and_clears_pending() {
+ use std::num::NonZeroU64;
+ use xai_grok_shell::agent::config::ModelSwitchIncompatibleAgentError;
+@@ -1623,17 +1633,147 @@ fn switch_model_complete_failure_pushes_error_and_clears_pending() {
      );
  }
  
@@ -1262,7 +1273,7 @@ index 31315a8d..2d98151a 100644
      let initial_scrollback = expect_agent(&app, id).scrollback.len();
  
      let err = xai_grok_shell::agent::config::ModelSwitchIncompatibleAgentError {
-@@ -1591,6 +1731,14 @@ fn switch_model_incompatible_agent_shows_question_modal() {
+@@ -1659,6 +1799,14 @@ fn switch_model_incompatible_agent_shows_question_modal() {
      // No effects emitted (modal is synchronous state).
      assert!(effects.is_empty());
      assert!(!expect_agent(&app, id).session.model_switch_pending);
@@ -1278,10 +1289,10 @@ index 31315a8d..2d98151a 100644
      assert!(expect_agent(&app, id).question_view.is_some());
      let qv = expect_agent(&app, id).question_view.as_ref().unwrap();
 diff --git a/crates/codegen/xai-grok-pager/src/app/modals.rs b/crates/codegen/xai-grok-pager/src/app/modals.rs
-index b430bd0a..651b2164 100644
+index 0d568366..984a28db 100644
 --- a/crates/codegen/xai-grok-pager/src/app/modals.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/modals.rs
-@@ -541,6 +541,17 @@ impl AgentView {
+@@ -539,6 +539,17 @@ impl AgentView {
          }
      }
  
@@ -1299,7 +1310,7 @@ index b430bd0a..651b2164 100644
      /// Arg picker input, separate from the command palette to avoid borrow conflicts.
      /// Stepping back from the model effort phase borrows both the slash registry and the session.
      fn handle_arg_picker_input(&mut self, ev: &crossterm::event::Event) -> InputOutcome {
-@@ -631,6 +642,7 @@ impl AgentView {
+@@ -629,6 +640,7 @@ impl AgentView {
                  if in_effort_phase && self.try_arg_picker_step_back_from_effort() {
                      return InputOutcome::Changed;
                  }
@@ -1307,7 +1318,7 @@ index b430bd0a..651b2164 100644
                  let snapshot = match self.active_modal.as_mut() {
                      Some(ActiveModal::ArgPicker {
                          previous_palette, ..
-@@ -1397,6 +1409,7 @@ impl AgentView {
+@@ -1395,6 +1407,7 @@ impl AgentView {
                      if self.try_arg_picker_step_back_from_effort() {
                          return InputOutcome::Changed;
                      }

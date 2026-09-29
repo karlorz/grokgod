@@ -13,7 +13,7 @@
 # base-sha is the grok-build authorship/application pin and must match
 # PINNED_BASE_SHA in install.sh and the pin recorded in patches/README.md.
 registry-version	1
-base-sha	07e35a3dfeed2f200d319ef6c893b5ea286d9a51
+base-sha	97f190f644ae1ba07fd6ee185ef54c650e142666
 0001	0001-normalize-plugin-skill-join	patches/0001-normalize-plugin-skill-join.patch
 0002	0002-plan-mode-extra-writable	patches/0002-plan-mode-extra-writable.patch
 0003	0003-session-persist-single	patches/0003-session-persist-single.patch

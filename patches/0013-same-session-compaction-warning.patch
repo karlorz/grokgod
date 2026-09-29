@@ -1,8 +1,8 @@
 diff --git a/crates/codegen/xai-grok-config-types/src/lib.rs b/crates/codegen/xai-grok-config-types/src/lib.rs
-index f99c9fdb..34950163 100644
+index cd3b084d..4fd715ae 100644
 --- a/crates/codegen/xai-grok-config-types/src/lib.rs
 +++ b/crates/codegen/xai-grok-config-types/src/lib.rs
-@@ -101,6 +101,9 @@ pub struct SessionSettings {
+@@ -74,6 +74,9 @@ pub struct SessionSettings {
      /// Context window usage percentage (0-100) at which auto-compact is triggered.
      #[serde(default, skip_serializing_if = "Option::is_none")]
      pub auto_compact_threshold_percent: Option<u8>,
@@ -64,10 +64,10 @@ index 82da5ad4..008615d0 100644
  | `turn.started_at_ms` | Unix milliseconds the turn in flight began, absent between turns. Subtract it from your own clock for an elapsed time |
  | `worktree.{name,path,branch,main_worktree_root}` | Active worktree, inside a linked worktree. `name` is omitted for a worktree at a filesystem root, and `main_worktree_root` is where the worktree branched from |
 diff --git a/crates/codegen/xai-grok-pager/src/app/acp_handler/session_notification.rs b/crates/codegen/xai-grok-pager/src/app/acp_handler/session_notification.rs
-index ac92a50c..00efde13 100644
+index 146dc24f..8bb33cee 100644
 --- a/crates/codegen/xai-grok-pager/src/app/acp_handler/session_notification.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/acp_handler/session_notification.rs
-@@ -1584,6 +1584,17 @@ fn apply_compaction_or_retry_update(
+@@ -1628,6 +1628,17 @@ fn apply_compaction_or_retry_update(
      if let Some(used) = compaction_context_refresh(update) {
          refresh_context_used(agent, used);
      }
@@ -86,7 +86,7 @@ index ac92a50c..00efde13 100644
          XaiSessionUpdate::AutoCompactStarted { reason, .. } => {
              if agent.session.state.is_idle()
 diff --git a/crates/codegen/xai-grok-pager/src/app/acp_handler/tests/session_events.rs b/crates/codegen/xai-grok-pager/src/app/acp_handler/tests/session_events.rs
-index 55c87b51..5d652c9e 100644
+index 9fc0b7cf..7f1f10aa 100644
 --- a/crates/codegen/xai-grok-pager/src/app/acp_handler/tests/session_events.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/acp_handler/tests/session_events.rs
 @@ -92,6 +92,8 @@
@@ -205,7 +205,7 @@ index 55c87b51..5d652c9e 100644
      #[test]
      fn apply_unhandled_event_returns_false() {
          let mut session = make_session(Some("s1"));
-@@ -1051,6 +1111,8 @@
+@@ -1126,6 +1186,8 @@
              tokens_after: 25000,
              elapsed_ms: Some(300),
              summary_preview: None,
@@ -214,7 +214,7 @@ index 55c87b51..5d652c9e 100644
          };
          let changed = handle_child_session_notification(update, child_sid, &mut agent, false, None);
          assert!(changed);
-@@ -1126,6 +1188,8 @@
+@@ -1201,6 +1263,8 @@
              tokens_after: 25000,
              elapsed_ms: Some(300),
              summary_preview: None,
@@ -224,7 +224,7 @@ index 55c87b51..5d652c9e 100644
          let changed = handle_child_session_notification(update, child_sid, &mut agent, false, None);
          // No child_view means nothing visible changed, so it must not trigger a redraw
 diff --git a/crates/codegen/xai-grok-pager/src/app/acp_handler/tests/subagents.rs b/crates/codegen/xai-grok-pager/src/app/acp_handler/tests/subagents.rs
-index 638d5ac5..f4115794 100644
+index 2aeb77b0..c09c4965 100644
 --- a/crates/codegen/xai-grok-pager/src/app/acp_handler/tests/subagents.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/acp_handler/tests/subagents.rs
 @@ -2262,6 +2262,8 @@
@@ -237,7 +237,7 @@ index 638d5ac5..f4115794 100644
              ),
              &mut app,
 diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
-index f6b14d07..911da4c4 100644
+index fd1722d3..8176b829 100644
 --- a/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
 @@ -1211,6 +1211,10 @@ pub struct AgentView {
@@ -361,10 +361,10 @@ index 4474bcf2..719a85dc 100644
      fn mouse_off_banner_key_swaps_with_focused_pane() {
          let mut view = make_running_agent();
 diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
-index 43050cf3..59d35b36 100644
+index bad51b2f..f290b5c3 100644
 --- a/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
 +++ b/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
-@@ -46,6 +46,8 @@ impl AgentView {
+@@ -45,6 +45,8 @@ impl AgentView {
              self.deferred_subagent_finishes.clear();
              self.clear_minimal_btw_lifecycle();
              self.clear_kept_plan();
@@ -382,7 +382,7 @@ index 43050cf3..59d35b36 100644
          }
      }
      /// Record a prompt id this client originated (sent to the agent as the turn driver).
-@@ -336,6 +340,8 @@ impl AgentView {
+@@ -334,6 +338,8 @@ impl AgentView {
              btw_focused: false,
              hit_btw_close: Default::default(),
              toast: None,
@@ -481,10 +481,10 @@ index 07d4d4bb..11fccfbf 100644
 +    assert_eq!(missing_limit.tone, SegmentTone::Dim);
 +}
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
-index 08a9489b..b3a0460b 100644
+index 86fa2a43..e395a26c 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
-@@ -1558,6 +1558,10 @@ pub struct SessionConfig {
+@@ -1087,6 +1087,10 @@ pub struct SessionConfig {
      /// Read this field via the resolver, not directly, to honor the full precedence chain (env, per-model, remote, default).
      #[serde(default, skip_serializing_if = "Option::is_none")]
      pub auto_compact_threshold_percent: Option<u8>,
@@ -496,10 +496,10 @@ index 08a9489b..b3a0460b 100644
      /// Defaults to `true` when unset.
      /// `Option<bool>` so `None` round-trips as absent on disk (managed config wins over default).
 diff --git a/crates/codegen/xai-grok-shell/src/extensions/notification.rs b/crates/codegen/xai-grok-shell/src/extensions/notification.rs
-index ecaf6491..b9c9d2b5 100644
+index 2eb822b9..d59bea7e 100644
 --- a/crates/codegen/xai-grok-shell/src/extensions/notification.rs
 +++ b/crates/codegen/xai-grok-shell/src/extensions/notification.rs
-@@ -527,6 +527,12 @@ pub enum SessionUpdate {
+@@ -543,6 +543,12 @@ pub enum SessionUpdate {
          /// How long the compaction took (milliseconds)
          #[serde(skip_serializing_if = "Option::is_none")]
          elapsed_ms: Option<i64>,
@@ -513,10 +513,10 @@ index ecaf6491..b9c9d2b5 100644
          summary_preview: Option<String>,
      },
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-index d7da1077..15d2c881 100644
+index 3c2ab9d1..cca09655 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
-@@ -1495,6 +1495,9 @@ pub(crate) async fn spawn_session_actor(
+@@ -1517,6 +1517,9 @@ pub(crate) async fn spawn_session_actor(
          feedback_client,
          feedback_config,
      ));
@@ -526,20 +526,21 @@ index d7da1077..15d2c881 100644
      let signals_handle = feedback_manager.signals_handle();
      if let Some(persisted) = persisted_signals {
          signals_handle.restore_signals(persisted);
-@@ -1832,6 +1835,13 @@ pub(crate) async fn spawn_session_actor(
-             threshold_percent: std::cell::Cell::new(auto_compact_threshold_percent),
+@@ -1875,7 +1878,13 @@ pub(crate) async fn spawn_session_actor(
              force_compact: force_compact.clone(),
              context_window_override,
+             context_window_selection: context_window_selection.clone(),
+-            count: std::sync::atomic::AtomicU64::new(0),
 +            successful_compaction_count: std::sync::atomic::AtomicU64::new(
 +                persisted_successful_compaction_count,
 +            ),
 +            compaction_round_warning_limit:
 +                crate::util::config::resolve_compaction_round_warning_limit(
 +                    effective_config.session.compaction_round_warning_limit,
-+                ),
-             count: std::sync::atomic::AtomicU64::new(0),
++                ),            count: std::sync::atomic::AtomicU64::new(0),
              auto_compact_suppressed: std::sync::atomic::AtomicU8::new(0),
              previous_model: std::cell::Cell::new(None),
+             compaction_mode,
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/status_line.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/status_line.rs
 index aa13bb6a..4cbe36a6 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/status_line.rs
@@ -558,178 +559,143 @@ index aa13bb6a..4cbe36a6 100644
      }
  
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/cancel_running_task_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/cancel_running_task_tests.rs
-index 33e4b301..86199c44 100644
+index 4d881105..94da42a0 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/cancel_running_task_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/cancel_running_task_tests.rs
-@@ -144,10 +144,13 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
+@@ -147,8 +147,7 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                  rewind_pending_prompt: std::sync::Mutex::new(None),
                  startup_hints: StartupHints::default(),
                  forked_tool_override: None,
-+                question_activity_senders: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-                 compaction: crate::session::compaction_config::CompactionConfig {
-                     threshold_percent: std::cell::Cell::new(85),
-                     force_compact: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                     context_window_override: None,
-+                    successful_compaction_count: std::sync::atomic::AtomicU64::new(0),
-+                    compaction_round_warning_limit: 3,
-                     count: std::sync::atomic::AtomicU64::new(0),
-                     auto_compact_suppressed: std::sync::atomic::AtomicU8::new(0),
-                     previous_model: std::cell::Cell::new(None),
-@@ -686,10 +689,13 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
+-                compaction: test_compaction_config(85),
+-                long_reasoning_reminder:
++                compaction: test_compaction_config(85),                long_reasoning_reminder:
+                     crate::session::long_reasoning_reminder::LongReasoningReminder {
+                         enabled: false,
+                         tokens: crate::session::long_reasoning_reminder::DEFAULT_TOKENS,
+@@ -683,8 +682,7 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                  rewind_pending_prompt: std::sync::Mutex::new(None),
                  startup_hints: StartupHints::default(),
                  forked_tool_override: None,
-+                question_activity_senders: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-                 compaction: crate::session::compaction_config::CompactionConfig {
-                     threshold_percent: std::cell::Cell::new(85),
-                     force_compact: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                     context_window_override: None,
-+                    successful_compaction_count: std::sync::atomic::AtomicU64::new(0),
-+                    compaction_round_warning_limit: 3,
-                     count: std::sync::atomic::AtomicU64::new(0),
-                     auto_compact_suppressed: std::sync::atomic::AtomicU8::new(0),
-                     previous_model: std::cell::Cell::new(None),
-@@ -1023,12 +1029,15 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
+-                compaction: test_compaction_config(85),
+-                long_reasoning_reminder:
++                compaction: test_compaction_config(85),                long_reasoning_reminder:
+                     crate::session::long_reasoning_reminder::LongReasoningReminder {
+                         enabled: false,
+                         tokens: crate::session::long_reasoning_reminder::DEFAULT_TOKENS,
+@@ -1014,8 +1012,7 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
                  rewind_pending_prompt: std::sync::Mutex::new(None),
                  startup_hints: StartupHints::default(),
                  forked_tool_override: None,
-+                question_activity_senders: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-                 compaction: crate::session::compaction_config::CompactionConfig {
-                     threshold_percent: std::cell::Cell::new(85),
-                     force_compact: std::sync::Arc::new(
-                         std::sync::atomic::AtomicBool::new(false),
-                     ),
-                     context_window_override: None,
-+                    successful_compaction_count: std::sync::atomic::AtomicU64::new(0),
-+                    compaction_round_warning_limit: 3,
-                     count: std::sync::atomic::AtomicU64::new(0),
-                     auto_compact_suppressed: std::sync::atomic::AtomicU8::new(0),
-                     previous_model: std::cell::Cell::new(None),
-@@ -2590,12 +2599,15 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
+-                compaction: test_compaction_config(85),
+-                long_reasoning_reminder: crate::session::long_reasoning_reminder::LongReasoningReminder {
++                compaction: test_compaction_config(85),                long_reasoning_reminder: crate::session::long_reasoning_reminder::LongReasoningReminder {
+                     enabled: false,
+                     tokens: crate::session::long_reasoning_reminder::DEFAULT_TOKENS,
+                     delay: crate::session::long_reasoning_reminder::DEFAULT_DELAY,
+@@ -2572,8 +2569,7 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
                  rewind_pending_prompt: std::sync::Mutex::new(None),
                  startup_hints: StartupHints::default(),
                  forked_tool_override: None,
-+                question_activity_senders: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-                 compaction: crate::session::compaction_config::CompactionConfig {
-                     threshold_percent: std::cell::Cell::new(85),
-                     force_compact: std::sync::Arc::new(
-                         std::sync::atomic::AtomicBool::new(false),
-                     ),
-                     context_window_override: None,
-+                    successful_compaction_count: std::sync::atomic::AtomicU64::new(0),
-+                    compaction_round_warning_limit: 3,
-                     count: std::sync::atomic::AtomicU64::new(0),
-                     auto_compact_suppressed: std::sync::atomic::AtomicU8::new(0),
-                     previous_model: std::cell::Cell::new(None),
+-                compaction: test_compaction_config(85),
+-                long_reasoning_reminder: crate::session::long_reasoning_reminder::LongReasoningReminder {
++                compaction: test_compaction_config(85),                long_reasoning_reminder: crate::session::long_reasoning_reminder::LongReasoningReminder {
+                     enabled: false,
+                     tokens: crate::session::long_reasoning_reminder::DEFAULT_TOKENS,
+                     delay: crate::session::long_reasoning_reminder::DEFAULT_DELAY,
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/idle_resume_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/idle_resume_tests.rs
-index 0e9c847c..5d76ee64 100644
+index d7c02b2b..aaa6bfec 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/idle_resume_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/idle_resume_tests.rs
-@@ -187,10 +187,13 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
+@@ -187,8 +187,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                  rewind_pending_prompt: std::sync::Mutex::new(None),
                  startup_hints: StartupHints::default(),
                  forked_tool_override: None,
-+                question_activity_senders: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-                 compaction: crate::session::compaction_config::CompactionConfig {
-                     threshold_percent: std::cell::Cell::new(85),
-                     force_compact: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                     context_window_override: None,
-+                    successful_compaction_count: std::sync::atomic::AtomicU64::new(0),
-+                    compaction_round_warning_limit: 3,
-                     count: std::sync::atomic::AtomicU64::new(0),
-                     auto_compact_suppressed: std::sync::atomic::AtomicU8::new(0),
-                     previous_model: std::cell::Cell::new(None),
+-                compaction: test_compaction_config(85),
+-                long_reasoning_reminder:
++                compaction: test_compaction_config(85),                long_reasoning_reminder:
+                     crate::session::long_reasoning_reminder::LongReasoningReminder {
+                         enabled: false,
+                         tokens: crate::session::long_reasoning_reminder::DEFAULT_TOKENS,
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/inline_auto_compact_flow_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/inline_auto_compact_flow_tests.rs
-index ae5159aa..a4b9b971 100644
+index 719b7245..7a410cb3 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/inline_auto_compact_flow_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/inline_auto_compact_flow_tests.rs
-@@ -112,10 +112,13 @@ async fn create_test_actor(
+@@ -113,8 +113,7 @@ async fn create_test_actor(
          rewind_pending_prompt: std::sync::Mutex::new(None),
          startup_hints: StartupHints::default(),
          forked_tool_override: None,
-+        question_activity_senders: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-         compaction: crate::session::compaction_config::CompactionConfig {
-             threshold_percent: std::cell::Cell::new(threshold_percent),
-             force_compact: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-             context_window_override: None,
-+            successful_compaction_count: std::sync::atomic::AtomicU64::new(0),
-+            compaction_round_warning_limit: 3,
-             count: std::sync::atomic::AtomicU64::new(0),
-             auto_compact_suppressed: std::sync::atomic::AtomicU8::new(0),
-             previous_model: std::cell::Cell::new(None),
-@@ -535,10 +538,13 @@ async fn create_test_actor_with_memory(
+-        compaction: test_compaction_config(threshold_percent),
+-        long_reasoning_reminder: crate::session::long_reasoning_reminder::LongReasoningReminder {
++        compaction: test_compaction_config(threshold_percent),        long_reasoning_reminder: crate::session::long_reasoning_reminder::LongReasoningReminder {
+             enabled: false,
+             tokens: crate::session::long_reasoning_reminder::DEFAULT_TOKENS,
+             delay: crate::session::long_reasoning_reminder::DEFAULT_DELAY,
+@@ -565,8 +564,7 @@ async fn create_test_actor_with_memory(
          rewind_pending_prompt: std::sync::Mutex::new(None),
          startup_hints: StartupHints::default(),
          forked_tool_override: None,
-+        question_activity_senders: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-         compaction: crate::session::compaction_config::CompactionConfig {
-             threshold_percent: std::cell::Cell::new(threshold_percent),
-             force_compact: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-             context_window_override: None,
-+            successful_compaction_count: std::sync::atomic::AtomicU64::new(0),
-+            compaction_round_warning_limit: 3,
-             count: std::sync::atomic::AtomicU64::new(0),
-             auto_compact_suppressed: std::sync::atomic::AtomicU8::new(0),
-             previous_model: std::cell::Cell::new(None),
+-        compaction: test_compaction_config(threshold_percent),
+-        long_reasoning_reminder: crate::session::long_reasoning_reminder::LongReasoningReminder {
++        compaction: test_compaction_config(threshold_percent),        long_reasoning_reminder: crate::session::long_reasoning_reminder::LongReasoningReminder {
+             enabled: false,
+             tokens: crate::session::long_reasoning_reminder::DEFAULT_TOKENS,
+             delay: crate::session::long_reasoning_reminder::DEFAULT_DELAY,
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/memory_config_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/memory_config_tests.rs
-index 919c6bae..fe500796 100644
+index 8f826be3..ed80aec9 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/memory_config_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/memory_config_tests.rs
-@@ -187,10 +187,13 @@ pub(super) async fn create_test_actor_with_memory(
+@@ -187,8 +187,7 @@ pub(super) async fn create_test_actor_with_memory(
          rewind_pending_prompt: std::sync::Mutex::new(None),
          startup_hints: StartupHints::default(),
          forked_tool_override: None,
-+        question_activity_senders: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-         compaction: crate::session::compaction_config::CompactionConfig {
-             threshold_percent: std::cell::Cell::new(threshold_percent),
-             force_compact: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-             context_window_override: None,
-+            successful_compaction_count: std::sync::atomic::AtomicU64::new(0),
-+            compaction_round_warning_limit: 3,
-             count: std::sync::atomic::AtomicU64::new(0),
-             auto_compact_suppressed: std::sync::atomic::AtomicU8::new(0),
-             previous_model: std::cell::Cell::new(None),
+-        compaction: test_compaction_config(threshold_percent),
+-        long_reasoning_reminder: crate::session::long_reasoning_reminder::LongReasoningReminder {
++        compaction: test_compaction_config(threshold_percent),        long_reasoning_reminder: crate::session::long_reasoning_reminder::LongReasoningReminder {
+             enabled: false,
+             tokens: crate::session::long_reasoning_reminder::DEFAULT_TOKENS,
+             delay: crate::session::long_reasoning_reminder::DEFAULT_DELAY,
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/replay_buffer_send_update_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/replay_buffer_send_update_tests.rs
-index 9285eebc..55ff83a9 100644
+index 92981e65..419d84fe 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/replay_buffer_send_update_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/replay_buffer_send_update_tests.rs
-@@ -126,10 +126,13 @@ pub(super) async fn make_replay_send_update_fixture() -> ReplaySendUpdateFixture
+@@ -137,8 +137,7 @@ pub(super) async fn make_replay_send_update_fixture() -> ReplaySendUpdateFixture
          rewind_pending_prompt: std::sync::Mutex::new(None),
          startup_hints: StartupHints::default(),
          forked_tool_override: None,
-+        question_activity_senders: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-         compaction: crate::session::compaction_config::CompactionConfig {
-             threshold_percent: std::cell::Cell::new(85),
-             force_compact: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-             context_window_override: None,
-+            successful_compaction_count: std::sync::atomic::AtomicU64::new(0),
-+            compaction_round_warning_limit: 3,
-             count: std::sync::atomic::AtomicU64::new(0),
-             auto_compact_suppressed: std::sync::atomic::AtomicU8::new(0),
-             previous_model: std::cell::Cell::new(None),
+-        compaction: test_compaction_config(85),
+-        long_reasoning_reminder: crate::session::long_reasoning_reminder::LongReasoningReminder {
++        compaction: test_compaction_config(85),        long_reasoning_reminder: crate::session::long_reasoning_reminder::LongReasoningReminder {
+             enabled: false,
+             tokens: crate::session::long_reasoning_reminder::DEFAULT_TOKENS,
+             delay: crate::session::long_reasoning_reminder::DEFAULT_DELAY,
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs
-index 8c9e74b0..ad1d0032 100644
+index 42407a30..f440c8c5 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs
-@@ -377,10 +377,13 @@ async fn create_test_actor_inner(
+@@ -377,8 +377,7 @@ async fn create_test_actor_inner(
          rewind_pending_prompt: std::sync::Mutex::new(None),
          startup_hints: StartupHints::default(),
          forked_tool_override: None,
-+        question_activity_senders: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-         compaction: crate::session::compaction_config::CompactionConfig {
-             threshold_percent: std::cell::Cell::new(threshold_percent),
-             force_compact: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-             context_window_override: None,
-+            successful_compaction_count: std::sync::atomic::AtomicU64::new(0),
-+            compaction_round_warning_limit: 3,
-             count: std::sync::atomic::AtomicU64::new(0),
-             auto_compact_suppressed: std::sync::atomic::AtomicU8::new(0),
-             previous_model: std::cell::Cell::new(None),
+-        compaction: test_compaction_config(threshold_percent),
+-        long_reasoning_reminder: crate::session::long_reasoning_reminder::LongReasoningReminder {
++        compaction: test_compaction_config(threshold_percent),        long_reasoning_reminder: crate::session::long_reasoning_reminder::LongReasoningReminder {
+             enabled: false,
+             tokens: crate::session::long_reasoning_reminder::DEFAULT_TOKENS,
+             delay: crate::session::long_reasoning_reminder::DEFAULT_DELAY,
+@@ -1285,6 +1284,8 @@ pub(crate) fn test_compaction_config(
+         force_compact: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+         context_window_override: None,
+         context_window_selection: Default::default(),
++        successful_compaction_count: std::sync::atomic::AtomicU64::new(0),
++        compaction_round_warning_limit: 3,
+         count: std::sync::atomic::AtomicU64::new(0),
+         auto_compact_suppressed: std::sync::atomic::AtomicU8::new(0),
+         previous_model: std::cell::Cell::new(None),
 diff --git a/crates/codegen/xai-grok-shell/src/session/compaction.rs b/crates/codegen/xai-grok-shell/src/session/compaction.rs
-index be5efea8..7d7e57a8 100644
+index 72a38d64..b2b8a5fb 100644
 --- a/crates/codegen/xai-grok-shell/src/session/compaction.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/compaction.rs
-@@ -575,6 +575,14 @@ impl SessionActor {
+@@ -580,6 +580,14 @@ impl SessionActor {
              span.record("detail", tracing::field::display(detail));
          }
      }
@@ -744,7 +710,7 @@ index be5efea8..7d7e57a8 100644
      /// Handle a manual `/compact`: summarize the conversation so the context shrinks.
      #[tracing::instrument(
          name = "session.compact",
-@@ -626,6 +634,7 @@ impl SessionActor {
+@@ -627,6 +635,7 @@ impl SessionActor {
              ));
          }
          use crate::extensions::notification::SessionUpdate as XaiSessionUpdate;
@@ -752,7 +718,7 @@ index be5efea8..7d7e57a8 100644
          let tokens_after = self.chat_state_handle.get_total_tokens().await;
          let span = tracing::Span::current();
          span.record("post_tokens", tokens_after as i64);
-@@ -634,6 +643,8 @@ impl SessionActor {
+@@ -635,6 +644,8 @@ impl SessionActor {
              tokens_before: Some(total_tokens),
              tokens_after,
              elapsed_ms: None,
@@ -761,7 +727,7 @@ index be5efea8..7d7e57a8 100644
              summary_preview: None,
          })
          .await;
-@@ -2298,6 +2309,7 @@ impl SessionActor {
+@@ -2348,6 +2359,7 @@ impl SessionActor {
          let elapsed_ms = compact_start.elapsed().as_millis() as i64;
          match result {
              Ok(()) => {
@@ -769,7 +735,7 @@ index be5efea8..7d7e57a8 100644
                  let tokens_after = self.chat_state_handle.get_total_tokens().await;
                  let span = tracing::Span::current();
                  span.record("post_tokens", tokens_after as i64);
-@@ -2306,6 +2318,8 @@ impl SessionActor {
+@@ -2356,6 +2368,8 @@ impl SessionActor {
                      tokens_before: Some(trigger_info.tokens_used),
                      tokens_after,
                      elapsed_ms: Some(elapsed_ms),
@@ -779,38 +745,35 @@ index be5efea8..7d7e57a8 100644
                  })
                  .await;
 diff --git a/crates/codegen/xai-grok-shell/src/session/compaction_config.rs b/crates/codegen/xai-grok-shell/src/session/compaction_config.rs
-index 6ae2b61e..b7a6a630 100644
+index 1036dac5..e85c6958 100644
 --- a/crates/codegen/xai-grok-shell/src/session/compaction_config.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/compaction_config.rs
-@@ -166,6 +166,10 @@ pub(crate) struct CompactionConfig {
-     pub auto_compact_suppressed: AtomicU8,
-     /// Locks the context window when `GROK_DEBUG_CONTEXT_WINDOW` is set.
+@@ -168,7 +168,10 @@ pub(crate) struct CompactionConfig {
      pub context_window_override: Option<std::num::NonZeroU64>,
+     /// Shared with `SessionHandle::context_window_selection`.
+     pub context_window_selection: Arc<AtomicU64>,
+-    pub count: AtomicU64,
 +    /// Number of successful compactions in this session, initialized from persisted signals.
 +    pub successful_compaction_count: AtomicU64,
 +    /// Number of successful compactions at which the UI warns.
-+    pub compaction_round_warning_limit: u64,
-     pub count: AtomicU64,
++    pub compaction_round_warning_limit: u64,    pub count: AtomicU64,
      /// Set at turn end; consumed at next turn start for model-switch compaction.
      /// `Cell` because `SessionActor` is `!Send`.
+     pub previous_model: Cell<Option<PreviousModelInfo>>,
 diff --git a/crates/codegen/xai-grok-shell/src/session/compaction_inline_auto_compact_flow_tests.rs b/crates/codegen/xai-grok-shell/src/session/compaction_inline_auto_compact_flow_tests.rs
-index b217a265..5a958a0a 100644
+index adefb43d..faf9ed3e 100644
 --- a/crates/codegen/xai-grok-shell/src/session/compaction_inline_auto_compact_flow_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/compaction_inline_auto_compact_flow_tests.rs
-@@ -119,10 +119,13 @@ async fn create_test_actor(
+@@ -120,8 +120,7 @@ async fn create_test_actor(
          rewind_pending_prompt: std::sync::Mutex::new(None),
          startup_hints: StartupHints::default(),
          forked_tool_override: None,
-+        question_activity_senders: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-         compaction: crate::session::compaction_config::CompactionConfig {
-             threshold_percent: std::cell::Cell::new(threshold_percent),
-             force_compact: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-             context_window_override: None,
-+            successful_compaction_count: std::sync::atomic::AtomicU64::new(0),
-+            compaction_round_warning_limit: 3,
-             count: std::sync::atomic::AtomicU64::new(0),
-             auto_compact_suppressed: std::sync::atomic::AtomicU8::new(0),
-             previous_model: std::cell::Cell::new(None),
+-        compaction: test_compaction_config(threshold_percent),
+-        long_reasoning_reminder: crate::session::long_reasoning_reminder::LongReasoningReminder {
++        compaction: test_compaction_config(threshold_percent),        long_reasoning_reminder: crate::session::long_reasoning_reminder::LongReasoningReminder {
+             enabled: false,
+             tokens: crate::session::long_reasoning_reminder::DEFAULT_TOKENS,
+             delay: crate::session::long_reasoning_reminder::DEFAULT_DELAY,
 diff --git a/crates/codegen/xai-grok-shell/src/session/signals.rs b/crates/codegen/xai-grok-shell/src/session/signals.rs
 index 170abdf1..c5fef82c 100644
 --- a/crates/codegen/xai-grok-shell/src/session/signals.rs
@@ -877,10 +840,10 @@ index 6ae0872d..657759b0 100644
          },
      );
 diff --git a/crates/codegen/xai-grok-shell/src/util/config/persist_tests.rs b/crates/codegen/xai-grok-shell/src/util/config/persist_tests.rs
-index 576b256b..20a3baa2 100644
+index 8d7f9cdd..bb8a6810 100644
 --- a/crates/codegen/xai-grok-shell/src/util/config/persist_tests.rs
 +++ b/crates/codegen/xai-grok-shell/src/util/config/persist_tests.rs
-@@ -381,6 +381,7 @@ fn merge_section_session_explicit_value_does_not_drag_load_envrc() {
+@@ -382,6 +382,7 @@ fn merge_section_session_explicit_value_does_not_drag_load_envrc() {
      table.insert("session".into(), TomlValue::Table(session));
      let cfg = crate::agent::config::SessionConfig {
          auto_compact_threshold_percent: Some(70),
@@ -888,7 +851,7 @@ index 576b256b..20a3baa2 100644
          load_envrc: None,
          persist_single: None,
      };
-@@ -1005,6 +1006,7 @@ fn merge_section_session_load_envrc_does_not_drag_auto_compact() {
+@@ -1045,6 +1046,7 @@ fn merge_section_session_load_envrc_does_not_drag_auto_compact() {
      let cfg = crate::agent::config::SessionConfig {
          load_envrc: Some(true),
          auto_compact_threshold_percent: None,

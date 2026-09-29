@@ -7,7 +7,7 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PATCH_0016="$REPO_ROOT/patches/0016-credit-limit-switch-model.patch"
-PIN_SHA="07e35a3dfeed2f200d319ef6c893b5ea286d9a51"
+PIN_SHA="97f190f644ae1ba07fd6ee185ef54c650e142666"
 REAL_GROK_BUILD="${REAL_GROK_BUILD:-/Users/karlchow/Desktop/code/grok-build}"
 [ "${CI:-0}" = "1" ] && REAL_GROK_BUILD="/nonexistent"
 

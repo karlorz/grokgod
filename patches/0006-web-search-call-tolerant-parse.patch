@@ -1,5 +1,5 @@
 diff --git a/crates/codegen/xai-grok-sampler/src/client.rs b/crates/codegen/xai-grok-sampler/src/client.rs
-index 7cd1fa6727c567dd353d387c3b3cfbfaaf1b1e45..2275f996468cd7aa3662ef7385ba622b73c843f9 100644
+index 7cd1fa67..5c9a9940 100644
 --- a/crates/codegen/xai-grok-sampler/src/client.rs
 +++ b/crates/codegen/xai-grok-sampler/src/client.rs
 @@ -21,7 +21,7 @@ use reqwest::header::{
@@ -137,11 +137,10 @@ index 7cd1fa6727c567dd353d387c3b3cfbfaaf1b1e45..2275f996468cd7aa3662ef7385ba622b
              }
              tracing::error!(
                  error = %first_err,
-@@ -3546,5 +3646,172 @@ mod tests {
-         let mut request = CreateResponseWrapper::new(rs::CreateResponse::default());
+@@ -3547,4 +3647,171 @@ mod tests {
          without.apply_response_defaults(&mut request).unwrap();
          assert_eq!(request.inner.reasoning, None);
-+    }
+     }
 +
 +    /// Test 1: output_item.added with web_search_call missing action (exact probe frame).
 +    /// Deserializes successfully and item survives with default Search action.
@@ -308,5 +307,5 @@ index 7cd1fa6727c567dd353d387c3b3cfbfaaf1b1e45..2275f996468cd7aa3662ef7385ba622b
 +        // "x_search" was stripped, "web_search" retained
 +        assert_eq!(tools.len(), 1);
 +        assert!(matches!(tools[0], rs::Tool::WebSearch(_)));
-     }
++    }
  }

@@ -1551,7 +1551,7 @@ fi
 
 if [ "\$1" = "checkout" ]; then
   case "\$*" in
-    *"$PIN_SHA"*)
+    *"$PIN_SHA"*|*"main"*)
       if [ -n "\$dir" ]; then
         /usr/bin/git -C "\$dir" "\$@" 2>/dev/null && exit 0 || exit 0
       else
@@ -1636,7 +1636,7 @@ fi
 
 if [ "\$1" = "checkout" ]; then
   case "\$*" in
-    *"$PIN_SHA"*)
+    *"$PIN_SHA"*|*"main"*)
       if [ -n "\$dir" ]; then
         /usr/bin/git -C "\$dir" "\$@" 2>/dev/null && exit 0 || exit 0
       else

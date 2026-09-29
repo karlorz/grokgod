@@ -1,5 +1,5 @@
 diff --git a/crates/codegen/xai-grok-sampler/src/client.rs b/crates/codegen/xai-grok-sampler/src/client.rs
-index 2275f996468cd7aa3662ef7385ba622b73c843f9..6a0b7ba32b61156ecf153f8c6c306d02e0519953 100644
+index 5c9a9940..da9a86bf 100644
 --- a/crates/codegen/xai-grok-sampler/src/client.rs
 +++ b/crates/codegen/xai-grok-sampler/src/client.rs
 @@ -221,6 +221,112 @@ pub(crate) fn deserialize_response_event(data: &str) -> Result<rs::ResponseStrea
@@ -133,7 +133,7 @@ index 2275f996468cd7aa3662ef7385ba622b73c843f9..6a0b7ba32b61156ecf153f8c6c306d02
                          }
                      }
                      Err(e) => {
-@@ -3812,4 +3909,91 @@ mod tests {
+@@ -3814,4 +3911,91 @@ mod tests {
          assert_eq!(tools.len(), 1);
          assert!(matches!(tools[0], rs::Tool::WebSearch(_)));
      }

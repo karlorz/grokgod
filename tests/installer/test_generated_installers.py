@@ -226,7 +226,7 @@ def main():
                        ("install.ps1", install_ps1_text),
                        ("src/shim/grok-shim.sh", shim_text)):
         check(
-            re.search(r"07e35a3dfeed2f200d319ef6c893b5ea286d9a51", text) is not None
+            re.search(r"97f190f644ae1ba07fd6ee185ef54c650e142666", text) is not None
             or path == "src/shim/grok-shim.sh",
             f"{path} does not hardcode a second copy of the base SHA",
         )
