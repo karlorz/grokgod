@@ -174,7 +174,8 @@ atomically and best-effort: a manifest failure never fails an otherwise
 successful install (a host with neither `sha256sum` nor `shasum` skips the
 manifest and leaves the stamp authoritative), and `install.sh` never reads it —
 `.source-version` remains the single source of truth for install/update
-decisions.
+decisions. See
+[`docs/adr/0006-posix-artifact-manifest.md`](docs/adr/0006-posix-artifact-manifest.md).
 
 `grok update` records the manifest; a home installed before this change has
 none, and `status --json` reports `manifestExists: false` with an explanatory
@@ -240,7 +241,8 @@ checks: [docs/RUNBOOK-session-start.md](docs/RUNBOOK-session-start.md) (auto-loa
 via [AGENTS.md](AGENTS.md)). Persist inventory (keep vs phase-out):
 [docs/patch-inventory.md](docs/patch-inventory.md). Machine-readable patch list:
 [`patches/registry.tsv`](patches/registry.tsv) — it drives the `grok status`
-persist block and is validated by `tests/patches/test_registry.sh`.
+persist block and is validated by `tests/patches/test_registry.sh` (see
+[`docs/adr/0007-machine-readable-patch-registry.md`](docs/adr/0007-machine-readable-patch-registry.md)).
 
 ## grokgod eval (DeepSeek benchmark home)
 

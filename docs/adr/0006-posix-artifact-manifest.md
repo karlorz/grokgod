@@ -1,4 +1,4 @@
-# 0005: POSIX artifact manifest is an install record, not a decision source
+# 0006: POSIX artifact manifest is an install record, not a decision source
 
 `grokgod status --json` needs an artifact hash to compare against the installed
 binary, and `.source-version` cannot supply one: a release stamp records the

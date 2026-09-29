@@ -1,4 +1,4 @@
-# 0005: Machine-readable patch registry, not a parallel manifest
+# 0007: Machine-readable patch registry, not a parallel manifest
 
 `patches/registry.tsv` is the single machine-readable list of source patches.
 Each data row is `id<TAB>name<TAB>file`; `name` is the patch stem and doubles as
