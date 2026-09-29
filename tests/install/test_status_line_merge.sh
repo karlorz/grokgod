@@ -26,6 +26,23 @@ tail -n 1 "$TMP/fn.sh" | grep -qx '}' || {
   exit 1
 }
 
+# The merge now rewrites config.toml atomically through two helpers. Extract
+# them alongside so the harness exercises the real implementation rather than
+# a stand-in.
+sed -n '/^resolve_write_target() {/,/^}/p' "$INSTALL_SCRIPT" > "$TMP/helpers.sh"
+sed -n '/^rewrite_stage() {/,/^}/p' "$INSTALL_SCRIPT" >> "$TMP/helpers.sh"
+sed -n '/^rewrite_commit() {/,/^}/p' "$INSTALL_SCRIPT" >> "$TMP/helpers.sh"
+for fn_name in resolve_write_target rewrite_stage rewrite_commit; do
+  grep -q "^${fn_name}() {" "$TMP/helpers.sh" || {
+    echo "FAIL: could not extract ${fn_name} from install.sh" >&2
+    exit 1
+  }
+done
+if [ "$(grep -c '^}' "$TMP/helpers.sh")" -ne 3 ]; then
+  echo "FAIL: extracted helpers are not exactly three closed functions" >&2
+  exit 1
+fi
+
 run_merge() {
   name="$1"
   dry="${2:-0}"
@@ -36,9 +53,13 @@ run_merge() {
 set -eu
 DRY_RUN=$dry
 GROK_HOME="$home"
+TX_ACTIVE=0
 log_info() { printf 'INFO %s\n' "\$1"; }
 log_dry() { printf 'DRY %s\n' "\$1"; }
+log_err() { printf 'ERR %s\n' "\$1" >&2; }
+tx_note() { return 0; }
 EOF
+  cat "$TMP/helpers.sh" >> "$TMP/run-$name.sh"
   cat "$TMP/fn.sh" >> "$TMP/run-$name.sh"
   printf '\nmaybe_merge_status_line_config\n' >> "$TMP/run-$name.sh"
   sh "$TMP/run-$name.sh"

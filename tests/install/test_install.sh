@@ -956,11 +956,14 @@ exit 1
 EOF
 chmod +x "$FAKE_BIN_SHADOW/curl"
 
-# Pre-populate GROKGOD_HOME with matching binary and stamp
+# Pre-populate GROKGOD_HOME with matching binary and stamp. A healthy install
+# means the live binary's bytes hash to the stamp's SHA, so a real no-op needs
+# the live bytes to hash to the requested release (as the installer's guard now
+# verifies).
 mkdir -p "$FAKE_GROKGOD_HOME/bin"
 cat << 'BIN_EOF' > "$FAKE_GROKGOD_HOME/bin/grok"
 #!/bin/sh
-echo "EXISTING_GROKGOD_BINARY"
+echo "PREBUILT_GROKGOD_BINARY_RELEASE_1_0_0"
 BIN_EOF
 chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
 
@@ -2213,5 +2216,700 @@ if [ "$BEHIND_AF_HEAD" != "$OLD_AE_SHA" ]; then
   echo "FAIL: Test (af) - HEAD was modified ($BEHIND_AF_HEAD vs $OLD_AE_SHA)"; exit 1
 fi
 echo "PASS: Test (af) - Src-behind differing tracked file fails closed"
+
+# ─────────────────────────────────────────────────────────
+# Transactional release/source behaviour
+#
+# These tests exercise the POSIX transaction: destination-volume
+# staging, candidate preflight, atomic activation, rollback on any
+# pre-commit failure, and commit-last stamp/manifest writes.
+# ─────────────────────────────────────────────────────────
+
+# Mock curl serving release assets out of $REL_FIXTURE_DIR.
+# Reads $REL_FIXTURE_DIR/SHA256SUMS at call time so tests can swap it.
+install_release_curl_mock() {
+  cat << EOF > "$FAKE_BIN_SHADOW/curl"
+#!/bin/sh
+set -eu
+url=""
+out_file=""
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -o|--output) out_file="\$2"; shift 2 ;;
+    -fsSL|-sSL|-s|-f|-L|-fsSLk) shift ;;
+    http*|ftp*) url="\$1"; shift ;;
+    *) shift ;;
+  esac
+done
+
+if echo "\$url" | grep -q "/releases/latest"; then
+  cat << 'JSON_EOF'
+{
+  "tag_name": "v1.0.0",
+  "assets": [
+    { "name": "$TEST_ASSET",
+      "browser_download_url": "https://github.com/karlorz/grokgod/releases/download/v1.0.0/$TEST_ASSET" },
+    { "name": "SHA256SUMS",
+      "browser_download_url": "https://github.com/karlorz/grokgod/releases/download/v1.0.0/SHA256SUMS" }
+  ]
+}
+JSON_EOF
+  exit 0
+fi
+
+if echo "\$url" | grep -q "SHA256SUMS"; then
+  if [ -n "\$out_file" ]; then cp "$REL_FIXTURE_DIR/SHA256SUMS" "\$out_file"; else cat "$REL_FIXTURE_DIR/SHA256SUMS"; fi
+  exit 0
+fi
+
+if echo "\$url" | grep -q "$TEST_ASSET"; then
+  if [ -n "\$out_file" ]; then cp "$REL_FIXTURE_DIR/$TEST_ASSET" "\$out_file"; else cat "$REL_FIXTURE_DIR/$TEST_ASSET"; fi
+  exit 0
+fi
+
+if echo "\$url" | grep -q "raw.githubusercontent.com"; then
+  filename=\$(basename "\$url")
+  case "\$filename" in
+    grok-shim.sh) src_path="$REPO_ROOT/src/shim/grok-shim.sh" ;;
+    grokgod-cache.sh) src_path="$REPO_ROOT/src/grokgod-cache.sh" ;;
+    grokgod-run.sh) src_path="$REPO_ROOT/src/grokgod-run.sh" ;;
+    grokgod-pin.sh) src_path="$REPO_ROOT/src/grokgod-pin.sh" ;;
+    *) src_path="" ;;
+  esac
+  if [ -n "\$src_path" ] && [ -f "\$src_path" ]; then
+    if [ -n "\$out_file" ]; then cp "\$src_path" "\$out_file"; else cat "\$src_path"; fi
+    exit 0
+  fi
+fi
+
+echo "mock curl unhandled URL: \$url" >&2
+exit 1
+EOF
+  chmod +x "$FAKE_BIN_SHADOW/curl"
+}
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    echo "dummy_sha"
+  fi
+}
+
+# Create a release fixture. $1 = candidate script body, $2 = version string
+# printed for --version. Pass $2 = "FAIL" to emit a candidate whose --version
+# fails, and omit $2 for a candidate that ignores arguments.
+make_release_fixture() {
+  REL_FIXTURE_DIR="$TEST_DIR/fake_release"
+  mkdir -p "$REL_FIXTURE_DIR"
+  {
+    printf '#!/bin/sh\n'
+    if [ "${2:-}" = "FAIL" ]; then
+      printf 'if [ "${1:-}" = "--version" ]; then\n'
+      printf '  echo "candidate is not executable" >&2\n'
+      printf '  exit 3\n'
+      printf 'fi\n'
+    elif [ -n "${2:-}" ]; then
+      printf 'if [ "${1:-}" = "--version" ]; then\n'
+      printf '  echo "%s"\n' "$2"
+      printf '  exit 0\n'
+      printf 'fi\n'
+    fi
+    printf '%s\n' "$1"
+  } > "$REL_FIXTURE_DIR/$TEST_ASSET"
+  chmod +x "$REL_FIXTURE_DIR/$TEST_ASSET"
+  REL_FIXTURE_SHA="$(sha256_of "$REL_FIXTURE_DIR/$TEST_ASSET")"
+  printf '%s  %s\n' "$REL_FIXTURE_SHA" "$TEST_ASSET" > "$REL_FIXTURE_DIR/SHA256SUMS"
+  install_release_curl_mock
+}
+
+# Assert no transaction scratch survives in the sandbox. Covers the
+# same-directory temps used by tx_write, the config rewrite, the commit-point
+# stamp/manifest writes, and the staged candidate.
+assert_no_tx_leftovers() {
+  _leftovers="$(find "$TEST_DIR" \( \
+    -name 'candidate-*' -o -name '.tx-*' \
+    -o -name '.grokgod-tmp.*' -o -name '.grokgod-restore.*' \
+    -o -name '.grokgod-orig.*' -o -name '.grokgod-rewrite.*' \
+    -o -name '*.grokgod-tmp.*' -o -name '*.grokgod-rewrite.*' \
+    -o -name '*.grokgod-plan-mode.tmp' -o -name '*.grokgod-workflows-builtins.tmp' \
+    -o -name '*.grokgod-status-line.tmp' \
+    -o -name 'grok.orig.prev' \) 2>/dev/null || true)"
+  if [ -n "$_leftovers" ]; then
+    echo "FAIL: $1 - transaction scratch left behind:"
+    echo "$_leftovers"
+    exit 1
+  fi
+}
+
+run_release_install() {
+  PATH="$FAKE_BIN_SHADOW:$PATH" \
+  HOME="$FAKE_HOME" \
+  GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+  GROK_HOME="$FAKE_GROK_HOME" \
+  BIN_DIR="$FAKE_BIN_DIR" \
+  sh "$INSTALL_SCRIPT" "$@"
+}
+
+# ─────────────────────────────────────────────────────────
+# Test (ag): Release install commits atomically and writes the manifest last
+# ─────────────────────────────────────────────────────────
+echo "Test (ag): Transactional release install commits stamp and manifest"
+setup_sandbox "test_ag"
+make_release_fixture 'echo "TRANSACTIONAL_RELEASE_BINARY"' "grokgod 9.9.9"
+
+REL_TX_OUT="$(run_release_install --version 1.0.0 2>&1)" || {
+  echo "FAIL: Test (ag) - install exited nonzero ($REL_TX_OUT)"; exit 1
+}
+
+# 1. Candidate activated into the live path as a fully-written file
+if [ ! -x "$FAKE_GROKGOD_HOME/bin/grok" ]; then
+  echo "FAIL: Test (ag) - live binary missing after transactional install"; exit 1
+fi
+AG_BIN_OUT="$("$FAKE_GROKGOD_HOME/bin/grok")"
+[ "$AG_BIN_OUT" = "TRANSACTIONAL_RELEASE_BINARY" ] || {
+  echo "FAIL: Test (ag) - live binary content mismatch: $AG_BIN_OUT"; exit 1
+}
+
+# 2. Preflight actually ran against the staged candidate
+echo "$REL_TX_OUT" | grep -q "Preflight verified candidate: grokgod 9.9.9" || {
+  echo "FAIL: Test (ag) - missing candidate preflight line ($REL_TX_OUT)"; exit 1
+}
+
+# 3. Commit point: .source-version and manifest.json exist and agree
+[ -f "$FAKE_GROKGOD_HOME/.source-version" ] || { echo "FAIL: Test (ag) - stamp missing"; exit 1; }
+AG_STAMP="$(cat "$FAKE_GROKGOD_HOME/.source-version")"
+echo "$AG_STAMP" | grep -q "^VERSION=v1.0.0" || { echo "FAIL: Test (ag) - stamp VERSION ($AG_STAMP)"; exit 1; }
+echo "$AG_STAMP" | grep -q "^MODE=release" || { echo "FAIL: Test (ag) - stamp MODE ($AG_STAMP)"; exit 1; }
+
+[ -f "$FAKE_GROKGOD_HOME/manifest.json" ] || { echo "FAIL: Test (ag) - manifest.json missing"; exit 1; }
+AG_MANIFEST="$(cat "$FAKE_GROKGOD_HOME/manifest.json")"
+echo "$AG_MANIFEST" | grep -q '"formatVersion": 1' || { echo "FAIL: Test (ag) - manifest formatVersion ($AG_MANIFEST)"; exit 1; }
+echo "$AG_MANIFEST" | grep -q "\"artifactSha256\": \"$REL_FIXTURE_SHA\"" || { echo "FAIL: Test (ag) - manifest artifactSha256 ($AG_MANIFEST)"; exit 1; }
+echo "$AG_MANIFEST" | grep -q '"patchset": "v1.0.0"' || { echo "FAIL: Test (ag) - manifest patchset ($AG_MANIFEST)"; exit 1; }
+echo "$AG_MANIFEST" | grep -q '"mode": "release"' || { echo "FAIL: Test (ag) - manifest mode ($AG_MANIFEST)"; exit 1; }
+
+# 4. No staging or candidate scratch survives a committed transaction
+assert_no_tx_leftovers "Test (ag)"
+
+# 5. A committed no-op run leaves stamp and manifest byte-identical
+printf 'SHA=%s\nPATCHSET=v1.0.0\nVERSION=v1.0.0\nMODE=release\n' "$REL_FIXTURE_SHA" > "$FAKE_GROKGOD_HOME/.source-version"
+AG_NOOP_STAMP="$(cat "$FAKE_GROKGOD_HOME/.source-version")"
+run_release_install >/dev/null 2>&1
+AG_AFTER_STAMP="$(cat "$FAKE_GROKGOD_HOME/.source-version")"
+[ "$AG_NOOP_STAMP" = "$AG_AFTER_STAMP" ] || {
+  echo "FAIL: Test (ag) - stamp changed on no-op run"; exit 1
+}
+AG_AFTER_MANIFEST="$(cat "$FAKE_GROKGOD_HOME/manifest.json")"
+[ "$AG_MANIFEST" = "$AG_AFTER_MANIFEST" ] || {
+  echo "FAIL: Test (ag) - manifest changed on no-op run"; exit 1
+}
+assert_no_tx_leftovers "Test (ag) no-op"
+echo "PASS: Test (ag) - Transactional release install"
+
+# ─────────────────────────────────────────────────────────
+# Test (ah): Candidate preflight failure fails closed with prior state intact
+# ─────────────────────────────────────────────────────────
+echo "Test (ah): Candidate preflight failure leaves prior install untouched"
+setup_sandbox "test_ah"
+mkdir -p "$FAKE_GROKGOD_HOME/bin" "$FAKE_BIN_DIR" "$FAKE_GROK_HOME/bin"
+printf '#!/bin/sh\necho "PRIOR_GOOD_BINARY"\n' > "$FAKE_GROKGOD_HOME/bin/grok"
+chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
+printf '#!/bin/sh\necho "PRIOR_LAUNCHER"\n' > "$FAKE_BIN_DIR/grok"
+chmod +x "$FAKE_BIN_DIR/grok"
+printf 'SHA=oldsha\nPATCHSET=v0.9.0\nVERSION=v0.9.0\nMODE=release\n' > "$FAKE_GROKGOD_HOME/.source-version"
+printf '{\n  "formatVersion": 1,\n  "patchset": "v0.9.0"\n}\n' > "$FAKE_GROKGOD_HOME/manifest.json"
+
+AH_BEFORE_BIN="$(cat "$FAKE_GROKGOD_HOME/bin/grok")"
+AH_BEFORE_STAMP="$(cat "$FAKE_GROKGOD_HOME/.source-version")"
+AH_BEFORE_MANIFEST="$(cat "$FAKE_GROKGOD_HOME/manifest.json")"
+AH_BEFORE_LAUNCHER="$(cat "$FAKE_BIN_DIR/grok")"
+
+# Candidate that verifies by checksum but cannot report --version
+make_release_fixture 'echo "BROKEN_CANDIDATE"' "FAIL"
+
+set +e
+AH_OUT="$(run_release_install --version 1.0.0 2>&1)"
+AH_STATUS=$?
+set -eu
+
+[ "$AH_STATUS" -ne 0 ] || { echo "FAIL: Test (ah) - broken candidate was accepted ($AH_OUT)"; exit 1; }
+echo "$AH_OUT" | grep -q "Preflight failed" || {
+  echo "FAIL: Test (ah) - missing preflight failure diagnostic ($AH_OUT)"; exit 1
+}
+
+[ "$(cat "$FAKE_GROKGOD_HOME/bin/grok")" = "$AH_BEFORE_BIN" ] || {
+  echo "FAIL: Test (ah) - live binary changed on preflight failure"; exit 1
+}
+[ "$(cat "$FAKE_GROKGOD_HOME/.source-version")" = "$AH_BEFORE_STAMP" ] || {
+  echo "FAIL: Test (ah) - stamp changed on preflight failure"; exit 1
+}
+[ "$(cat "$FAKE_GROKGOD_HOME/manifest.json")" = "$AH_BEFORE_MANIFEST" ] || {
+  echo "FAIL: Test (ah) - manifest changed on preflight failure"; exit 1
+}
+[ "$(cat "$FAKE_BIN_DIR/grok")" = "$AH_BEFORE_LAUNCHER" ] || {
+  echo "FAIL: Test (ah) - launcher changed on preflight failure"; exit 1
+}
+assert_no_tx_leftovers "Test (ah)"
+echo "PASS: Test (ah) - Candidate preflight failure"
+
+# ─────────────────────────────────────────────────────────
+# Test (ai): Rollback across release-mode failure injection points
+# ─────────────────────────────────────────────────────────
+echo "Test (ai): Release-mode rollback across failure injection points"
+setup_sandbox "test_ai"
+make_release_fixture 'echo "ROLLBACK_RELEASE_BINARY"' "grokgod 9.9.9"
+
+# Seed a committed prior install so rollback has something to restore
+run_release_install --version 1.0.0 >/dev/null 2>&1 || {
+  echo "FAIL: Test (ai) - base install failed"; exit 1
+}
+AI_BASE_BIN="$(cat "$FAKE_GROKGOD_HOME/bin/grok")"
+AI_BASE_STAMP="$(cat "$FAKE_GROKGOD_HOME/.source-version")"
+AI_BASE_MANIFEST="$(cat "$FAKE_GROKGOD_HOME/manifest.json")"
+AI_BASE_GROK_LAUNCHER="$(cat "$FAKE_BIN_DIR/grok")"
+AI_BASE_GROKGOD_LAUNCHER="$(cat "$FAKE_BIN_DIR/grokgod")"
+AI_BASE_GROKHOME_LAUNCHER="$(cat "$FAKE_GROK_HOME/bin/grok")"
+
+# Every failing run installs a DIFFERENT release (v2.0.0), so each rollback
+# must restore bytes that differ from what the failed run just wrote. Reusing
+# the v1.0.0 fixture would make every "restored" comparison a comparison of
+# identical bytes, and a rollback that does nothing would pass.
+make_release_fixture 'echo "ROLLBACK_RELEASE_BINARY_V2"' "grokgod 9.9.10"
+
+for AI_POINT in activation launcher-grok launcher-grokgod launcher-grokhome agent pin config stamp; do
+  set +e
+  AI_OUT="$(GROKGOD_INSTALL_FAIL_AFTER="$AI_POINT" run_release_install --version 2.0.0 --force 2>&1)"
+  AI_STATUS=$?
+  set -eu
+
+  [ "$AI_STATUS" -ne 0 ] || {
+    echo "FAIL: Test (ai) - injection '$AI_POINT' exited 0 ($AI_OUT)"; exit 1
+  }
+  echo "$AI_OUT" | grep -q "Simulated failure injected after step '$AI_POINT'" || {
+    echo "FAIL: Test (ai) - injection '$AI_POINT' not reported ($AI_OUT)"; exit 1
+  }
+
+  # A rollback that does nothing must be indistinguishable from a real one.
+  [ "$(cat "$FAKE_GROKGOD_HOME/bin/grok")" != 'echo "ROLLBACK_RELEASE_BINARY_V2"' ] || {
+    echo "FAIL: Test (ai) - '$AI_POINT' left the failed run's binary live"; exit 1
+  }
+  echo "$AI_OUT" | grep -q "Rolling back to prior state" || {
+    echo "FAIL: Test (ai) - '$AI_POINT' did not roll back ($AI_OUT)"; exit 1
+  }
+  echo "$AI_OUT" | grep -q "Rolled back: $FAKE_GROKGOD_HOME/bin/grok" || {
+    echo "FAIL: Test (ai) - '$AI_POINT' did not restore the live binary ($AI_OUT)"; exit 1
+  }
+
+  [ "$(cat "$FAKE_GROKGOD_HOME/bin/grok")" = "$AI_BASE_BIN" ] || {
+    echo "FAIL: Test (ai) - binary not restored after '$AI_POINT'"; exit 1
+  }
+  [ "$(cat "$FAKE_GROKGOD_HOME/.source-version")" = "$AI_BASE_STAMP" ] || {
+    echo "FAIL: Test (ai) - stamp not restored after '$AI_POINT'"; exit 1
+  }
+  [ "$(cat "$FAKE_GROKGOD_HOME/manifest.json")" = "$AI_BASE_MANIFEST" ] || {
+    echo "FAIL: Test (ai) - manifest not restored after '$AI_POINT'"; exit 1
+  }
+  [ -e "$FAKE_BIN_DIR/grok" ] && [ "$(cat "$FAKE_BIN_DIR/grok")" = "$AI_BASE_GROK_LAUNCHER" ] || {
+    echo "FAIL: Test (ai) - BIN_DIR/grok not restored after '$AI_POINT'"; exit 1
+  }
+  [ -e "$FAKE_BIN_DIR/grokgod" ] && [ "$(cat "$FAKE_BIN_DIR/grokgod")" = "$AI_BASE_GROKGOD_LAUNCHER" ] || {
+    echo "FAIL: Test (ai) - BIN_DIR/grokgod not restored after '$AI_POINT'"; exit 1
+  }
+  [ -e "$FAKE_GROK_HOME/bin/grok" ] && [ "$(cat "$FAKE_GROK_HOME/bin/grok")" = "$AI_BASE_GROKHOME_LAUNCHER" ] || {
+    echo "FAIL: Test (ai) - GROK_HOME/bin/grok not restored after '$AI_POINT'"; exit 1
+  }
+  assert_no_tx_leftovers "Test (ai) '$AI_POINT'"
+done
+
+# A clean run after repeated rollbacks still commits back to v1.0.0
+make_release_fixture 'echo "ROLLBACK_RELEASE_BINARY"' "grokgod 9.9.9"
+run_release_install --version 1.0.0 --force >/dev/null 2>&1 || {
+  echo "FAIL: Test (ai) - install failed after rollbacks"; exit 1
+}
+[ "$("$FAKE_GROKGOD_HOME/bin/grok")" = "ROLLBACK_RELEASE_BINARY" ] || {
+  echo "FAIL: Test (ai) - clean run after rollbacks did not install"; exit 1
+}
+assert_no_tx_leftovers "Test (ai) final"
+echo "PASS: Test (ai) - Release-mode rollback across failure injection points"
+
+# ─────────────────────────────────────────────────────────
+# Test (aj): Duplicate checksum entry fails closed
+# ─────────────────────────────────────────────────────────
+echo "Test (aj): Duplicate checksum entry fails closed"
+setup_sandbox "test_aj"
+make_release_fixture 'echo "DUPLICATE_SUMS_BINARY"' "grokgod 9.9.9"
+
+mkdir -p "$FAKE_GROKGOD_HOME/bin"
+printf '#!/bin/sh\necho "PRIOR_BINARY"\n' > "$FAKE_GROKGOD_HOME/bin/grok"
+chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
+printf 'SHA=oldsha\nPATCHSET=v0.9.0\nVERSION=v0.9.0\nMODE=release\n' > "$FAKE_GROKGOD_HOME/.source-version"
+AJ_BEFORE_BIN="$(cat "$FAKE_GROKGOD_HOME/bin/grok")"
+AJ_BEFORE_STAMP="$(cat "$FAKE_GROKGOD_HOME/.source-version")"
+
+# Same asset listed twice: exactly-one matching requires a single entry
+{
+  printf '%s  %s\n' "$REL_FIXTURE_SHA" "$TEST_ASSET"
+  printf '%s  %s\n' "$REL_FIXTURE_SHA" "$TEST_ASSET"
+} > "$REL_FIXTURE_DIR/SHA256SUMS"
+
+set +e
+AJ_OUT="$(run_release_install --version 1.0.0 2>&1)"
+AJ_STATUS=$?
+set -eu
+
+[ "$AJ_STATUS" -ne 0 ] || { echo "FAIL: Test (aj) - duplicate entry accepted ($AJ_OUT)"; exit 1; }
+echo "$AJ_OUT" | grep -q "exactly one entry for $TEST_ASSET" || {
+  echo "FAIL: Test (aj) - missing exactly-one diagnostic ($AJ_OUT)"; exit 1
+}
+[ "$(cat "$FAKE_GROKGOD_HOME/bin/grok")" = "$AJ_BEFORE_BIN" ] || {
+  echo "FAIL: Test (aj) - live binary changed on duplicate checksum"; exit 1
+}
+[ "$(cat "$FAKE_GROKGOD_HOME/.source-version")" = "$AJ_BEFORE_STAMP" ] || {
+  echo "FAIL: Test (aj) - stamp changed on duplicate checksum"; exit 1
+}
+assert_no_tx_leftovers "Test (aj)"
+echo "PASS: Test (aj) - Duplicate checksum entry"
+
+# ─────────────────────────────────────────────────────────
+# Test (ak): Missing checksum entry fails closed (no first-line fallback)
+# ─────────────────────────────────────────────────────────
+echo "Test (ak): Missing checksum entry fails closed"
+setup_sandbox "test_ak"
+make_release_fixture 'echo "MISSING_SUMS_BINARY"' "grokgod 9.9.9"
+
+mkdir -p "$FAKE_GROKGOD_HOME/bin"
+printf '#!/bin/sh\necho "PRIOR_BINARY"\n' > "$FAKE_GROKGOD_HOME/bin/grok"
+chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
+printf 'SHA=oldsha\nPATCHSET=v0.9.0\nVERSION=v0.9.0\nMODE=release\n' > "$FAKE_GROKGOD_HOME/.source-version"
+AK_BEFORE_BIN="$(cat "$FAKE_GROKGOD_HOME/bin/grok")"
+AK_BEFORE_STAMP="$(cat "$FAKE_GROKGOD_HOME/.source-version")"
+
+# Only an unrelated asset is listed, with the real hash so a first-line
+# fallback would still verify and install the wrong mapping.
+printf '%s  grokgod-other-platform\n' "$REL_FIXTURE_SHA" > "$REL_FIXTURE_DIR/SHA256SUMS"
+
+set +e
+AK_OUT="$(run_release_install --version 1.0.0 2>&1)"
+AK_STATUS=$?
+set -eu
+
+[ "$AK_STATUS" -ne 0 ] || { echo "FAIL: Test (ak) - missing entry accepted ($AK_OUT)"; exit 1; }
+echo "$AK_OUT" | grep -q "exactly one entry for $TEST_ASSET" || {
+  echo "FAIL: Test (ak) - missing exactly-one diagnostic ($AK_OUT)"; exit 1
+}
+[ "$(cat "$FAKE_GROKGOD_HOME/bin/grok")" = "$AK_BEFORE_BIN" ] || {
+  echo "FAIL: Test (ak) - live binary changed on missing checksum"; exit 1
+}
+[ "$(cat "$FAKE_GROKGOD_HOME/.source-version")" = "$AK_BEFORE_STAMP" ] || {
+  echo "FAIL: Test (ak) - stamp changed on missing checksum"; exit 1
+}
+assert_no_tx_leftovers "Test (ak)"
+echo "PASS: Test (ak) - Missing checksum entry"
+
+# ─────────────────────────────────────────────────────────
+# Test (al): Source-mode rollback restores the live binary and stamp
+# ─────────────────────────────────────────────────────────
+echo "Test (al): Source-mode rollback across failure injection points"
+setup_sandbox "test_al"
+reset_worktree
+
+mkdir -p "$FAKE_GROKGOD_HOME/bin"
+printf '#!/bin/sh\necho "PRIOR_SOURCE_BINARY"\n' > "$FAKE_GROKGOD_HOME/bin/grok"
+chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
+AL_BEFORE_BIN="$(cat "$FAKE_GROKGOD_HOME/bin/grok")"
+rm -f "$FAKE_GROKGOD_HOME/.source-version"
+
+run_source_install() {
+  PATH="$FAKE_BIN_SHADOW:$PATH" \
+  HOME="$FAKE_HOME" \
+  GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+  GROK_BUILD_SRC="$GB_WORKTREE" \
+  BIN_DIR="$FAKE_BIN_DIR" \
+  CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+  sh "$INSTALL_SCRIPT" --from-source --no-upgrade "$@"
+}
+
+for AL_POINT in activation launcher-grokgod; do
+  set +e
+  AL_OUT="$(GROKGOD_INSTALL_FAIL_AFTER="$AL_POINT" run_source_install 2>&1)"
+  AL_STATUS=$?
+  set -eu
+
+  [ "$AL_STATUS" -ne 0 ] || {
+    echo "FAIL: Test (al) - injection '$AL_POINT' exited 0 ($AL_OUT)"; exit 1
+  }
+  echo "$AL_OUT" | grep -q "Preflight verified candidate" || {
+    echo "FAIL: Test (al) - source candidate was not preflighted ($AL_OUT)"; exit 1
+  }
+  [ "$(cat "$FAKE_GROKGOD_HOME/bin/grok")" = "$AL_BEFORE_BIN" ] || {
+    echo "FAIL: Test (al) - live binary not restored after '$AL_POINT'"; exit 1
+  }
+  if [ -e "$FAKE_GROKGOD_HOME/.source-version" ]; then
+    echo "FAIL: Test (al) - stamp created despite rollback after '$AL_POINT'"; exit 1
+  fi
+  assert_no_tx_leftovers "Test (al) '$AL_POINT'"
+done
+
+# A clean source run after rollbacks still installs
+run_source_install >/dev/null 2>&1 || { echo "FAIL: Test (al) - clean source run failed"; exit 1; }
+AL_AFTER_BIN="$(cat "$FAKE_GROKGOD_HOME/bin/grok")"
+echo "$AL_AFTER_BIN" | grep -q "MOCK_BUILT_GROK_BINARY" || {
+  echo "FAIL: Test (al) - clean source run did not install the built binary ($AL_AFTER_BIN)"; exit 1
+}
+[ -f "$FAKE_GROKGOD_HOME/.source-version" ] || { echo "FAIL: Test (al) - stamp missing after clean run"; exit 1; }
+assert_no_tx_leftovers "Test (al) final"
+echo "PASS: Test (al) - Source-mode rollback across failure injection points"
+
+# ─────────────────────────────────────────────────────────
+# Test (an): A failed first install leaves no half-installed state
+#
+# Every earlier rollback test starts from a committed install, so the
+# "created path" half of rollback (a path that did not exist before the
+# transaction) is otherwise never exercised.
+# ─────────────────────────────────────────────────────────
+echo "Test (an): Failed first install removes everything it created"
+setup_sandbox "test_an"
+make_release_fixture 'echo "AN_BINARY"' "grokgod 9.9.9"
+
+# Fresh sandbox: no binary, no stamp, no manifest, no launchers exist yet.
+AN_HOME="$TEST_DIR/an_home"
+mkdir -p "$AN_HOME"
+AN_GROKGOD="$AN_HOME/.grokgod"
+AN_GROK="$AN_HOME/.grok"
+AN_BIN="$AN_HOME/.local/bin"
+
+set +e
+AN_OUT="$(GROKGOD_INSTALL_FAIL_AFTER=launcher-grokgod \
+  PATH="$FAKE_BIN_SHADOW:$PATH" \
+  HOME="$AN_HOME" \
+  GROKGOD_HOME="$AN_GROKGOD" \
+  GROK_HOME="$AN_GROK" \
+  BIN_DIR="$AN_BIN" \
+  sh "$INSTALL_SCRIPT" --version 1.0.0 2>&1)"
+AN_STATUS=$?
+set -eu
+
+[ "$AN_STATUS" -ne 0 ] || { echo "FAIL: Test (an) - injected failure exited 0"; exit 1; }
+echo "$AN_OUT" | grep -q "Simulated failure injected after step 'launcher-grokgod'" || {
+  echo "FAIL: Test (an) - injection not reported ($AN_OUT)"; exit 1
+}
+# The committed files must not exist after the rollback
+[ ! -e "$AN_GROKGOD/bin/grok" ] || { echo "FAIL: Test (an) - binary survived rollback"; exit 1; }
+[ ! -e "$AN_GROKGOD/.source-version" ] || { echo "FAIL: Test (an) - stamp survived rollback"; exit 1; }
+[ ! -e "$AN_GROKGOD/manifest.json" ] || { echo "FAIL: Test (an) - manifest survived rollback"; exit 1; }
+# Launchers created by this failed run must be gone
+[ ! -e "$AN_BIN/grok" ] || { echo "FAIL: Test (an) - created BIN_DIR/grok left behind"; exit 1; }
+[ ! -e "$AN_BIN/grokgod" ] || { echo "FAIL: Test (an) - created BIN_DIR/grokgod left behind"; exit 1; }
+[ ! -e "$AN_GROK/bin/grok" ] || { echo "FAIL: Test (an) - created GROK_HOME/bin/grok left behind"; exit 1; }
+[ ! -e "$AN_GROK/agents/minimal.md" ] || { echo "FAIL: Test (an) - created daily agent left behind"; exit 1; }
+assert_no_tx_leftovers "Test (an)"
+
+# A subsequent clean run must succeed and produce a complete install
+PATH="$FAKE_BIN_SHADOW:$PATH" \
+  HOME="$AN_HOME" GROKGOD_HOME="$AN_GROKGOD" GROK_HOME="$AN_GROK" BIN_DIR="$AN_BIN" \
+  sh "$INSTALL_SCRIPT" --version 1.0.0 >/dev/null 2>&1 || {
+  echo "FAIL: Test (an) - clean run after rollback failed"; exit 1
+}
+[ -x "$AN_GROKGOD/bin/grok" ] || { echo "FAIL: Test (an) - clean run did not install"; exit 1; }
+[ -f "$AN_GROKGOD/.source-version" ] || { echo "FAIL: Test (an) - clean run did not stamp"; exit 1; }
+[ -f "$AN_GROKGOD/manifest.json" ] || { echo "FAIL: Test (an) - clean run did not write the manifest"; exit 1; }
+assert_no_tx_leftovers "Test (an) clean"
+echo "PASS: Test (an) - Failed first install removes everything it created"
+
+# ─────────────────────────────────────────────────────────
+# Test (ap): A torn install is repaired, not declared up to date
+#
+# A run killed between activation and the commit point (SIGKILL, power loss)
+# leaves the live binary newer than the stamp while the requested version still
+# matches. The release fast path used to answer "Already up to date" and never
+# repair that divergence.
+# ─────────────────────────────────────────────────────────
+echo "Test (ap): Torn install is repaired, not declared up to date"
+setup_sandbox "test_ap"
+make_release_fixture 'echo "AP_V1_BINARY"' "grokgod 9.9.9"
+
+run_release_install --version 1.0.0 >/dev/null 2>&1 || {
+  echo "FAIL: Test (ap) - base install failed"; exit 1
+}
+AP_BASE_BIN="$(cat "$FAKE_GROKGOD_HOME/bin/grok")"
+AP_BASE_SHA="$(sha256_of "$FAKE_GROKGOD_HOME/bin/grok")"
+
+# Simulate the kill window: a newer binary is live, the stamp still says v1.0.0.
+printf '#!/bin/sh\necho "AP_V2_TORN_BINARY"\n' > "$FAKE_GROKGOD_HOME/bin/grok"
+chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
+[ "$(sha256_of "$FAKE_GROKGOD_HOME/bin/grok")" != "$AP_BASE_SHA" ] || {
+  echo "FAIL: Test (ap) - torn fixture did not change the live hash"; exit 1
+}
+
+set +e
+AP_OUT="$(run_release_install --version 1.0.0 2>&1)"
+AP_STATUS=$?
+set -eu
+[ "$AP_STATUS" -eq 0 ] || { echo "FAIL: Test (ap) - repair run failed ($AP_OUT)"; exit 1; }
+
+echo "$AP_OUT" | grep -q "does not match the recorded stamp" || {
+  echo "FAIL: Test (ap) - torn install was not reported ($AP_OUT)"; exit 1
+}
+if echo "$AP_OUT" | grep -q "Already up to date"; then
+  echo "FAIL: Test (ap) - torn install was declared up to date ($AP_OUT)"; exit 1
+fi
+
+# The repair must converge the live bytes back to the stamped release.
+[ "$(cat "$FAKE_GROKGOD_HOME/bin/grok")" = "$AP_BASE_BIN" ] || {
+  echo "FAIL: Test (ap) - live binary was not reinstalled"; exit 1
+}
+[ "$(sha256_of "$FAKE_GROKGOD_HOME/bin/grok")" = "$AP_BASE_SHA" ] || {
+  echo "FAIL: Test (ap) - live binary hash does not match the stamp"; exit 1
+}
+grep -q "\"artifactSha256\": \"$AP_BASE_SHA\"" "$FAKE_GROKGOD_HOME/manifest.json" || {
+  echo "FAIL: Test (ap) - manifest does not record the live binary hash"; exit 1
+}
+assert_no_tx_leftovers "Test (ap)"
+echo "PASS: Test (ap) - Torn install is repaired, not declared up to date"
+
+# ─────────────────────────────────────────────────────────
+# Test (ao): Every live write goes through the atomic-write helpers
+#
+# Behavioural rollback tests cannot observe a torn/in-place write, so this
+# pins the discipline statically: no live target may be written by a bare
+# copy, an append, or a cross-directory move.
+# ─────────────────────────────────────────────────────────
+echo "Test (ao): Live writes use the atomic helpers"
+AO_FAIL=0
+check_absent() {
+  if grep -q -- "$1" "$INSTALL_SCRIPT"; then
+    echo "FAIL: Test (ao) - install.sh still contains: $1"
+    grep -n -- "$1" "$INSTALL_SCRIPT" | head -3
+    AO_FAIL=1
+  fi
+}
+check_present() {
+  grep -q -- "$1" "$INSTALL_SCRIPT" || {
+    echo "FAIL: Test (ao) - install.sh missing: $1"; AO_FAIL=1
+  }
+}
+
+# Launchers, the daily agent and the pin overlay must be installed atomically
+check_present 'tx_write "$SHIM_SRC" "$target" 755'
+check_present 'tx_write "$template" "$target" 644'
+check_present 'tx_write "$template" "$PIN" 644'
+# The candidate must be activated by rename, never copied onto the live path
+check_present 'tx_rename "$CANDIDATE_SRC" "$GROKGOD_HOME/bin/grok"'
+check_absent 'cp "$CANDIDATE_SRC" "$GROKGOD_HOME/bin/grok"'
+check_absent 'cp "$BUILT_BIN" "$GROKGOD_HOME/bin/grok"'
+check_absent 'cp "$TMP_DL/$ASSET" "$GROKGOD_HOME/bin/grok"'
+# config.toml rewrites must go through the staged-rewrite helpers
+check_present 'rewrite_stage "$cfg"'
+check_present 'rewrite_commit "$tmp" "$cfg"'
+check_absent '>> "$cfg"'
+check_absent '} > "$tmp" && mv "$tmp" "$cfg"'
+# The commit point must be atomic and last
+check_present 'mv -f "$_stamp_tmp" "$GROKGOD_HOME/.source-version"'
+check_present 'mv -f "$_manifest_tmp" "$GROKGOD_HOME/manifest.json"'
+check_absent 'printf "SHA=%s\nPATCHSET=%s\nVERSION=%s\nMODE=release\n" "$ACTUAL_SHA" "$TAG_NAME" "$TAG_NAME" > "$GROKGOD_HOME/.source-version"'
+
+# The helpers themselves must stage a sibling temp and rename onto the target.
+AO_TX_WRITE="$(sed -n '/^tx_write() {/,/^}/p' "$INSTALL_SCRIPT")"
+printf '%s\n' "$AO_TX_WRITE" | grep -q '_tmp="$_dir/\.grokgod-tmp\.\$\$"' || {
+  echo "FAIL: Test (ao) - tx_write does not stage a sibling temp file"; AO_FAIL=1
+}
+printf '%s\n' "$AO_TX_WRITE" | grep -q 'mv -f "$_tmp" "$_dst"' || {
+  echo "FAIL: Test (ao) - tx_write does not rename the temp onto the target"; AO_FAIL=1
+}
+AO_REWRITE="$(sed -n '/^rewrite_commit() {/,/^}/p' "$INSTALL_SCRIPT")"
+printf '%s\n' "$AO_REWRITE" | grep -q 'mv -f "$_t" "$_dst"' || {
+  echo "FAIL: Test (ao) - rewrite_commit does not rename the temp onto the target"; AO_FAIL=1
+}
+
+if [ "$AO_FAIL" -ne 0 ]; then
+  exit 1
+fi
+echo "PASS: Test (ao) - Live writes use the atomic helpers"
+
+echo "=== All install.sh tests passed successfully! ==="
+echo "Test (am): grok.orig tracks the newest official grok"
+setup_sandbox "test_am"
+make_release_fixture 'echo "AM_BINARY"' "grokgod 9.9.9"
+
+# A stale first-generation backup plus a newer official binary in place
+mkdir -p "$FAKE_BIN_DIR"
+printf 'STALE_BACKUP_v0\n' > "$FAKE_BIN_DIR/grok.orig"
+printf '#!/bin/sh\necho "OFFICIAL_v2"\n' > "$FAKE_BIN_DIR/grok"
+chmod +x "$FAKE_BIN_DIR/grok"
+
+run_release_install --version 1.0.0 >/dev/null 2>&1 || {
+  echo "FAIL: Test (am) - install failed"; exit 1
+}
+AM_BACKUP="$(cat "$FAKE_BIN_DIR/grok.orig")"
+echo "$AM_BACKUP" | grep -q "OFFICIAL_v2" || {
+  echo "FAIL: Test (am) - grok.orig was not refreshed to the newest official grok ($AM_BACKUP)"; exit 1
+}
+
+# A symlinked official grok backs up as a symlink, not as dereferenced bytes
+setup_sandbox "test_am2"
+make_release_fixture 'echo "AM2_BINARY"' "grokgod 9.9.9"
+mkdir -p "$FAKE_GROK_HOME/bin"
+printf 'OFFICIAL_VERSIONED\n' > "$FAKE_GROK_HOME/bin/grok-1.0.5"
+chmod +x "$FAKE_GROK_HOME/bin/grok-1.0.5"
+(cd "$FAKE_GROK_HOME/bin" && ln -s grok-1.0.5 grok)
+
+run_release_install --version 1.0.0 >/dev/null 2>&1 || {
+  echo "FAIL: Test (am2) - install failed"; exit 1
+}
+if [ ! -L "$FAKE_GROK_HOME/bin/grok.orig" ]; then
+  echo "FAIL: Test (am2) - grok.orig is not a symlink after backing up a symlink"; exit 1
+fi
+[ "$(readlink "$FAKE_GROK_HOME/bin/grok.orig")" = "grok-1.0.5" ] || {
+  echo "FAIL: Test (am2) - grok.orig points at $(readlink "$FAKE_GROK_HOME/bin/grok.orig")"; exit 1
+}
+# An unreadable (write-only / admin-owned) official grok in a writable
+# bin dir must still back up, install the shim, and roll back cleanly
+# on an injected failure.
+setup_sandbox "test_am3"
+make_release_fixture 'echo "AM3_BINARY"' "grokgod 9.9.9"
+mkdir -p "$FAKE_BIN_DIR"
+printf '#!/bin/sh\necho "OFFICIAL_WRITE_ONLY"\n' > "$FAKE_BIN_DIR/grok"
+chmod 000 "$FAKE_BIN_DIR/grok"
+
+set +e
+AM3_OUT="$(GROKGOD_INSTALL_FAIL_AFTER=launcher-grokgod \
+  run_release_install --version 1.0.0 2>&1)"
+AM3_STATUS=$?
+set -eu
+
+[ "$AM3_STATUS" -ne 0 ] || {
+  echo "FAIL: Test (am3) - injected failure did not exit nonzero ($AM3_OUT)"; exit 1
+}
+echo "$AM3_OUT" | grep -q "Simulated failure injected after step 'launcher-grokgod'" || {
+  echo "FAIL: Test (am3) - injection not reported ($AM3_OUT)"; exit 1
+}
+# Rollback must put the write-only official binary back in place and
+# remove the backup it had staged.
+[ -e "$FAKE_BIN_DIR/grok" ] || {
+  echo "FAIL: Test (am3) - unreadable official binary was not restored by rollback"; exit 1
+}
+if [ -e "$FAKE_BIN_DIR/grok.orig" ]; then
+  echo "FAIL: Test (am3) - grok.orig survived rollback of failed install"; exit 1
+fi
+assert_no_tx_leftovers "Test (am3) rollback"
+
+# A clean install over the restored unreadable binary must succeed, produce a
+# readable shim at grok, and keep the unreadable official binary in grok.orig.
+run_release_install --version 1.0.0 >/dev/null 2>&1 || {
+  echo "FAIL: Test (am3) - clean install over unreadable official binary failed"; exit 1
+}
+[ -x "$FAKE_BIN_DIR/grok" ] || {
+  echo "FAIL: Test (am3) - shim was not installed over unreadable official binary"; exit 1
+}
+[ -e "$FAKE_BIN_DIR/grok.orig" ] || {
+  echo "FAIL: Test (am3) - grok.orig missing after clean install"; exit 1
+}
+assert_no_tx_leftovers "Test (am3) clean"
+
+assert_no_tx_leftovers "Test (am2)"
+echo "PASS: Test (am) - grok.orig tracks the newest official grok"
 
 echo "=== All install.sh tests passed successfully! ==="

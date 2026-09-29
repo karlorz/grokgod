@@ -39,6 +39,15 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PATCHES_DIR="$SCRIPT_DIR/patches"
 SHIM_SRC=""
 
+# Set when this run produced a new binary candidate to activate.
+MANIFEST_INSTALLED=0
+CANDIDATE_SRC=""
+STAMP_CONTENT=""
+MANIFEST_SHA=""
+MANIFEST_PATCHSET=""
+MANIFEST_SOURCE_SHA=""
+MANIFEST_MODE=""
+
 log_info() {
   printf "  \033[0;32m✓\033[0m %s\n" "$1"
 }
@@ -145,6 +154,388 @@ log_step() {
 
 log_dry() {
   printf "  \033[0;34m[dry-run]\033[0m %s\n" "$1"
+}
+
+# ─────────────────────────────────────────────────────────
+# TRANSACTION: destination-volume staging, atomic activation,
+# rollback to prior state on any pre-commit failure.
+# Mirrors the Windows installer's transaction discipline.
+# ─────────────────────────────────────────────────────────
+TX_ACTIVE=0
+TX_COMMITTED=0
+TX_ROLLING_BACK=0
+TX_DIR=""
+TX_NOTED=""
+TX_SEQ=0
+
+# Failure injection for rollback coverage. Windows-compatible point names
+# (activation, launcher-grok, launcher-grokgod, stamp) plus POSIX-only points
+# for the staged candidate and the config/agent/pin writes.
+fail_after() {
+  _pt="${GROKGOD_INSTALL_FAIL_AFTER:-}"
+  if [ -n "$_pt" ] && [ "$_pt" = "$1" ]; then
+    log_err "Simulated failure injected after step '$1' (GROKGOD_INSTALL_FAIL_AFTER=$_pt)"
+    exit 1
+  fi
+}
+
+tx_init() {
+  [ "$TX_ACTIVE" -eq 1 ] && return 0
+  mkdir -p "$GROKGOD_HOME" 2>/dev/null || true
+  # Staging lives on the destination volume so activation is a same-filesystem rename.
+  TX_DIR="$(mktemp -d "$GROKGOD_HOME/.tx-XXXXXX" 2>/dev/null || true)"
+  if [ -z "$TX_DIR" ] || [ ! -d "$TX_DIR" ]; then
+    TX_DIR="$(mktemp -d "${TMPDIR:-/tmp}/grokgod-tx-XXXXXX" 2>/dev/null || true)"
+  fi
+  if [ -z "$TX_DIR" ] || [ ! -d "$TX_DIR" ]; then
+    log_err "Could not create a transaction staging directory (fail-closed)."
+    exit 1
+  fi
+  : > "$TX_DIR/journal"
+  TX_ACTIVE=1
+  TX_COMMITTED=0
+  TX_ROLLING_BACK=0
+  TX_NOTED=""
+  TX_SEQ=0
+  trap 'tx_exit' EXIT
+  trap 'tx_signal 129' HUP
+  trap 'tx_signal 130' INT
+  trap 'tx_signal 143' TERM
+}
+
+# Resolve a symlink chain so an atomic rewrite updates the link's target and
+# leaves the link itself in place. The old appending code wrote through the link.
+resolve_write_target() {
+  _p="$1"
+  _hops=0
+  while [ -L "$_p" ] && [ "$_hops" -lt 16 ]; do
+    _link="$(readlink "$_p" 2>/dev/null || true)"
+    [ -n "$_link" ] || break
+    case "$_link" in
+      /*) _p="$_link" ;;
+      *) _p="$(dirname "$_p")/$_link" ;;
+    esac
+    _hops=$((_hops + 1))
+  done
+  printf '%s' "$_p"
+}
+
+# Prepare an atomic rewrite of $1 (possibly a symlink).
+# Notes the resolved target for rollback and seeds a sibling temp file from the
+# existing bytes so the original mode survives the rename. Echoes the temp path.
+rewrite_stage() {
+  _dst="$(resolve_write_target "$1")"
+  _d="$(dirname "$_dst")"
+  mkdir -p "$_d" 2>/dev/null || true
+  if [ "${TX_ACTIVE:-0}" -eq 1 ]; then
+    tx_note "$_dst"
+  fi
+  _t="$_d/.grokgod-rewrite.$$"
+  rm -f "$_t" 2>/dev/null || true
+  if [ -f "$_dst" ]; then
+    cp -p "$_dst" "$_t" 2>/dev/null || {
+      rm -f "$_t" 2>/dev/null || true
+      log_err "Could not stage a rewrite of $_dst (fail-closed)."
+      exit 1
+    }
+  fi
+  printf '%s' "$_t"
+}
+
+# Atomic activation of a rewrite staged by rewrite_stage.
+rewrite_commit() {
+  _t="$1"
+  _cfg="$2"
+  _dst="$(resolve_write_target "$_cfg")"
+  if ! mv -f "$_t" "$_dst" 2>/dev/null; then
+    rm -f "$_t" 2>/dev/null || true
+    log_err "Could not activate a rewrite of $_dst (fail-closed)."
+    exit 1
+  fi
+}
+
+# Record a path's prior state before the transaction mutates it.
+# Snapshots use cp -P so rollback restores a symlink as a symlink.
+# A no-op outside an active transaction, so helpers stay usable standalone.
+tx_note() {
+  [ "${TX_ACTIVE:-0}" -eq 1 ] || return 0
+  case "$TX_NOTED" in
+    *"|$1|"*) return 0 ;;
+  esac
+  if [ -e "$1" ] || [ -L "$1" ]; then
+    TX_SEQ=$((TX_SEQ + 1))
+    _snap="$TX_DIR/snap.$TX_SEQ"
+    if ! cp -Pp "$1" "$_snap" 2>/dev/null; then
+      log_err "Could not snapshot $1 for rollback (fail-closed)."
+      exit 1
+    fi
+    # A short write (ENOSPC on a fallback staging volume) must not become a
+    # truncated "restore" later. Symlinks are recreated as links, not sized.
+    if [ ! -L "$1" ]; then
+      _src_size="$(wc -c < "$1" 2>/dev/null | tr -d '[:space:]' || true)"
+      _snap_size="$(wc -c < "$_snap" 2>/dev/null | tr -d '[:space:]' || true)"
+      if [ -z "$_snap_size" ] || [ "$_src_size" != "$_snap_size" ]; then
+        rm -f "$_snap" 2>/dev/null || true
+        log_err "Snapshot of $1 is incomplete (fail-closed)."
+        exit 1
+      fi
+    fi
+    printf 'S\t%s\t%s\n' "$1" "$_snap" >> "$TX_DIR/journal"
+  else
+    printf 'C\t%s\n' "$1" >> "$TX_DIR/journal"
+  fi
+  # Recorded only after the snapshot/item is durable, so an interrupted
+  # tx_note leaves the path un-noted rather than half-noted.
+  TX_NOTED="$TX_NOTED|$1|"
+}
+
+# Take the prior contents of $1 into the transaction journal by RENAME, so a
+# write-only/unreadable official binary can still be preserved (cp needs read
+# permission; mv only needs the directory). The caller immediately replaces $1
+# with new content, which is what makes the rename safe.
+# No-op outside an active transaction, so helpers stay usable standalone.
+tx_take() {
+  [ "${TX_ACTIVE:-0}" -eq 1 ] || return 0
+  case "$TX_NOTED" in
+    *"|$1|"*) return 0 ;;
+  esac
+  if [ -e "$1" ] || [ -L "$1" ]; then
+    TX_SEQ=$((TX_SEQ + 1))
+    _snap="$TX_DIR/moved.$TX_SEQ"
+    if ! mv -f "$1" "$_snap" 2>/dev/null; then
+      log_err "Could not take $1 for rollback (fail-closed)."
+      exit 1
+    fi
+    printf 'M\t%s\t%s\n' "$1" "$_snap" >> "$TX_DIR/journal"
+    TX_NOTED="$TX_NOTED|$1|"
+  else
+    tx_note "$1"
+  fi
+}
+
+# Atomic create/replace: stage a sibling temp file, then rename over the target.
+tx_write() {
+  _src="$1"
+  _dst="$2"
+  _mode="${3:-}"
+  _dir="$(dirname "$_dst")"
+  mkdir -p "$_dir"
+  tx_note "$_dst"
+  _tmp="$_dir/.grokgod-tmp.$$"
+  if ! cp "$_src" "$_tmp" 2>/dev/null; then
+    rm -f "$_tmp" 2>/dev/null || true
+    log_err "Could not stage $_dst (fail-closed)."
+    exit 1
+  fi
+  if [ -n "$_mode" ]; then
+    chmod "$_mode" "$_tmp" 2>/dev/null || true
+  fi
+  if ! mv -f "$_tmp" "$_dst" 2>/dev/null; then
+    rm -f "$_tmp" 2>/dev/null || true
+    log_err "Could not activate $_dst (fail-closed)."
+    exit 1
+  fi
+}
+
+# Atomically move an already-staged temp file onto its destination.
+tx_rename() {
+  _tmp="$1"
+  _dst="$2"
+  tx_note "$_dst"
+  if ! mv -f "$_tmp" "$_dst" 2>/dev/null; then
+    rm -f "$_tmp" 2>/dev/null || true
+    log_err "Could not activate $_dst (fail-closed)."
+    exit 1
+  fi
+}
+
+# Reverse replay of the journal: restore snapshots, remove created paths.
+tx_rollback() {
+  [ "$TX_ACTIVE" -eq 1 ] || return 0
+  [ "$TX_ROLLING_BACK" -eq 1 ] && return 0
+  TX_ROLLING_BACK=1
+  # Ignore further signals for the duration: a second Ctrl-C must not abort a
+  # half-finished restore and strand the tree without its snapshots.
+  trap '' INT TERM HUP
+
+  if [ -s "$TX_DIR/journal" ]; then
+    log_err "Transaction failed. Rolling back to prior state..."
+    awk '{ line[NR] = $0 } END { for (i = NR; i > 0; i--) print line[i] }' \
+      "$TX_DIR/journal" > "$TX_DIR/journal.rev" 2>/dev/null || :
+    _tab="$(printf '\t')"
+    if [ -s "$TX_DIR/journal.rev" ]; then
+      while IFS="$_tab" read -r _kind _path _snap || [ -n "$_kind" ]; do
+        case "$_kind" in
+          S)
+            if [ -n "$_snap" ] && { [ -f "$_snap" ] || [ -L "$_snap" ]; }; then
+              _rdir="$(dirname "$_path")"
+              mkdir -p "$_rdir" 2>/dev/null || true
+              if cp -Pp "$_snap" "$_rdir/.grokgod-restore.$$" 2>/dev/null &&
+                 mv -f "$_rdir/.grokgod-restore.$$" "$_path" 2>/dev/null; then
+                log_info "Rolled back: $_path"
+              else
+                rm -f "$_rdir/.grokgod-restore.$$" 2>/dev/null || true
+                log_err "Rollback could not restore $_path"
+              fi
+            fi
+            ;;
+          M)
+            # The original file was preserved by rename, not by copy.
+            if [ -n "$_snap" ] && { [ -f "$_snap" ] || [ -L "$_snap" ]; }; then
+              rm -f "$_path" 2>/dev/null || true
+              if mv -f "$_snap" "$_path" 2>/dev/null; then
+                log_info "Rolled back: $_path"
+              else
+                log_err "Rollback could not move $_snap back to $_path"
+              fi
+            fi
+            ;;
+          C)
+            rm -f "$_path" 2>/dev/null || true
+            log_info "Rolled back (removed): $_path"
+            ;;
+        esac
+      done < "$TX_DIR/journal.rev"
+    fi
+  fi
+
+  # Staged candidates and temp files were never part of prior state.
+  rm -f "$GROKGOD_HOME/bin/candidate-$$" 2>/dev/null || true
+  rm -f "$GROKGOD_HOME/bin/.grokgod-tmp.$$" 2>/dev/null || true
+  rm -f "$GROKGOD_HOME/.source-version.grokgod-tmp.$$" 2>/dev/null || true
+  rm -f "$GROKGOD_HOME/manifest.json.grokgod-tmp.$$" 2>/dev/null || true
+  rm -f "$BIN_DIR/.grokgod-tmp.$$" "$BIN_DIR/.grokgod-orig.$$" "$BIN_DIR/.grokgod-restore.$$" "$BIN_DIR/grok.orig.prev" 2>/dev/null || true
+  rm -f "$GROK_HOME/.grokgod-tmp.$$" "$GROK_HOME/.grokgod-restore.$$" 2>/dev/null || true
+  rm -f "$GROK_HOME/bin/.grokgod-tmp.$$" "$GROK_HOME/bin/.grokgod-restore.$$" "$GROK_HOME/bin/grok.orig.prev" 2>/dev/null || true
+  rm -f "$GROK_HOME/agents/.grokgod-tmp.$$" "$GROK_HOME/agents/.grokgod-restore.$$" 2>/dev/null || true
+  rm -f "$GROK_HOME/config.toml.grokgod-rewrite.$$" "$GROK_HOME/.grokgod-rewrite.$$" 2>/dev/null || true
+  rm -f "$GROK_HOME/config.toml.grokgod-plan-mode.tmp" 2>/dev/null || true
+  rm -f "$GROK_HOME/config.toml.grokgod-workflows-builtins.tmp" 2>/dev/null || true
+  rm -f "$GROK_HOME/config.toml.grokgod-status-line.tmp" 2>/dev/null || true
+
+  hash -r 2>/dev/null || true
+  TX_ACTIVE=0
+  return 0
+}
+
+tx_cleanup() {
+  if [ -n "$TX_DIR" ] && [ -d "$TX_DIR" ]; then
+    rm -rf "$TX_DIR" 2>/dev/null || true
+  fi
+  TX_DIR=""
+}
+
+tx_exit() {
+  _st=$?
+  set +e
+  if [ "$TX_ACTIVE" -eq 1 ] && [ "$TX_COMMITTED" -eq 0 ]; then
+    tx_rollback
+  fi
+  tx_cleanup
+  exit "$_st"
+}
+
+tx_signal() {
+  _st="$1"
+  set +e
+  log_err "Interrupted; rolling back."
+  tx_rollback
+  tx_cleanup
+  exit "$_st"
+}
+
+# Commit point: prior state is no longer restorable.
+tx_commit() {
+  TX_COMMITTED=1
+  TX_ACTIVE=0
+  tx_cleanup
+  rm -f "$BIN_DIR/grok.orig.prev" "$GROK_HOME/bin/grok.orig.prev" 2>/dev/null || true
+}
+
+# Strict SHA256SUMS matcher: print the single hash whose filename field is
+# exactly $1. Fail closed on zero or multiple matching entries. No fallback.
+#
+# NUL bytes are rejected up front: BSD awk truncates each record at the first
+# NUL, so a sums file with an embedded NUL can hide a duplicate entry from the
+# match counter and be read differently by different awk implementations.
+asset_sha_from_sums() {
+  if [ ! -f "$2" ]; then
+    return 1
+  fi
+  if ! LC_ALL=C tr -d '\000' < "$2" 2>/dev/null | cmp -s - "$2" 2>/dev/null; then
+    return 1
+  fi
+  awk -v expected="$1" '
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      sub(/^[[:space:]]+/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line == "") next
+      if (substr(line, 1, 1) == "#") next
+      n = split(line, f, /[[:space:]]+/)
+      if (n != 2) next
+      hash = tolower(f[1])
+      if (length(hash) != 64) next
+      if (hash ~ /[^0-9a-f]/) next
+      name = f[2]
+      sub(/^\*/, "", name)
+      if (name != expected) next
+      matches++
+      if (matches == 1) found = hash
+    }
+    END {
+      if (matches != 1) exit 1
+      print found
+    }
+  ' "$2"
+}
+
+# SHA-256 of a file on stdout, or empty when no hashing tool is available.
+file_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" 2>/dev/null | awk '{print $1}' || true
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" 2>/dev/null | awk '{print $1}' || true
+  fi
+}
+
+# Guard for the "already up to date" fast paths. A run killed between
+# activation and the commit point (SIGKILL, power loss) leaves the live binary
+# newer than the stamp and the manifest. Without this check that torn state is
+# declared healthy forever. Only release stamps carry a binary hash (source
+# stamps carry a git commit id), so every other case is treated as a match.
+# Returns 0 when the recorded hash matches, and 0 when the stamp carries no
+# usable hash or no hashing tool exists (best effort).
+live_binary_matches_stamp() {
+  _stamp_mode="$(grep '^MODE=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
+  [ "$_stamp_mode" = "release" ] || return 0
+  _stamp_sha="$(grep '^SHA=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
+  [ -n "$_stamp_sha" ] || return 0
+  _live_sha="$(file_sha256 "$GROKGOD_HOME/bin/grok")"
+  [ -n "$_live_sha" ] || return 0
+  [ "$_stamp_sha" = "$_live_sha" ]
+}
+
+# Run the staged candidate once before it can replace anything live.
+preflight_candidate() {
+  _cand="$1"
+  _label="$2"
+  if [ ! -f "$_cand" ]; then
+    log_err "Preflight failed: staged candidate missing at $_cand (fail-closed)."
+    exit 1
+  fi
+  [ -x "$_cand" ] || chmod +x "$_cand" 2>/dev/null || true
+  if ! _out="$("$_cand" --version 2>/dev/null)"; then
+    log_err "Preflight failed: candidate $_label did not report --version successfully (fail-closed)."
+    exit 1
+  fi
+  _first="$(printf '%s\n' "$_out" | head -n 1)"
+  if [ -z "$_first" ]; then
+    log_err "Preflight failed: candidate $_label printed no version line (fail-closed)."
+    exit 1
+  fi
+  log_info "Preflight verified candidate: $_first"
 }
 
 # Parse CLI arguments
@@ -741,8 +1132,15 @@ except Exception:
         NEED_DOWNLOAD=0
       fi
     elif [ -n "$TAG_NAME" ] && [ "$TAG_NAME" != "latest" ] && [ "$STAMP_VER" = "$TAG_NAME" ]; then
-      log_info "Already up to date (VERSION=$TAG_NAME)"
-      NEED_DOWNLOAD=0
+      # A run killed between activation and the commit point leaves the live
+      # binary newer than the stamp while the version still matches. Declaring
+      # that healthy would keep the stale metadata forever, so reinstall.
+      if live_binary_matches_stamp; then
+        log_info "Already up to date (VERSION=$TAG_NAME)"
+        NEED_DOWNLOAD=0
+      else
+        log_warn "Live grok does not match the recorded stamp (interrupted install?); reinstalling."
+      fi
     fi
   fi
 
@@ -775,12 +1173,16 @@ except Exception:
       exit 1
     fi
 
-    EXPECTED_SHA="$(grep -E "[[:space:]]${ASSET}(\.exe)?$" "$TMP_DL/SHA256SUMS" 2>/dev/null | head -n 1 | awk '{print $1}' || true)"
+    EXPECTED_SHA="$(asset_sha_from_sums "$ASSET" "$TMP_DL/SHA256SUMS" || true)"
+
     if [ -z "$EXPECTED_SHA" ]; then
-      EXPECTED_SHA="$(head -n 1 "$TMP_DL/SHA256SUMS" | awk '{print $1}' || true)"
+      log_err "SHA256SUMS must contain exactly one entry for $ASSET (fail-closed)."
+      log_err "Sums file: $SUMS_URL"
+      rm -rf "$TMP_DL"
+      exit 1
     fi
 
-    if [ -z "$EXPECTED_SHA" ] || [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+    if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
       log_err "Checksum verification failed for $ASSET (fail-closed)."
       log_err "Expected: $EXPECTED_SHA"
       log_err "Actual:   $ACTUAL_SHA"
@@ -789,18 +1191,34 @@ except Exception:
     fi
     log_info "Checksum verified: $ACTUAL_SHA"
 
+    # Stage the candidate on the destination volume and preflight it.
+    # Activation happens later, inside the transaction, by same-filesystem
+    # rename so a failure can never leave a partial live binary.
     mkdir -p "$GROKGOD_HOME/bin"
-    mv "$TMP_DL/$ASSET" "$GROKGOD_HOME/bin/grok"
-    chmod +x "$GROKGOD_HOME/bin/grok"
-    rm -rf "$TMP_DL"
-
-    if [ "$(uname -s)" = "Darwin" ]; then
-      codesign -s - --force "$GROKGOD_HOME/bin/grok" 2>/dev/null || true
+    tx_init
+    CANDIDATE_SRC="$GROKGOD_HOME/bin/candidate-$$"
+    rm -f "$CANDIDATE_SRC" 2>/dev/null || true
+    if ! cp "$TMP_DL/$ASSET" "$CANDIDATE_SRC" 2>/dev/null; then
+      log_err "Could not stage candidate at $CANDIDATE_SRC (fail-closed)."
+      rm -rf "$TMP_DL"
+      exit 1
     fi
-    log_info "Binary installed to $GROKGOD_HOME/bin/grok"
+    rm -rf "$TMP_DL"
+    chmod +x "$CANDIDATE_SRC"
+    if [ "$(uname -s)" = "Darwin" ]; then
+      codesign -s - --force "$CANDIDATE_SRC" 2>/dev/null || true
+    fi
+    fail_after stage
 
-    printf "SHA=%s\nPATCHSET=%s\nVERSION=%s\nMODE=release\n" "$ACTUAL_SHA" "$TAG_NAME" "$TAG_NAME" > "$GROKGOD_HOME/.source-version"
-    log_info "Stamped version to $GROKGOD_HOME/.source-version (VERSION=$TAG_NAME, SHA=$ACTUAL_SHA)"
+    preflight_candidate "$CANDIDATE_SRC" "$ASSET"
+    fail_after preflight
+
+    STAMP_CONTENT="$(printf "SHA=%s\nPATCHSET=%s\nVERSION=%s\nMODE=release\n" "$ACTUAL_SHA" "$TAG_NAME" "$TAG_NAME")"
+    MANIFEST_INSTALLED=1
+    MANIFEST_SHA="$ACTUAL_SHA"
+    MANIFEST_PATCHSET="$TAG_NAME"
+    MANIFEST_SOURCE_SHA="$TAG_NAME"
+    MANIFEST_MODE="release"
   fi
 
   # Resolve runtime scripts
@@ -928,7 +1346,8 @@ if [ "$MODE" = "source" ]; then
         log_info "Fast-path: skipping cargo build, updating launchers only."
         EARLY_NOOP=1
       fi
-    elif [ "$STAMP_SHA" = "$TARGET_SHA" ] && [ "$STAMP_PATCHSET" = "$NOW_PATCHSET" ]; then
+    elif [ "$STAMP_SHA" = "$TARGET_SHA" ] && [ "$STAMP_PATCHSET" = "$NOW_PATCHSET" ] \
+        && live_binary_matches_stamp; then
       log_info "Already up to date (SHA=$STAMP_SHA, PATCHSET=$STAMP_PATCHSET)"
       EARLY_NOOP=1
     fi
@@ -1035,25 +1454,38 @@ if [ "$MODE" = "source" ]; then
       exit 1
     }
 
-    log_step "Installing binary to $GROKGOD_HOME/bin/grok..."
+    # Stage the candidate on the destination volume and preflight it.
+    # Activation happens later, inside the transaction, by same-filesystem
+    # rename so a failure can never leave a partial live binary.
     BUILT_BIN="$CARGO_TARGET_DIR/release/xai-grok-pager"
     if [ ! -f "$BUILT_BIN" ]; then
       log_err "Built binary not found at $BUILT_BIN"
       exit 1
     fi
-
     mkdir -p "$GROKGOD_HOME/bin"
-    cp "$BUILT_BIN" "$GROKGOD_HOME/bin/grok"
-    chmod +x "$GROKGOD_HOME/bin/grok"
-
-    if [ "$(uname -s)" = "Darwin" ]; then
-      codesign -s - --force "$GROKGOD_HOME/bin/grok" 2>/dev/null || true
+    tx_init
+    CANDIDATE_SRC="$GROKGOD_HOME/bin/candidate-$$"
+    rm -f "$CANDIDATE_SRC" 2>/dev/null || true
+    if ! cp "$BUILT_BIN" "$CANDIDATE_SRC" 2>/dev/null; then
+      log_err "Could not stage candidate at $CANDIDATE_SRC (fail-closed)."
+      exit 1
     fi
-    log_info "Binary installed successfully."
+    chmod +x "$CANDIDATE_SRC"
+    if [ "$(uname -s)" = "Darwin" ]; then
+      codesign -s - --force "$CANDIDATE_SRC" 2>/dev/null || true
+    fi
+    fail_after stage
+
+    preflight_candidate "$CANDIDATE_SRC" "source build"
+    fail_after preflight
 
     CURRENT_SHA="$(git -C "$GROK_BUILD_SRC" rev-parse HEAD 2>/dev/null || echo "unknown")"
-    printf "SHA=%s\nPATCHSET=%s\nVERSION=%s\nMODE=source\n" "$CURRENT_SHA" "$NOW_PATCHSET" "$CURRENT_SHA" > "$GROKGOD_HOME/.source-version"
-    log_info "Stamped version to $GROKGOD_HOME/.source-version (SHA=$CURRENT_SHA, PATCHSET=$NOW_PATCHSET)"
+    STAMP_CONTENT="$(printf "SHA=%s\nPATCHSET=%s\nVERSION=%s\nMODE=source\n" "$CURRENT_SHA" "$NOW_PATCHSET" "$CURRENT_SHA")"
+    MANIFEST_INSTALLED=1
+    MANIFEST_SHA="$CURRENT_SHA"
+    MANIFEST_PATCHSET="$NOW_PATCHSET"
+    MANIFEST_SOURCE_SHA="$CURRENT_SHA"
+    MANIFEST_MODE="source"
 
     if [ -n "$VERSION_SHA" ]; then
       UPSTREAM_ORIGIN_MAIN="$(git -C "$GROK_BUILD_SRC" rev-parse origin/main 2>/dev/null || true)"
@@ -1140,14 +1572,30 @@ fi
 # ─────────────────────────────────────────────────────────
 # LAUNCHERS (ClawGod write_launcher pattern)
 # ─────────────────────────────────────────────────────────
-log_step "Installing shim launchers to $BIN_DIR and $GROK_HOME/bin..."
-mkdir -p "$BIN_DIR"
-mkdir -p "$GROK_HOME/bin"
-
 if [ ! -f "$SHIM_SRC" ]; then
   log_err "Shim template not found at $SHIM_SRC"
   exit 1
 fi
+
+# Begin the transaction now that every fail-closed precheck has passed and the
+# candidate (if any) is staged and preflighted. Everything below is
+# snapshot-backed and rolled back on any later failure.
+tx_init
+
+# Atomically activate the staged candidate binary. Same-filesystem rename keeps
+# the live path either wholly old or wholly new.
+if [ "$MANIFEST_INSTALLED" -eq 1 ]; then
+  log_step "Activating candidate binary to $GROKGOD_HOME/bin/grok..."
+  tx_rename "$CANDIDATE_SRC" "$GROKGOD_HOME/bin/grok"
+  if [ "$MODE" = "source" ]; then
+    log_info "Binary installed successfully."
+  fi
+  fail_after activation
+fi
+
+log_step "Installing shim launchers to $BIN_DIR and $GROK_HOME/bin..."
+mkdir -p "$BIN_DIR"
+mkdir -p "$GROK_HOME/bin"
 
 write_launcher() {
   target="$1"
@@ -1156,30 +1604,69 @@ write_launcher() {
   dir="$(dirname "$target")"
   mkdir -p "$dir"
 
-  # Backup logic for official grok binary / symlink
+  # Backup logic for official grok binary / symlink. grok.orig is a durable
+  # artifact of a committed install (uninstall restores from it). The backup is
+  # a rename into grok.orig so it works for a write-only/unreadable official
+  # binary; rollback renames the bytes straight back from grok.orig, which is
+  # the one location that survives a failed run.
   if [ "$is_grok_cmd" -eq 1 ]; then
     if [ -e "$target" ] || [ -L "$target" ]; then
       # If it's a regular file containing GROKGOD, it's our shim -> no backup needed
       if [ ! -L "$target" ] && grep -q "GROKGOD" "$target" 2>/dev/null; then
         : # Already our shim
       else
-        # It's an official binary or official symlink -> back up to grok.orig
-        mv "$target" "$dir/grok.orig"
+        # It's an official binary or official symlink: replace this run's
+        # grok.orig. A pre-existing backup is moved aside as grok.orig.prev and
+        # only dropped once the run commits.
+        _grok_orig_prev="$dir/grok.orig.prev"
+        if [ -e "$_grok_orig_prev" ] || [ -L "$_grok_orig_prev" ]; then
+          tx_take "$_grok_orig_prev"
+          if [ -e "$_grok_orig_prev" ] || [ -L "$_grok_orig_prev" ]; then
+            log_err "Could not clear $_grok_orig_prev for the durable backup (fail-closed)."
+            exit 1
+          fi
+        fi
+        _grok_orig_prior=0
+        if [ -e "$dir/grok.orig" ] || [ -L "$dir/grok.orig" ]; then
+          _grok_orig_prior=1
+          if ! mv -f "$dir/grok.orig" "$_grok_orig_prev" 2>/dev/null; then
+            log_err "Could not move aside the existing $dir/grok.orig (fail-closed)."
+            exit 1
+          fi
+        fi
+        # Journal the replacement pair in the order reverse replay needs: the
+        # prior backup first, then the official binary. Rollback replays in
+        # reverse, so the official lands back at $target and the prior backup
+        # back at grok.orig. Rename needs only directory permission, so a
+        # write-only/unreadable official binary is restorable and nothing here
+        # reads the bytes.
+        if [ "$_grok_orig_prior" -eq 1 ]; then
+          printf 'M\t%s\t%s\n' "$dir/grok.orig" "$_grok_orig_prev" >> "$TX_DIR/journal"
+          TX_NOTED="$TX_NOTED|$dir/grok.orig|"
+        fi
+        printf 'M\t%s\t%s\n' "$target" "$dir/grok.orig" >> "$TX_DIR/journal"
+        TX_NOTED="$TX_NOTED|$target|"
+        if ! mv -f "$target" "$dir/grok.orig" 2>/dev/null; then
+          log_err "Could not back up existing grok at $target (fail-closed)."
+          exit 1
+        fi
         log_info "Backed up existing grok: $target -> $dir/grok.orig"
       fi
     fi
   fi
 
-  # CRITICAL: Always rm -f before copying so we never write through an existing symlink
-  rm -f "$target"
-  cp "$SHIM_SRC" "$target"
-  chmod 755 "$target"
+  # tx_write stages a sibling temp file and renames over the target, so we
+  # never write through an existing symlink and never expose a partial file.
+  tx_write "$SHIM_SRC" "$target" 755
   log_info "Installed launcher: $target"
 }
 
 write_launcher "$BIN_DIR/grok" 1
+fail_after launcher-grok
 write_launcher "$BIN_DIR/grokgod" 0
+fail_after launcher-grokgod
 write_launcher "$GROK_HOME/bin/grok" 1
+fail_after launcher-grokhome
 
 # Flush shell hash cache
 hash -r 2>/dev/null || true
@@ -1204,11 +1691,12 @@ maybe_install_daily_minimal() {
   fi
 
   mkdir -p "$GROK_HOME/agents"
-  cp "$template" "$target"
+  tx_write "$template" "$target" 644
   log_info "Installed daily minimal agent to $target"
 }
 
 maybe_install_daily_minimal
+fail_after agent
 
 # ─────────────────────────────────────────────────────────
 # PIN OVERLAY SETUP
@@ -1242,7 +1730,7 @@ maybe_install_pin_overlay() {
 
   if [ "$YES" -eq 1 ]; then
     mkdir -p "$GROKGOD_HOME/pin"
-    cp "$template" "$PIN"
+    tx_write "$template" "$PIN" 644
     log_info "Installed default pin overlay to $PIN"
     return 0
   fi
@@ -1253,7 +1741,7 @@ maybe_install_pin_overlay() {
     case "$ans" in
       [yY]|[yY][eE][sS])
         mkdir -p "$GROKGOD_HOME/pin"
-        cp "$template" "$PIN"
+        tx_write "$template" "$PIN" 644
         log_info "Installed default pin overlay to $PIN"
         ;;
       *)
@@ -1268,6 +1756,7 @@ maybe_install_pin_overlay() {
 }
 
 maybe_install_pin_overlay
+fail_after pin
 
 # Merge [plan_mode] implement_via_subagents = true into ~/.grok/config.toml
 # when the key is absent. Overlay GROK_CONFIG_PATH cannot carry this table.
@@ -1283,7 +1772,7 @@ maybe_merge_plan_mode_config() {
   fi
   mkdir -p "$GROK_HOME"
   if [ -f "$cfg" ] && grep -q '^[[:space:]]*\[plan_mode\]' "$cfg"; then
-    tmp="$cfg.grokgod-plan-mode.tmp"
+    tmp="$(rewrite_stage "$cfg")"
     awk '
       BEGIN { added=0 }
       /^[[:space:]]*\[plan_mode\]/ && added==0 {
@@ -1293,16 +1782,21 @@ maybe_merge_plan_mode_config() {
         next
       }
       { print }
-    ' "$cfg" > "$tmp" && mv "$tmp" "$cfg"
+    ' "$cfg" > "$tmp"
+    rewrite_commit "$tmp" "$cfg"
     log_info "Merged implement_via_subagents = true into existing [plan_mode] in $cfg"
     return 0
   fi
+  # Same-directory temp + rename so config.toml is never half-written.
+  tmp="$(rewrite_stage "$cfg")"
   {
     if [ -f "$cfg" ] && [ -s "$cfg" ]; then
+      cat "$cfg"
       printf '\n'
     fi
     printf '[plan_mode]\nimplement_via_subagents = true\n'
-  } >> "$cfg"
+  } > "$tmp"
+  rewrite_commit "$tmp" "$cfg"
   log_info "Wrote [plan_mode] implement_via_subagents = true to $cfg"
 }
 
@@ -1322,7 +1816,7 @@ maybe_merge_workflows_builtins_config() {
   fi
   mkdir -p "$GROK_HOME"
   if [ -f "$cfg" ] && grep -q '^[[:space:]]*\[workflows\.builtins\]' "$cfg"; then
-    tmp="$cfg.grokgod-workflows-builtins.tmp"
+    tmp="$(rewrite_stage "$cfg")"
     awk '
       BEGIN { added=0 }
       /^[[:space:]]*\[workflows\.builtins\]/ && added==0 {
@@ -1332,16 +1826,21 @@ maybe_merge_workflows_builtins_config() {
         next
       }
       { print }
-    ' "$cfg" > "$tmp" && mv "$tmp" "$cfg"
+    ' "$cfg" > "$tmp"
+    rewrite_commit "$tmp" "$cfg"
     log_info "Merged deep-research = false into existing [workflows.builtins] in $cfg"
     return 0
   fi
+  # Same-directory temp + rename so config.toml is never half-written.
+  tmp="$(rewrite_stage "$cfg")"
   {
     if [ -f "$cfg" ] && [ -s "$cfg" ]; then
+      cat "$cfg"
       printf '\n'
     fi
     printf '[workflows.builtins]\ndeep-research = false\n'
-  } >> "$cfg"
+  } > "$tmp"
+  rewrite_commit "$tmp" "$cfg"
   log_info "Wrote [workflows.builtins] deep-research = false to $cfg"
 }
 
@@ -1445,7 +1944,7 @@ maybe_merge_status_line_config() {
   fi
   mkdir -p "$GROK_HOME"
   if [ "$action" = "append" ]; then
-    tmp="$cfg.grokgod-status-line.tmp"
+    tmp="$(rewrite_stage "$cfg")"
     awk '
       function trim(s) {
         gsub(/\r/, "", s)
@@ -1586,12 +2085,16 @@ maybe_merge_status_line_config() {
           print lines[i]
         }
       }
-    ' "$cfg" > "$tmp" && mv "$tmp" "$cfg"
+    ' "$cfg" > "$tmp"
+    rewrite_commit "$tmp" "$cfg"
     log_info "Merged \"compacts\" into existing [ui.status_line] items in $cfg"
     return 0
   fi
+  # Same-directory temp + rename so config.toml is never half-written.
+  tmp="$(rewrite_stage "$cfg")"
   {
     if [ -f "$cfg" ] && [ -s "$cfg" ]; then
+      cat "$cfg"
       printf '\n'
     fi
     printf '%s\n' '[ui.status_line]'
@@ -1602,11 +2105,49 @@ maybe_merge_status_line_config() {
     printf '%s\n' '    "session-name",'
     printf '%s\n' '    "compacts",'
     printf '%s\n' ']'
-  } >> "$cfg"
+  } > "$tmp"
+  rewrite_commit "$tmp" "$cfg"
   log_info "Wrote [ui.status_line] builtin items including \"compacts\" to $cfg"
 }
 
 maybe_merge_status_line_config
+fail_after config
+
+# ─────────────────────────────────────────────────────────
+# COMMIT POINT
+# .source-version and manifest.json are the last files written.
+# Before this, any failure rolls the whole transaction back; after
+# it, the new state is authoritative and rollback must not run.
+# ─────────────────────────────────────────────────────────
+if [ "$MANIFEST_INSTALLED" -eq 1 ]; then
+  tx_note "$GROKGOD_HOME/.source-version"
+  tx_note "$GROKGOD_HOME/manifest.json"
+  _stamp_tmp="$GROKGOD_HOME/.source-version.grokgod-tmp.$$"
+  printf '%s\n' "$STAMP_CONTENT" > "$_stamp_tmp"
+  mv -f "$_stamp_tmp" "$GROKGOD_HOME/.source-version"
+  log_info "Stamped version to $GROKGOD_HOME/.source-version (VERSION=$MANIFEST_SOURCE_SHA, SHA=$MANIFEST_SHA, MODE=$MANIFEST_MODE)"
+  fail_after stamp
+
+  _manifest_tmp="$GROKGOD_HOME/manifest.json.grokgod-tmp.$$"
+  {
+    printf '{\n'
+    printf '  "formatVersion": 1,\n'
+    printf '  "artifactSha256": "%s",\n' "$MANIFEST_SHA"
+    printf '  "patchset": "%s",\n' "$MANIFEST_PATCHSET"
+    printf '  "sourceSha": "%s",\n' "$MANIFEST_SOURCE_SHA"
+    printf '  "mode": "%s",\n' "$MANIFEST_MODE"
+    printf '  "grokgodHome": "%s",\n' "$GROKGOD_HOME"
+    printf '  "binDir": "%s",\n' "$BIN_DIR"
+    printf '  "files": [\n'
+    printf '    "%s"\n' "$GROKGOD_HOME/bin/grok"
+    printf '  ]\n'
+    printf '}\n'
+  } > "$_manifest_tmp"
+  mv -f "$_manifest_tmp" "$GROKGOD_HOME/manifest.json"
+  log_info "Wrote ownership manifest to $GROKGOD_HOME/manifest.json"
+fi
+
+tx_commit
 
 # ─────────────────────────────────────────────────────────
 # POST-BUILD DISK WARN
