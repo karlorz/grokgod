@@ -7,7 +7,12 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PATCH_0016="$REPO_ROOT/patches/0016-credit-limit-switch-model.patch"
-PIN_SHA="97f190f644ae1ba07fd6ee185ef54c650e142666"
+INSTALL_SCRIPT="$REPO_ROOT/install.sh"
+PIN_SHA="$(grep '^PINNED_BASE_SHA=' "$INSTALL_SCRIPT" | cut -d= -f2- | tr -d '"' | tr -d "'" || true)"
+if [ -z "$PIN_SHA" ]; then
+  echo "FAIL: PINNED_BASE_SHA missing in $INSTALL_SCRIPT" >&2
+  exit 1
+fi
 REAL_GROK_BUILD="${REAL_GROK_BUILD:-/Users/karlchow/Desktop/code/grok-build}"
 [ "${CI:-0}" = "1" ] && REAL_GROK_BUILD="/nonexistent"
 

@@ -34,7 +34,7 @@ files, from the order below, or from `PINNED_BASE_SHA`.
 
 ## Target Commit
 
-- Base commit: `grok-build` commit `97f190f6` (`97f190f644ae1ba07fd6ee185ef54c650e142666`) — origin/main 1.0.45; patches 0001–0017 are authored/rebased against this base. Source mode still tracks the moving `origin/main`; this is the patch-authorship/release pin.
+- Base commit: `grok-build` commit `2bdd1d6a` (`2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8`) — origin/main after the 1.0.45 pin; patches 0001–0017 are authored/rebased against this base. Source mode still tracks the moving `origin/main`; this is the patch-authorship/release pin.
 
 ## Verification
 
@@ -48,9 +48,9 @@ git -C <grok-build-checkout> apply --check patches/0001-normalize-plugin-skill-j
 
 To regenerate or update a patch:
 
-1. Create a worktree of `grok-build` at base commit `97f190f6`:
+1. Create a worktree of `grok-build` at base commit `2bdd1d6a`:
    ```bash
-   git -C /path/to/grok-build worktree add /tmp/grokbuild-patch-wt 97f190f6
+   git -C /path/to/grok-build worktree add /tmp/grokbuild-patch-wt 2bdd1d6a
    ```
 2. Apply changes and create the patch:
    ```bash

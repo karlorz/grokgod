@@ -155,7 +155,7 @@ Value vocabularies: `healthDetails` is always an array of diagnostic strings
 `launcherOwnership` is `shim`/`foreign`/`absent`, `signature` is
 `adhoc`/`signed`/`unsigned`/`unsupported`,
 `artifactHashMatchesRecord`/`signatureVerified` are `true`/`false`/`null`, and
-`persist` lists the 16 source patches plus `overlay-pin`, `eval-home`,
+`persist` lists the 17 source patches plus `overlay-pin`, `eval-home`,
 `weekly-pin`, and `orca-pin` with the same statuses as the human report.
 
 `patchedBinaryVersion`, `officialBinary*` are `null`/`false` on POSIX: status
@@ -223,7 +223,7 @@ The Windows installer provides transactional install, update, and uninstall sema
 - **Preflight Check**: Executes candidate `--version` prior to any live target mutation.
 - **Destination-Volume Sibling Staging**: Stages candidate binary on the target volume (`candidate-<guid>.exe`) with bounded backups of prior components.
 - **Transactional Rollback**: Reverts completely to pristine prior state if candidate preflight fails, target is locked/running, or any failure occurs.
-- **Manifest Commit Point**: Commits `.source-version` (`SHA=...`, `PATCHSET=...`, `VERSION=97f190f644ae1ba07fd6ee185ef54c650e142666`, `MODE=release`) and `manifest.json` last.
+- **Manifest Commit Point**: Commits `.source-version` (`SHA=...`, `PATCHSET=...`, `VERSION=2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8`, `MODE=release`) and `manifest.json` last.
 - **Daily Minimal Agent**: Installs and updates the daily Minimal agent into `%USERPROFILE%\.grok\agents\minimal.md` (or `$env:GROK_HOME\agents\minimal.md`) from `examples/daily-minimal/minimal.md` (or release asset `daily-minimal.md`). This cooperating user agent is preserved on uninstall (never tracked in `manifest.files`). Official Grok invariant remains: never mutate `%USERPROFILE%\.grok\bin\grok.exe`.
 - **Post-Update Convergence**: When updating an existing installation, if the newly installed `install.ps1` bytes change, the installer invokes that updated script once in a lightweight `-Finalize` mode after transaction commit and lock release. In finalize mode, the updated script downloads and verifies assets for the resolved release tag/base URL without downloading or preflighting binaries, rewriting launchers, acquiring transaction locks, or recursing. If installer bytes did not change, finalize is not spawned. Finalize errors propagate as nonzero exits with actionable diagnostics while leaving the committed binary intact. *Migration truth*: the first release containing this mechanism cannot retroactively update v1.0.38's currently executing updater during its own run; this first-hop boundary means the convergence mechanism activates reliably on subsequent updates from mechanism-equipped versions.
 - **Clean Uninstall**: `install.ps1 -Uninstall` restores backups recorded in the manifest, deletes manifest-owned files, and preserves unrelated files.
@@ -237,7 +237,7 @@ POSIX modes record `~/.grokgod/manifest.json` (see
 uninstall removes `~/.grokgod` wholesale, so the POSIX manifest deliberately
 carries no owned-file or backup lists.
 
-Patch authorship base SHA: `97f190f644ae1ba07fd6ee185ef54c650e142666` (`patches/README.md`). Source mode still tracks moving `origin/main`; this authorship pin is not the source-mode update target. Session-start
+Patch authorship base SHA: `2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8` (`patches/README.md`). Source mode still tracks moving `origin/main`; this authorship pin is not the source-mode update target. Session-start
 checks: [docs/RUNBOOK-session-start.md](docs/RUNBOOK-session-start.md) (auto-load
 via [AGENTS.md](AGENTS.md)). Persist inventory (keep vs phase-out):
 [docs/patch-inventory.md](docs/patch-inventory.md). Machine-readable patch list:

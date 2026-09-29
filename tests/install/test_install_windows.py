@@ -22,7 +22,7 @@ Verifies all requirements from task-3-brief.md and review / re-review findings:
  17. Collision-Safe Backup Paths: uses hash-based identifier for backup filenames
  18. Wrapper Runtime Installation: installs grok-shim.ps1, LauncherHelpers.ps1, and install.ps1 into grokgod home
  19. Launcher Generation: calls New-GrokgodLauncherScript with explicit -Identity grok/grokgod
- 20. Stamp Fields: SHA, PATCHSET, VERSION=97f190f644ae1ba07fd6ee185ef54c650e142666, MODE=release
+ 20. Stamp Fields: SHA, PATCHSET, VERSION=2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8, MODE=release
  21. Manifest: writes JSON manifest as commit point
  22. Locked File Detection: tests if target executable is locked/running and fails closed
  23. Failure Injection: supports GROKGOD_INSTALL_FAIL_AFTER points (backup, activation, stamp, launcher-grok, launcher-grokgod)
@@ -182,7 +182,7 @@ def main():
     check('-Identity "grokgod"' in src or "-Identity 'grokgod'" in src, "Generates launcher with explicit Identity grokgod")
 
     # 20. Stamp Generation and PINNED_BASE_SHA
-    pinned_sha = "97f190f644ae1ba07fd6ee185ef54c650e142666"
+    pinned_sha = "2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8"
     check(pinned_sha in src, f"Contains PINNED_BASE_SHA {pinned_sha}")
     check("SHA=" in src, "Stamp includes SHA=")
     check("PATCHSET=" in src, "Stamp includes PATCHSET=")

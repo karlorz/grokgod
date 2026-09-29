@@ -31,6 +31,7 @@ echo "PASS: Patch 0008 file exists and is non-empty"
 grep -q "GROK_CLAUDE_PERMISSIONS_ENABLED" "$PATCH_0008" || { echo "FAIL: Missing GROK_CLAUDE_PERMISSIONS_ENABLED in 0008"; exit 1; }
 grep -q "crates/codegen/xai-grok-config/src/compat.rs" "$PATCH_0008" || { echo "FAIL: Missing compat.rs diff in 0008"; exit 1; }
 grep -q "crates/codegen/xai-grok-permission-rules/src/resolution.rs" "$PATCH_0008" || { echo "FAIL: Missing resolution.rs diff in 0008"; exit 1; }
+grep -q "crates/codegen/xai-grok-shell/src/claude_import_tests.rs" "$PATCH_0008" || { echo "FAIL: Missing claude_import_tests.rs diff in 0008"; exit 1; }
 
 if [ -d "$REAL_GROK_BUILD/.git" ]; then
   echo "Testing patch application against real grok-build checkout..."
