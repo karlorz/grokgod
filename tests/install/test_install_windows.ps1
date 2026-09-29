@@ -719,8 +719,9 @@ try {
     # 4. Deterministic outer-command finalize failure after transaction commit:
     # Outer returns nonzero/actionable diagnostic, installed changed-updater marker and committed binary/stamp remain (no rollback), launchers remain committed
     # Stage an updated install.ps1 that contains a test-only failure condition during -Finalize when a test env var is set
-    $failingInstallBase = Get-Content -LiteralPath $mockInstall -Raw
-    $installerNewline = if ($failingInstallBase.Contains("`r`n")) { "`r`n" } else { "`n" }
+    # Normalize line endings to LF for deterministic multi-line anchor matching across mixed-line-ending fixtures
+    $failingInstallBase = (Get-Content -LiteralPath $mockInstall -Raw).Replace("`r`n", "`n")
+    $installerNewline = "`n"
     $testFailureHookMarker = @(
         'if ($Finalize -and $env:GROKGOD_TEST_FAIL_FINALIZE -eq "1") {'
         '    Write-Err "Test simulated failure inside finalize mode."'
