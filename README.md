@@ -30,6 +30,36 @@ sh install.sh --from-source
 
 ClawGod extracts `cli.js` from a Bun standalone and regex-patches JavaScript. Grok is a native Rust binary (`~/.grok/bin/grok`). There is nothing to extract. This repo copies only the **lifecycle**: wrapper name, version stamp, re-apply, keep official `grok` unpatched.
 
+## Generated installers
+
+The installers copy ClawGod's *build* though: `install.sh`, `install.ps1`,
+`src/shim/grok-shim.sh` and the Windows launcher sources are generated, not
+hand-maintained.
+
+```
+src/installer/
+  constants.json                 # SHAs, repo slug, asset names — one home
+  shared/fast-forward-repo.sh    # the grok-build ff/reset classifier
+  shared/ps-engine-probe.cmd.part# PowerShell engine selection for .cmd launchers
+  templates/*.in                 # per-target text with {{GROKGOD:...}} holes
+  build.mjs                      # compiles the committed artifacts
+  cut.mjs                        # re-derives templates from the committed bytes
+tests/installer/                 # contract suite for the above
+```
+
+```sh
+node src/installer/build.mjs          # regenerate the committed artifacts
+node src/installer/build.mjs --check  # drift guard: fails if they are stale
+```
+
+The generated artifacts stay committed, so release assets, `irm | iex` and
+`curl | sh` are unchanged. CI runs `--check` before the test suites, and
+`tests/installer/test_generated_installers.sh` covers the pipeline itself:
+artifact bytes, constants, text contracts (one trailing newline, LF, ASCII for
+the PowerShell targets, exec bit) and proof that tampering with either a
+generated artifact or a canonical source is actually detected. See
+[`docs/adr/0005-generated-installers.md`](docs/adr/0005-generated-installers.md).
+
 ## v1 (live)
 
 PATH `grok` / `grokgod` is the shim. Engine fixes are source patches plus
