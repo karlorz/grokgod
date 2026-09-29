@@ -275,6 +275,28 @@ public class MockGrok {
     }
 
     # 2.3 Cached release notice is exact and does not alter native exit status.
+    # Captured stderr goes through Get-Content, which in Windows PowerShell 5.1
+    # decodes without a BOM using the host's default code page, so the UTF-8
+    # em dash the launcher writes can arrive as mojibake (for example the three
+    # characters U+00E2 U+20AC U+201D for the bytes E2 80 94 under CP1252).
+    # Normalize the known decodings back to U+2014, and guard the empty-file
+    # $null that 5.1 hands back before any method call.
+    function Get-CapturedStderr([string]$filePath) {
+        if (-not (Test-Path -LiteralPath $filePath)) { return "" }
+        $raw = Get-Content -LiteralPath $filePath -Raw
+        if ($null -eq $raw) { return "" }
+        $text = $raw.Trim()
+        if (-not $text) { return "" }
+        $emDash = [string][char]0x2014
+        $mojibake = @(
+            ("$([char]0x00E2)$([char]0x20AC)$([char]0x201D)"),   # UTF-8 bytes E2 80 94 read as CP1252
+            ("$([char]0x0393)$([char]0x00C7)$([char]0x00F6)"),   # UTF-8 bytes E2 80 94 read as CP437
+            ("$([char]0x00D4)$([char]0x00C7)$([char]0x00F6)")    # UTF-8 bytes E2 80 94 read as CP850
+        )
+        foreach ($variant in $mojibake) { $text = $text.Replace($variant, $emDash) }
+        return $text
+    }
+
     $noticeStamp = Join-Path $fakeGrokgodHome ".source-version"
     $noticeCache = Join-Path $fakeGrokgodHome ".update-check"
     $noticeNow = [Int64][Math]::Floor(([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse('1970-01-01T00:00:00Z')).TotalSeconds)
@@ -283,30 +305,36 @@ public class MockGrok {
     $noticeErrFile = Join-Path $testDir "update_notice_err.txt"
     $env:GROKGOD_UPDATE_CHECK_DISABLE = "0"
     $p = Start-Process -FilePath $pwshExe -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$ShimPath`"", "grok", "--exit-code", "42") -RedirectStandardError $noticeErrFile -NoNewWindow -Wait -PassThru
-    $noticeErr = if (Test-Path $noticeErrFile) { (Get-Content $noticeErrFile -Raw).Trim() } else { "" }
+    $noticeErr = Get-CapturedStderr $noticeErrFile
     # Build the em dash by code point so Windows PowerShell 5.1 can parse this
     # UTF-8 test source even when it is loaded using the system code page.
     $expectedNotice = "[grokgod] v2.0.0-rc.1 available (installed: v1.2.3-preview.1) " + [char]0x2014 + " run 'grok update' to upgrade"
     Assert-Condition ($p.ExitCode -eq 42) "Update notice preserves native exit code 42"
     Assert-Condition ($noticeErr -eq $expectedNotice) "Cached update notice matches exact stderr contract" $noticeErr
+    # The equality above is the full contract; these pin its ASCII semantics and
+    # the single-line shape so a mojibake-only failure cannot hide a payload bug.
+    foreach ($fragment in @("[grokgod] v2.0.0-rc.1 available", "(installed: v1.2.3-preview.1)", "run 'grok update' to upgrade")) {
+        Assert-Condition ($noticeErr.Contains($fragment)) "Update notice contains '$fragment'"
+    }
+    Assert-Condition (($noticeErr.Split("`n").Count -eq 1) -and (-not $noticeErr.Contains("`r"))) "Update notice is exactly one line"
 
     # Same numeric core (suffix-only difference), source mode, and administrative
     # cache dispatch remain silent.
     Set-Content -LiteralPath $noticeCache -Value "CHECKED_AT=$noticeNow`nVERSION=v1.2.3" -Encoding ASCII
     $silentErrFile = Join-Path $testDir "update_notice_silent_err.txt"
     $p = Start-Process -FilePath $pwshExe -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$ShimPath`"", "grok", "chat") -RedirectStandardError $silentErrFile -NoNewWindow -Wait -PassThru
-    $silentErr = if (Test-Path $silentErrFile) { (Get-Content $silentErrFile -Raw).Trim() } else { "" }
+    $silentErr = Get-CapturedStderr $silentErrFile
     Assert-Condition ([string]::IsNullOrEmpty($silentErr)) "Equal numeric version core emits no notice"
     Set-Content -LiteralPath $noticeStamp -Value "SHA=$mockExeHash`nPATCHSET=v1.2.3`nVERSION=v1.2.3`nMODE=source" -Encoding ASCII
     Set-Content -LiteralPath $noticeCache -Value "CHECKED_AT=$noticeNow`nVERSION=v9.0.0" -Encoding ASCII
     Remove-Item -LiteralPath $silentErrFile -Force -ErrorAction SilentlyContinue
     $p = Start-Process -FilePath $pwshExe -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$ShimPath`"", "grok", "chat") -RedirectStandardError $silentErrFile -NoNewWindow -Wait -PassThru
-    $silentErr = if (Test-Path $silentErrFile) { (Get-Content $silentErrFile -Raw).Trim() } else { "" }
+    $silentErr = Get-CapturedStderr $silentErrFile
     Assert-Condition ([string]::IsNullOrEmpty($silentErr)) "Source mode emits no update notice"
     Set-Content -LiteralPath $noticeStamp -Value "SHA=$mockExeHash`nPATCHSET=v1.2.3`nVERSION=v1.2.3`nMODE=release" -Encoding ASCII
     Remove-Item -LiteralPath $silentErrFile -Force -ErrorAction SilentlyContinue
     $p = Start-Process -FilePath $pwshExe -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$ShimPath`"", "grok", "cache") -RedirectStandardError $silentErrFile -NoNewWindow -Wait -PassThru
-    $silentErr = if (Test-Path $silentErrFile) { (Get-Content $silentErrFile -Raw).Trim() } else { "" }
+    $silentErr = Get-CapturedStderr $silentErrFile
     Assert-Condition ([string]::IsNullOrEmpty($silentErr)) "Administrative cache command emits no update notice"
     $env:GROKGOD_UPDATE_CHECK_DISABLE = "1"
 

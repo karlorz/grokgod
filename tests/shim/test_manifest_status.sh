@@ -162,8 +162,17 @@ write_stamp "SHA=$BIN_SHA
 PATCHSET=v1.2.3
 VERSION=v1.2.3
 MODE=release"
-SIG_NOW="$(sh "$SHIM_SRC" status --json >/dev/null 2>&1 || true)"
-write_manifest "$BIN_SHA" release "$BIN_SHA" "unsigned"
+# Probe the live classifier before creating the manifest, then record exactly
+# what this platform observes. On Linux that value is intentionally
+# `unsupported`; on Darwin it reflects the local codesign result.
+T1_LIVE_JSON="$TMP_DIR/t1-live.json"
+run_json status --json > "$T1_LIVE_JSON" 2>/dev/null || true
+T1_SIGNATURE="$(json_field "$T1_LIVE_JSON" signature)"
+case "$T1_SIGNATURE" in
+  adhoc|signed|unsigned|unsupported) : ;;
+  *) echo "FAIL: unexpected live signature '$T1_SIGNATURE'"; exit 1 ;;
+esac
+write_manifest "$BIN_SHA" release "$BIN_SHA" "$T1_SIGNATURE"
 
 set +e
 HOME="$TEST_HOME" GROKGOD_HOME="$GH" GROKGOD_SRC="$SRC" \
