@@ -388,6 +388,119 @@ sync_installed_grokgod_src() {
   fi
 }
 
+# Helper: sha256 of a file, empty when no tool is available.
+manifest_file_sha256() {
+  _mf_path="$1"
+  [ -f "$_mf_path" ] || { printf ''; return 0; }
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$_mf_path" 2>/dev/null | awk '{print $1}' || true
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$_mf_path" 2>/dev/null | awk '{print $1}' || true
+  else
+    printf ''
+  fi
+}
+
+# Behavior must match the other copy in src/shim/grok-shim.sh
+# (classify_signature): both must answer 'unsupported' off Darwin, or the
+# recorded value can never agree with the observed one.
+manifest_classify_signature() {
+  _ms_path="$1"
+  if [ -z "$_ms_path" ] || [ ! -e "$_ms_path" ]; then
+    printf 'absent'
+    return 0
+  fi
+  if [ "$(uname -s 2>/dev/null || true)" != "Darwin" ] || ! command -v codesign >/dev/null 2>&1; then
+    printf 'unsupported'
+    return 0
+  fi
+  _ms_out="$(codesign -dv "$_ms_path" 2>&1 || true)"
+  case "$_ms_out" in
+    *"code object is not signed at all"*) printf 'unsigned' ;;
+    *"Signature=adhoc"*) printf 'adhoc' ;;
+    *"Authority="*) printf 'signed' ;;
+    *) printf 'unknown' ;;
+  esac
+  return 0
+}
+
+manifest_json_escape() {
+  printf '%s' "${1:-}" | LC_ALL=C sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/[[:cntrl:]]//g' 2>/dev/null || true
+}
+
+# POSIX artifact manifest: records WHAT was installed (owned file, its
+# post-codesign digest, patchset and signature) next to the stamp.
+# Supplementary and best-effort: a manifest failure must never fail an
+# otherwise good install, and the stamp stays authoritative for install.sh.
+# The stamp printf lines stay byte-identical.
+write_artifact_manifest() {
+  _wm_mode="$1"
+  _wm_version="$2"
+  _wm_patchset="$3"
+  _wm_source_sha="$4"
+  _wm_asset_sha="$5"
+
+  # Set only on the successful commit path, so callers never announce a
+  # manifest that was not written (a stale file on disk must not count).
+  ARTIFACT_MANIFEST_WROTE=0
+
+  [ -d "$GROKGOD_HOME" ] || return 0
+
+  _wm_target="$GROKGOD_HOME/bin/grok"
+  _wm_artifact_sha="$(manifest_file_sha256 "$_wm_target")"
+  # An unusable recorded digest is worse than no manifest: status would have
+  # to treat it as corrupt. Skip recording and leave the stamp authoritative.
+  case "$(printf '%s\n' "$_wm_artifact_sha" | LC_ALL=C grep -c '^[0-9a-f]\{64\}$' 2>/dev/null || true)" in
+    1) : ;;
+    *)
+      log_warn "Skipping artifact manifest: no sha256 tool for $GROKGOD_HOME/bin/grok"
+      return 0
+      ;;
+  esac
+  _wm_signature="$(manifest_classify_signature "$_wm_target")"
+  _wm_installed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+  _wm_installed_epoch="$(date -u +%s 2>/dev/null || true)"
+  case "$_wm_installed_epoch" in
+    ''|*[!0-9]*) _wm_installed_epoch=null ;;
+  esac
+
+  _wm_tmp="$GROKGOD_HOME/manifest.json.tmp.$$"
+  if ! {
+    printf '{\n'
+    printf '  "formatVersion": 1,\n'
+    printf '  "platform": "posix",\n'
+    printf '  "installedAt": "%s",\n' "$(manifest_json_escape "$_wm_installed_at")"
+    printf '  "installedAtEpoch": %s,\n' "$_wm_installed_epoch"
+    printf '  "mode": "%s",\n' "$(manifest_json_escape "$_wm_mode")"
+    printf '  "version": "%s",\n' "$(manifest_json_escape "$_wm_version")"
+    printf '  "patchset": "%s",\n' "$(manifest_json_escape "$_wm_patchset")"
+    printf '  "sourceSha": "%s",\n' "$(manifest_json_escape "$_wm_source_sha")"
+    printf '  "assetSha256": "%s",\n' "$(manifest_json_escape "$_wm_asset_sha")"
+    printf '  "artifactSha256": "%s",\n' "$(manifest_json_escape "$_wm_artifact_sha")"
+    printf '  "signature": "%s",\n' "$(manifest_json_escape "$_wm_signature")"
+    printf '  "targetExe": "%s",\n' "$(manifest_json_escape "$_wm_target")"
+    printf '  "grokgodHome": "%s"\n' "$(manifest_json_escape "$GROKGOD_HOME")"
+    printf '}\n'
+  } > "$_wm_tmp" 2>/dev/null; then
+    rm -f "$_wm_tmp" 2>/dev/null || true
+    log_warn "Could not write artifact manifest at $GROKGOD_HOME/manifest.json"
+    return 0
+  fi
+  if ! mv -f "$_wm_tmp" "$GROKGOD_HOME/manifest.json" 2>/dev/null; then
+    rm -f "$_wm_tmp" 2>/dev/null || true
+    log_warn "Could not commit artifact manifest at $GROKGOD_HOME/manifest.json"
+    return 0
+  fi
+  ARTIFACT_MANIFEST_WROTE=1
+  return 0
+}
+
+# True only when write_artifact_manifest actually committed a manifest, so the
+# caller does not announce a record that was never written.
+artifact_manifest_recorded() {
+  [ "${ARTIFACT_MANIFEST_WROTE:-0}" = "1" ]
+}
+
 # Helper: compute SHA of patch set
 compute_patchset_id() {
   patch_files=""
@@ -797,6 +910,8 @@ except Exception:
 
     printf "SHA=%s\nPATCHSET=%s\nVERSION=%s\nMODE=release\n" "$ACTUAL_SHA" "$TAG_NAME" "$TAG_NAME" > "$GROKGOD_HOME/.source-version"
     log_info "Stamped version to $GROKGOD_HOME/.source-version (VERSION=$TAG_NAME, SHA=$ACTUAL_SHA)"
+    write_artifact_manifest release "$TAG_NAME" "$TAG_NAME" "$ACTUAL_SHA" "$ACTUAL_SHA"
+    artifact_manifest_recorded && log_info "Recorded artifact manifest at $GROKGOD_HOME/manifest.json"
   fi
 
   # Resolve runtime scripts
@@ -1050,6 +1165,10 @@ if [ "$MODE" = "source" ]; then
     CURRENT_SHA="$(git -C "$GROK_BUILD_SRC" rev-parse HEAD 2>/dev/null || echo "unknown")"
     printf "SHA=%s\nPATCHSET=%s\nVERSION=%s\nMODE=source\n" "$CURRENT_SHA" "$NOW_PATCHSET" "$CURRENT_SHA" > "$GROKGOD_HOME/.source-version"
     log_info "Stamped version to $GROKGOD_HOME/.source-version (SHA=$CURRENT_SHA, PATCHSET=$NOW_PATCHSET)"
+    # Source stamps record a git commit, not a download digest; the artifact
+    # digest is computed from the installed binary after codesign.
+    write_artifact_manifest source "$CURRENT_SHA" "$NOW_PATCHSET" "$CURRENT_SHA" ""
+    artifact_manifest_recorded && log_info "Recorded artifact manifest at $GROKGOD_HOME/manifest.json"
 
     if [ -n "$VERSION_SHA" ]; then
       UPSTREAM_ORIGIN_MAIN="$(git -C "$GROK_BUILD_SRC" rev-parse origin/main 2>/dev/null || true)"

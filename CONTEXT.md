@@ -171,6 +171,29 @@ Mach-O or run `git apply --check` against a grok-build checkout; drift is
 git-ref compare only.
 _Avoid_: binary prove, strings scan, apply --check in status
 
+**Artifact manifest (POSIX)**:
+`~/.grokgod/manifest.json`, written by `install.sh` at the release and source
+stamp commit points. Records what was installed: `platform: "posix"`,
+`mode`, `version`, `patchset`, `sourceSha`, `assetSha256` (download digest),
+`artifactSha256` (digest of the installed file **after** ad-hoc codesign),
+`signature`, `targetExe`, `grokgodHome`. Supplementary and best-effort;
+`install.sh` never reads it back, so `.source-version` stays authoritative for
+install/update decisions. It carries no owned-file or backup list — POSIX
+uninstall is `rm -rf ~/.grokgod`, and the Windows `install.ps1 -Uninstall`
+acts on `manifest.files`/`manifest.backups`.
+_Avoid_: treating it as the install decision source, adding `files`/`backups`,
+reading a non-`platform: posix` manifest
+
+**Structured status**:
+`grokgod status --json` emits one JSON document derived from the stamp, the
+artifact manifest, the installed binary, and the launcher; exit code encodes
+health (`0` healthy, `1` degraded, `2` corrupt). The human-readable `status`
+report is unchanged and always exits `0`. A release stamp's SHA is the
+pre-codesign download digest and a source stamp's SHA is a git commit, so the
+expected artifact digest comes from the manifest only.
+_Avoid_: comparing the stamp SHA to the installed file, changing human output,
+running the target binary from status
+
 **Overlay-pin status**:
 `grok status` reports overlay-pin=wrapper when the installed `grokgod-run.sh`
 exists. It does not look at any host automation-root overlay file.
