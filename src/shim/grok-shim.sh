@@ -57,7 +57,7 @@ print_registry_persist() {
   ' "$_reg_path" 2>/dev/null || true
 }
 
-
+fast_forward_or_reset_repo() {
   repo="$1"
   upstream="$(git -C "$repo" rev-parse origin/main 2>/dev/null || true)"
   head="$(git -C "$repo" rev-parse HEAD 2>/dev/null || true)"
