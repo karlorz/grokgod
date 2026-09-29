@@ -24,7 +24,40 @@ get_cargo_version() {
   fi
 }
 
-fast_forward_or_reset_repo() {
+# Persist lines come from the machine-readable registry (patches/registry.tsv):
+# `id<TAB>name<TAB>file` rows whose `name` is the status key. The registry lives
+# beside the patches in the installed src tree; an unusable registry (absent,
+# unreadable, older install) simply omits the numbered lines instead of failing
+# or truncating `grok status`.
+resolve_registry_path() {
+  for _candidate in \
+    "${GROKGOD_SRC:-}/patches/registry.tsv" \
+    "$GROKGOD_HOME/src/patches/registry.tsv"
+  do
+    if [ -n "$_candidate" ] && [ -f "$_candidate" ] && [ -r "$_candidate" ]; then
+      printf "%s\n" "$_candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Prints one `  <name>: <status>` line per registered patch, in registry order.
+# Only 4-digit unique ids are accepted, so a truncated, duplicated, or otherwise
+# damaged registry never renders a wrong or repeated patch line; a read failure
+# degrades to printing nothing (status still completes).
+print_registry_persist() {
+  _reg_path="$1"
+  _reg_status="$2"
+  awk -v status="$_reg_status" '
+    BEGIN { FS = "\t" }
+    length($1) == 4 && $1 ~ /^[0-9]+$/ && NF == 3 && !seen[$1]++ {
+      printf "  %s: %s\n", $2, status
+    }
+  ' "$_reg_path" 2>/dev/null || true
+}
+
+
   repo="$1"
   upstream="$(git -C "$repo" rev-parse origin/main 2>/dev/null || true)"
   head="$(git -C "$repo" rev-parse HEAD 2>/dev/null || true)"
@@ -413,22 +446,9 @@ case "$cmd" in
     fi
 
     echo "persist:"
-    echo "  0001-normalize-plugin-skill-join: $patch_status"
-    echo "  0002-plan-mode-extra-writable: $patch_status"
-    echo "  0003-session-persist-single: $patch_status"
-    echo "  0004-disable-builtin-deep-research: $patch_status"
-    echo "  0005-model-tools-deny-allow: $patch_status"
-    echo "  0006-web-search-call-tolerant-parse: $patch_status"
-    echo "  0007-hosted-web-search-splice-decouple: $patch_status"
-    echo "  0008-claude-permissions-import-gate: $patch_status"
-    echo "  0009-deepseek-chat-fix: $patch_status"
-    echo "  0010-deepseek-chat-compact-lenient: $patch_status"
-    echo "  0011-ask-question-timeout-action: $patch_status"
-    echo "  0012-protoc-dependency-output-portable: $patch_status"
-    echo "  0013-same-session-compaction-warning: $patch_status"
-    echo "  0014-deepseek-tool-image-hoist: $patch_status"
-    echo "  0015-cli-model-ephemeral: $patch_status"
-    echo "  0016-credit-limit-switch-model: $patch_status"
+    if registry_path="$(resolve_registry_path)"; then
+      print_registry_persist "$registry_path" "$patch_status"
+    fi
     echo "  overlay-pin: $overlay_status"
     echo "  eval-home: $eval_home_status"
     echo "  weekly-pin: global-default"

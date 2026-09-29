@@ -15,6 +15,17 @@ on `grok update` / `grokgod update`. Current set: `0001-normalize-plugin-skill-j
 `0012-protoc-dependency-output-portable`, `0013-same-session-compaction-warning`.
 _Avoid_: Mach-O hex edit, plugin.json rewrite as the engine fix
 
+**Patch registry**:
+`patches/registry.tsv`, the machine-readable source-patch list: one
+`id<TAB>name<TAB>file` row per patch in apply order, plus `registry-version` and
+`base-sha` metadata. The `grok status` persist block is rendered from it
+(installed copy at `~/.grokgod/src/patches/registry.tsv`), and
+`tests/patches/test_registry.sh` fails closed on duplicate/out-of-order ids,
+missing or empty files, drift from `patches/*.patch` order, or a base SHA that
+disagrees with `install.sh`/`patches/README.md`. Prose stays in
+`patches/README.md` and `docs/patch-inventory.md`.
+_Avoid_: a second hand-maintained patch list, generating per-patch runtime toggles, treating the registry as the installer's apply source (the glob order is)
+
 **Eval home**:
 Wrapper isolation for DeepSeek Harness **Minimal** (`grokgod eval` →
 `--agent minimal`). This is not a 1:1 DeepSeek Harness clone: only Standard

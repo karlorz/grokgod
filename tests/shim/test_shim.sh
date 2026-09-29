@@ -454,27 +454,57 @@ echo "PASS: Test 6"
 echo "Test 7: Status persist inventory block"
 # 7a: applied and wrapper
 printf "SHA=fake\nPATCHSET=v1.0.3\nVERSION=v1.0.3\nMODE=source\n" > "$TEST_GROKGOD_HOME/.source-version"
-mkdir -p "$TEST_GROKGOD_SRC/src"
+mkdir -p "$TEST_GROKGOD_SRC/src" "$TEST_GROKGOD_SRC/patches"
 touch "$TEST_GROKGOD_SRC/src/grokgod-run.sh"
+# The persist block is rendered from the machine-readable patch registry that
+# install.sh copies beside the patches in the installed src tree.
+cp "$REPO_ROOT/patches/registry.tsv" "$TEST_GROKGOD_SRC/patches/registry.tsv"
+
+assert_registry_persist() {
+  want_status="$1"
+  output="$2"
+  count=0
+  while IFS="$(printf '\t')" read -r reg_id reg_name reg_file || [ -n "$reg_id" ]; do
+    case "$reg_id" in
+      [0-9][0-9][0-9][0-9]) : ;;
+      *) continue ;;
+    esac
+    [ -n "$reg_name" ] || continue
+    echo "$output" | grep -q "^  $reg_name: $want_status\$" || {
+      echo "FAIL: status output missing $reg_name $want_status ($output)"; exit 1;
+    }
+    count=$((count + 1))
+  done < "$REPO_ROOT/patches/registry.tsv"
+  # Every registry row must be asserted — a truncated persist block fails here.
+  registry_rows="$(awk -F'\t' '$1 ~ /^[0-9]{4}$/ {n++} END {print n+0}' "$REPO_ROOT/patches/registry.tsv")"
+  [ "$count" -eq "$registry_rows" ] || {
+    echo "FAIL: asserted $count registry rows but the registry has $registry_rows"; exit 1
+  }
+}
+
+# The printed patch lines must equal the registry exactly: same rows, same
+# order, no duplicates, no extra lines between them.
+assert_persist_block_exact() {
+  want_status="$1"
+  output="$2"
+  got="$(printf '%s\n' "$output" | awk '
+    /^persist:$/ { inblock=1; next }
+    inblock && /^  [0-9][0-9][0-9][0-9]-/ { print; next }
+    inblock { exit }')"
+  expect="$(awk -F'\t' -v want="$want_status" '
+    $1 ~ /^[0-9]{4}$/ { print "  " $2 ": " want }' "$REPO_ROOT/patches/registry.tsv")"
+  [ "$got" = "$expect" ] || {
+    echo "FAIL: persist block is not the registry block for '$want_status'" >&2
+    echo "--- expected ---" >&2; printf '%s\n' "$expect" >&2
+    echo "--- got ---" >&2; printf '%s\n' "$got" >&2
+    exit 1
+  }
+}
 
 STATUS_PERSIST_OUT="$(run_shim status)"
 echo "$STATUS_PERSIST_OUT" | grep -q "^persist:" || { echo "FAIL: status output missing persist header ($STATUS_PERSIST_OUT)"; exit 1; }
-echo "$STATUS_PERSIST_OUT" | grep -q "  0001-normalize-plugin-skill-join: applied" || { echo "FAIL: status output missing applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
-echo "$STATUS_PERSIST_OUT" | grep -q "  0002-plan-mode-extra-writable: applied" || { echo "FAIL: status output missing 0002 applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
-echo "$STATUS_PERSIST_OUT" | grep -q "  0003-session-persist-single: applied" || { echo "FAIL: status output missing 0003 applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
-echo "$STATUS_PERSIST_OUT" | grep -q "  0004-disable-builtin-deep-research: applied" || { echo "FAIL: status output missing 0004 applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
-echo "$STATUS_PERSIST_OUT" | grep -q "  0005-model-tools-deny-allow: applied" || { echo "FAIL: status output missing 0005 applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
-echo "$STATUS_PERSIST_OUT" | grep -q "  0006-web-search-call-tolerant-parse: applied" || { echo "FAIL: status output missing 0006 applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
-echo "$STATUS_PERSIST_OUT" | grep -q "  0007-hosted-web-search-splice-decouple: applied" || { echo "FAIL: status output missing 0007 applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
-echo "$STATUS_PERSIST_OUT" | grep -q "  0008-claude-permissions-import-gate: applied" || { echo "FAIL: status output missing 0008 applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
-echo "$STATUS_PERSIST_OUT" | grep -q "  0009-deepseek-chat-fix: applied" || { echo "FAIL: status output missing 0009 applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
-echo "$STATUS_PERSIST_OUT" | grep -q "  0010-deepseek-chat-compact-lenient: applied" || { echo "FAIL: status output missing 0010 applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
-echo "$STATUS_PERSIST_OUT" | grep -q "  0011-ask-question-timeout-action: applied" || { echo "FAIL: status output missing 0011 applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
-echo "$STATUS_PERSIST_OUT" | grep -q "  0012-protoc-dependency-output-portable: applied" || { echo "FAIL: status output missing 0012 applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
-echo "$STATUS_PERSIST_OUT" | grep -q "  0013-same-session-compaction-warning: applied" || { echo "FAIL: status output missing 0013 applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
-echo "$STATUS_PERSIST_OUT" | grep -q "  0014-deepseek-tool-image-hoist: applied" || { echo "FAIL: status output missing 0014 applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
-echo "$STATUS_PERSIST_OUT" | grep -q "  0015-cli-model-ephemeral: applied" || { echo "FAIL: status output missing 0015 applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
-echo "$STATUS_PERSIST_OUT" | grep -q "  0016-credit-limit-switch-model: applied" || { echo "FAIL: status output missing 0016 applied patch ($STATUS_PERSIST_OUT)"; exit 1; }
+assert_registry_persist applied "$STATUS_PERSIST_OUT"
+assert_persist_block_exact applied "$STATUS_PERSIST_OUT"
 echo "$STATUS_PERSIST_OUT" | grep -q "  overlay-pin: wrapper" || { echo "FAIL: status output missing overlay-pin wrapper ($STATUS_PERSIST_OUT)"; exit 1; }
 echo "$STATUS_PERSIST_OUT" | grep -q "  eval-home: missing" || { echo "FAIL: status output missing eval-home missing before touch ($STATUS_PERSIST_OUT)"; exit 1; }
 touch "$TEST_GROKGOD_SRC/src/grokgod-eval.sh"
@@ -486,25 +516,23 @@ echo "$STATUS_PERSIST_OUT" | grep -q "  weekly-pin: global-default" || { echo "F
 rm -f "$TEST_GROKGOD_HOME/.source-version" "$TEST_GROKGOD_SRC/src/grokgod-run.sh" "$TEST_GROKGOD_SRC/src/grokgod-eval.sh"
 STATUS_MISSING_OUT="$(run_shim status)"
 echo "$STATUS_MISSING_OUT" | grep -q "^persist:" || { echo "FAIL: status output missing persist header ($STATUS_MISSING_OUT)"; exit 1; }
-echo "$STATUS_MISSING_OUT" | grep -q "  0001-normalize-plugin-skill-join: missing" || { echo "FAIL: status output missing patch missing state ($STATUS_MISSING_OUT)"; exit 1; }
-echo "$STATUS_MISSING_OUT" | grep -q "  0002-plan-mode-extra-writable: missing" || { echo "FAIL: status output missing 0002 missing state ($STATUS_MISSING_OUT)"; exit 1; }
-echo "$STATUS_MISSING_OUT" | grep -q "  0003-session-persist-single: missing" || { echo "FAIL: status output missing 0003 missing state ($STATUS_MISSING_OUT)"; exit 1; }
-echo "$STATUS_MISSING_OUT" | grep -q "  0004-disable-builtin-deep-research: missing" || { echo "FAIL: status output missing 0004 missing state ($STATUS_MISSING_OUT)"; exit 1; }
-echo "$STATUS_MISSING_OUT" | grep -q "  0005-model-tools-deny-allow: missing" || { echo "FAIL: status output missing 0005 missing state ($STATUS_MISSING_OUT)"; exit 1; }
-echo "$STATUS_MISSING_OUT" | grep -q "  0006-web-search-call-tolerant-parse: missing" || { echo "FAIL: status output missing 0006 missing state ($STATUS_MISSING_OUT)"; exit 1; }
-echo "$STATUS_MISSING_OUT" | grep -q "  0007-hosted-web-search-splice-decouple: missing" || { echo "FAIL: status output missing 0007 missing state ($STATUS_MISSING_OUT)"; exit 1; }
-echo "$STATUS_MISSING_OUT" | grep -q "  0008-claude-permissions-import-gate: missing" || { echo "FAIL: status output missing 0008 missing state ($STATUS_MISSING_OUT)"; exit 1; }
-echo "$STATUS_MISSING_OUT" | grep -q "  0009-deepseek-chat-fix: missing" || { echo "FAIL: status output missing 0009 missing state ($STATUS_MISSING_OUT)"; exit 1; }
-echo "$STATUS_MISSING_OUT" | grep -q "  0010-deepseek-chat-compact-lenient: missing" || { echo "FAIL: status output missing 0010 missing state ($STATUS_MISSING_OUT)"; exit 1; }
-echo "$STATUS_MISSING_OUT" | grep -q "  0011-ask-question-timeout-action: missing" || { echo "FAIL: status output missing 0011 missing state ($STATUS_MISSING_OUT)"; exit 1; }
-echo "$STATUS_MISSING_OUT" | grep -q "  0012-protoc-dependency-output-portable: missing" || { echo "FAIL: status output missing 0012 missing state ($STATUS_MISSING_OUT)"; exit 1; }
-echo "$STATUS_MISSING_OUT" | grep -q "  0013-same-session-compaction-warning: missing" || { echo "FAIL: status output missing 0013 missing state ($STATUS_MISSING_OUT)"; exit 1; }
-echo "$STATUS_MISSING_OUT" | grep -q "  0014-deepseek-tool-image-hoist: missing" || { echo "FAIL: status output missing 0014 missing state ($STATUS_MISSING_OUT)"; exit 1; }
-echo "$STATUS_MISSING_OUT" | grep -q "  0015-cli-model-ephemeral: missing" || { echo "FAIL: status output missing 0015 missing state ($STATUS_MISSING_OUT)"; exit 1; }
-echo "$STATUS_MISSING_OUT" | grep -q "  0016-credit-limit-switch-model: missing" || { echo "FAIL: status output missing 0016 missing state ($STATUS_MISSING_OUT)"; exit 1; }
+assert_registry_persist missing "$STATUS_MISSING_OUT"
+assert_persist_block_exact missing "$STATUS_MISSING_OUT"
 echo "$STATUS_MISSING_OUT" | grep -q "  overlay-pin: missing" || { echo "FAIL: status output missing overlay-pin missing state ($STATUS_MISSING_OUT)"; exit 1; }
 echo "$STATUS_MISSING_OUT" | grep -q "  eval-home: missing" || { echo "FAIL: status output missing eval-home missing state ($STATUS_MISSING_OUT)"; exit 1; }
 echo "$STATUS_MISSING_OUT" | grep -q "  weekly-pin: global-default" || { echo "FAIL: status output missing weekly-pin ($STATUS_MISSING_OUT)"; exit 1; }
+
+# 7c: registry absent — persist block must still print its non-patch lines and
+# must not emit a partial or stale numbered list.
+mv "$TEST_GROKGOD_SRC/patches/registry.tsv" "$TEST_GROKGOD_SRC/patches/registry.tsv.away"
+printf "SHA=fake\nPATCHSET=v1.0.3\nVERSION=v1.0.3\nMODE=source\n" > "$TEST_GROKGOD_HOME/.source-version"
+STATUS_NO_REGISTRY_OUT="$(run_shim status)"
+echo "$STATUS_NO_REGISTRY_OUT" | grep -q "^persist:" || { echo "FAIL: status output missing persist header without registry ($STATUS_NO_REGISTRY_OUT)"; exit 1; }
+if echo "$STATUS_NO_REGISTRY_OUT" | grep -q "  0001-normalize-plugin-skill-join:"; then
+  echo "FAIL: status printed registry lines without a registry ($STATUS_NO_REGISTRY_OUT)"; exit 1
+fi
+echo "$STATUS_NO_REGISTRY_OUT" | grep -q "  overlay-pin:" || { echo "FAIL: non-registry persist lines must survive ($STATUS_NO_REGISTRY_OUT)"; exit 1; }
+mv "$TEST_GROKGOD_SRC/patches/registry.tsv.away" "$TEST_GROKGOD_SRC/patches/registry.tsv"
 echo "PASS: Test 7"
 
 echo "Test 8: argv0 sessions — grok passthrough, grokgod wrapper"
