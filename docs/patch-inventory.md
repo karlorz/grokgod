@@ -2,7 +2,10 @@
 
 ClawGod-style tracking of what grokgod **must** re-apply after `grok update`,
 versus wrapper behavior, versus work we will not keep. This file is the
-inventory. Persist status is exposed via the `grok status` persist block
+inventory. The machine-readable patch list lives in `patches/registry.tsv`
+(id/name/file plus the base SHA), and the `grok status` persist block is
+rendered from it; `tests/patches/test_registry.sh` enforces the two stay in
+sync. Persist status is exposed via the `grok status` persist block
 (`0001-normalize-plugin-skill-join: applied|missing`, `0002-plan-mode-extra-writable: applied|missing`, `0003-session-persist-single: applied|missing`, `0004-disable-builtin-deep-research: applied|missing`, `0005-model-tools-deny-allow: applied|missing`, `0006-web-search-call-tolerant-parse: applied|missing`, `0007-hosted-web-search-splice-decouple: applied|missing`, `0008-claude-permissions-import-gate: applied|missing`, `0009-deepseek-chat-fix: applied|missing`, `0010-deepseek-chat-compact-lenient: applied|missing`, `0011-ask-question-timeout-action: applied|missing`, `0012-protoc-dependency-output-portable: applied|missing`, `0013-same-session-compaction-warning: applied|missing`, `0014-deepseek-tool-image-hoist: applied|missing`, `0015-cli-model-ephemeral: applied|missing`, `0016-credit-limit-switch-model: applied|missing`, `overlay-pin: wrapper|missing`, `eval-home: wrapper|missing`).
 
 ## Keep — grok-build source patch (re-apply on update)

@@ -858,6 +858,12 @@ except Exception:
         mkdir -p "$GROKGOD_HOME/src/examples"
         curl -fsSL "$RAW_BASE/examples/orca-pin.toml" -o "$GROKGOD_HOME/src/examples/orca-pin.toml" 2>/dev/null || \
         curl -fsSL "https://raw.githubusercontent.com/${REPO_PATH}/main/examples/orca-pin.toml" -o "$GROKGOD_HOME/src/examples/orca-pin.toml" 2>/dev/null || true
+        # Patch registry drives the shim persist block; optional (status degrades
+        # to the non-patch persist lines when it cannot be fetched).
+        mkdir -p "$GROKGOD_HOME/src/patches"
+        curl -fsSL "$RAW_BASE/patches/registry.tsv" -o "$GROKGOD_HOME/src/patches/registry.tsv" 2>/dev/null || \
+        curl -fsSL "https://raw.githubusercontent.com/${REPO_PATH}/main/patches/registry.tsv" -o "$GROKGOD_HOME/src/patches/registry.tsv" 2>/dev/null || \
+        rm -f "$GROKGOD_HOME/src/patches/registry.tsv"
         chmod +x "$GROKGOD_HOME/src/src/shim/grok-shim.sh" "$GROKGOD_HOME/src/src/grokgod-cache.sh" "$GROKGOD_HOME/src/src/grokgod-run.sh" "$GROKGOD_HOME/src/src/grokgod-pin.sh" "$GROKGOD_HOME/src/src/grokgod-sessions.sh" "$GROKGOD_HOME/src/src/grokgod-eval.sh" "$GROKGOD_HOME/src/src/grokgod-eval-health.sh"
         GROKGOD_SRC="$GROKGOD_HOME/src"
         log_info "Downloaded runtime scripts to $GROKGOD_HOME/src"
@@ -1075,6 +1081,10 @@ if [ "$MODE" = "source" ]; then
     done
     if [ -f "$SCRIPT_DIR/patches/README.md" ]; then
       cp "$SCRIPT_DIR/patches/README.md" "$GROKGOD_HOME/src/patches/README.md"
+    fi
+    # Registry drives the shim persist block; the installed src tree needs it.
+    if [ -f "$SCRIPT_DIR/patches/registry.tsv" ]; then
+      cp "$SCRIPT_DIR/patches/registry.tsv" "$GROKGOD_HOME/src/patches/registry.tsv"
     fi
 
     mkdir -p "$GROKGOD_HOME/src/src" "$GROKGOD_HOME/src/src/shim"

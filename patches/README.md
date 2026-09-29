@@ -6,6 +6,12 @@ DeepSeek **benchmark isolation** is not a numbered patch: use wrapper
 `grokgod eval` (`src/grokgod-eval.sh`, persist `eval-home`). Wire-format
 DeepSeek fixes remain `0009` and `0010`.
 
+`registry.tsv` in this directory is the machine-readable list of the patches
+below (`id<TAB>name<TAB>file` plus `registry-version`/`base-sha` metadata). The
+`grok status` persist block is rendered from it, and
+`tests/patches/test_registry.sh` fails closed when it drifts from the patch
+files, from the order below, or from `PINNED_BASE_SHA`.
+
 ## Patches
 
 - `0001-normalize-plugin-skill-join.patch`: Normalizes manifest path joins by filtering out `Component::CurDir` (`.`) components so relative paths like `"./skills/"` resolve identically to `"skills"`.

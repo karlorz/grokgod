@@ -132,7 +132,9 @@ fetch and checkout to re-apply / restore launchers on the current tree.
 Patch authorship base SHA: `07e35a3dfeed2f200d319ef6c893b5ea286d9a51` (`patches/README.md`). Source mode still tracks moving `origin/main`; this authorship pin is not the source-mode update target. Session-start
 checks: [docs/RUNBOOK-session-start.md](docs/RUNBOOK-session-start.md) (auto-load
 via [AGENTS.md](AGENTS.md)). Persist inventory (keep vs phase-out):
-[docs/patch-inventory.md](docs/patch-inventory.md).
+[docs/patch-inventory.md](docs/patch-inventory.md). Machine-readable patch list:
+[`patches/registry.tsv`](patches/registry.tsv) — it drives the `grok status`
+persist block and is validated by `tests/patches/test_registry.sh`.
 
 ## grokgod eval (DeepSeek benchmark home)
 

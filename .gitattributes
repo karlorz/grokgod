@@ -1,1 +1,2 @@
 patches/*.patch text eol=lf
+patches/registry.tsv text eol=lf
