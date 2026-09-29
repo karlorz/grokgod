@@ -676,28 +676,7 @@ manifest_file_sha256() {
   fi
 }
 
-# Behavior must match the other copy in src/shim/grok-shim.sh
-# (classify_signature): both must answer 'unsupported' off Darwin, or the
-# recorded value can never agree with the observed one.
-manifest_classify_signature() {
-  _ms_path="$1"
-  if [ -z "$_ms_path" ] || [ ! -e "$_ms_path" ]; then
-    printf 'absent'
-    return 0
-  fi
-  if [ "$(uname -s 2>/dev/null || true)" != "Darwin" ] || ! command -v codesign >/dev/null 2>&1; then
-    printf 'unsupported'
-    return 0
-  fi
-  _ms_out="$(codesign -dv "$_ms_path" 2>&1 || true)"
-  case "$_ms_out" in
-    *"code object is not signed at all"*) printf 'unsigned' ;;
-    *"Signature=adhoc"*) printf 'adhoc' ;;
-    *"Authority="*) printf 'signed' ;;
-    *) printf 'unknown' ;;
-  esac
-  return 0
-}
+{{GROKGOD:shared/classify-signature.sh#manifest_classify_signature}}
 
 manifest_json_escape() {
   printf '%s' "${1:-}" | LC_ALL=C sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/[[:cntrl:]]//g' 2>/dev/null || true

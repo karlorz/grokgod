@@ -40,6 +40,7 @@ hand-maintained.
 src/installer/
   constants.json                 # SHAs, repo slug, asset names — one home
   shared/fast-forward-repo.sh    # the grok-build ff/reset classifier
+  shared/classify-signature.sh   # the codesign signature classifier
   shared/ps-engine-probe.cmd.part# PowerShell engine selection for .cmd launchers
   templates/*.in                 # per-target text with {{GROKGOD:...}} holes
   build.mjs                      # compiles the committed artifacts

@@ -318,12 +318,18 @@ write_update_cache() {
 
 maybe_notice_and_refresh_update() {
   [ "${GROKGOD_UPDATE_CHECK_DISABLE:-0}" != "1" ] || return 0
-  [ "$(basename "$0")" = "grok" ] || return 0
+  [ "${0##*/}" = "grok" ] || return 0
 
   stamp="$GROKGOD_HOME/.source-version"
   [ -f "$stamp" ] || return 0
-  installed_mode="$(grep '^MODE=' "$stamp" 2>/dev/null | cut -d= -f2- || true)"
-  installed_version="$(grep '^VERSION=' "$stamp" 2>/dev/null | cut -d= -f2- || true)"
+  installed_mode=""
+  installed_version=""
+  while IFS='=' read -r key value || [ -n "$key" ]; do
+    case "$key" in
+      MODE) installed_mode="$value" ;;
+      VERSION) installed_version="$value" ;;
+    esac
+  done < "$stamp"
   [ "$installed_mode" = "release" ] || return 0
   is_release_version "$installed_version" || return 0
 
@@ -331,11 +337,18 @@ maybe_notice_and_refresh_update() {
   checked_at=""
   cached_version=""
   if [ -f "$update_cache" ]; then
-    checked_at="$(grep '^CHECKED_AT=' "$update_cache" 2>/dev/null | cut -d= -f2- || true)"
-    cached_version="$(grep '^VERSION=' "$update_cache" 2>/dev/null | cut -d= -f2- || true)"
+    while IFS='=' read -r key value || [ -n "$key" ]; do
+      case "$key" in
+        CHECKED_AT) checked_at="$value" ;;
+        VERSION) cached_version="$value" ;;
+      esac
+    done < "$update_cache"
   fi
 
-  if is_release_version "$cached_version" && version_core_greater "$cached_version" "$installed_version"; then
+  # Equal tags are the common warm-cache path; skip the core comparison.
+  if [ "$cached_version" != "$installed_version" ] &&
+    is_release_version "$cached_version" &&
+    version_core_greater "$cached_version" "$installed_version"; then
     printf '%s\n' "[grokgod] $cached_version available (installed: $installed_version) — run 'grok update' to upgrade" >&2
   fi
 
@@ -521,10 +534,9 @@ is_readable_regular_file() {
   [ -f "${1:-}" ] && [ -r "${1:-}" ]
 }
 
-# Behavior must match the other copy in install.sh (classify_signature).
 classify_signature() {
-  JSON_SIG_PATH="${1:-}"
-  if [ -z "$JSON_SIG_PATH" ] || [ ! -e "$JSON_SIG_PATH" ]; then
+  _sig_path="${1:-}"
+  if [ -z "$_sig_path" ] || [ ! -e "$_sig_path" ]; then
     printf 'absent'
     return 0
   fi
@@ -532,8 +544,8 @@ classify_signature() {
     printf 'unsupported'
     return 0
   fi
-  JSON_SIG_OUT="$(codesign -dv "$JSON_SIG_PATH" 2>&1 || true)"
-  case "$JSON_SIG_OUT" in
+  _sig_out="$(codesign -dv "$_sig_path" 2>&1 || true)"
+  case "$_sig_out" in
     *"code object is not signed at all"*) printf 'unsigned' ;;
     *"Signature=adhoc"*) printf 'adhoc' ;;
     *"Authority="*) printf 'signed' ;;

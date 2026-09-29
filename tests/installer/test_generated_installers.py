@@ -141,23 +141,25 @@ def main():
               "r", encoding="utf-8") as handle:
         shim_text = handle.read()
 
-    shared_part = os.path.join(INSTALLER, "shared", "fast-forward-repo.sh")
-    with open(shared_part, "r", encoding="utf-8") as handle:
-        shared_text = handle.read()
-    lines = shared_text.split("\n")
-    end = lines.index("#@build:end-header")
-    shared_body = "\n".join(lines[end + 1:-1]).replace(
-        "{{GROKGOD:functionName}}", "SHARED"
-    )
+    def shared_body(name):
+        """Header-stripped, name-generic body of one src/installer/shared part."""
+        with open(os.path.join(INSTALLER, "shared", name), "r", encoding="utf-8") as handle:
+            text = handle.read()
+        lines = text.split("\n")
+        end = lines.index("#@build:end-header")
+        return "\n".join(lines[end + 1:-1]).replace(
+            "{{GROKGOD:functionName}}", "SHARED"
+        )
 
+    ff_body = shared_body("fast-forward-repo.sh")
     check(
         function_body(install_sh_text, "fast_forward_or_reset_grokgod_src() {")
-        == function_body(shared_body, "SHARED() {"),
+        == function_body(ff_body, "SHARED() {"),
         "install.sh fast-forward body is the shared source (lossless merge)",
     )
     check(
         function_body(shim_text, "fast_forward_or_reset_repo() {")
-        == function_body(shared_body, "SHARED() {"),
+        == function_body(ff_body, "SHARED() {"),
         "grok-shim.sh fast-forward body is the shared source (lossless merge)",
     )
     check(
@@ -165,12 +167,34 @@ def main():
         == function_body(shim_text, "fast_forward_or_reset_repo() {"),
         "install.sh and grok-shim.sh still agree on fast-forward behavior",
     )
+
+    sig_body = shared_body("classify-signature.sh")
+    check(
+        function_body(install_sh_text, "manifest_classify_signature() {")
+        == function_body(sig_body, "SHARED() {"),
+        "install.sh signature body is the shared source (lossless merge)",
+    )
+    check(
+        function_body(shim_text, "classify_signature() {")
+        == function_body(sig_body, "SHARED() {"),
+        "grok-shim.sh signature body is the shared source (lossless merge)",
+    )
+    check(
+        function_body(install_sh_text, "manifest_classify_signature() {")
+        == function_body(shim_text, "classify_signature() {"),
+        "install.sh and grok-shim.sh still agree on signature classification",
+    )
     check(
         "Behavior must match the other copy in src/shim/grok-shim.sh (fast_forward_or_reset_repo)"
         not in install_sh_text
         and "Behavior must match the other copy in install.sh (sync_installed_grokgod_src)"
         not in shim_text,
         "the hand-sync comments above the fast-forward copies are gone",
+    )
+    check(
+        "Behavior must match the other copy" not in install_sh_text
+        and "Behavior must match the other copy" not in shim_text,
+        "the hand-sync comments above the signature copies are gone",
     )
 
     # --- 6. constants come from constants.json ---------------------------

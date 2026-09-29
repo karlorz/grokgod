@@ -798,12 +798,9 @@ manifest_file_sha256() {
   fi
 }
 
-# Behavior must match the other copy in src/shim/grok-shim.sh
-# (classify_signature): both must answer 'unsupported' off Darwin, or the
-# recorded value can never agree with the observed one.
 manifest_classify_signature() {
-  _ms_path="$1"
-  if [ -z "$_ms_path" ] || [ ! -e "$_ms_path" ]; then
+  _sig_path="${1:-}"
+  if [ -z "$_sig_path" ] || [ ! -e "$_sig_path" ]; then
     printf 'absent'
     return 0
   fi
@@ -811,8 +808,8 @@ manifest_classify_signature() {
     printf 'unsupported'
     return 0
   fi
-  _ms_out="$(codesign -dv "$_ms_path" 2>&1 || true)"
-  case "$_ms_out" in
+  _sig_out="$(codesign -dv "$_sig_path" 2>&1 || true)"
+  case "$_sig_out" in
     *"code object is not signed at all"*) printf 'unsigned' ;;
     *"Signature=adhoc"*) printf 'adhoc' ;;
     *"Authority="*) printf 'signed' ;;

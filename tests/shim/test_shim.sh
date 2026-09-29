@@ -99,9 +99,9 @@ set -eu
 EXPECTED_NOTICE="[grokgod] v2.0.0-rc.1 available (installed: v1.2.3-preview.1) — run 'grok update' to upgrade"
 [ "$NOTICE_ERR" = "$EXPECTED_NOTICE" ] || { echo "FAIL: unexpected update notice ($NOTICE_ERR)"; exit 1; }
 
-# Equal/older numeric cores, source mode, malformed stamps/caches, and the test
-# disable hook must all remain silent.
-for CACHED_VERSION in v1.2.3 v1.2.2 v0.99.999; do
+# Equal/older numeric cores (and the exact-equal tag), source mode, malformed
+# stamps/caches, and the test disable hook must all remain silent.
+for CACHED_VERSION in v1.2.3 v1.2.3-preview.1 v1.2.2 v0.99.999; do
   printf "CHECKED_AT=%s\nVERSION=%s\n" "$NOW_EPOCH" "$CACHED_VERSION" > "$TEST_GROKGOD_HOME/.update-check"
   SILENT_ERR="$(run_grok_launcher hello 2>&1 >/dev/null)"
   [ -z "$SILENT_ERR" ] || { echo "FAIL: equal/older version emitted notice ($SILENT_ERR)"; exit 1; }

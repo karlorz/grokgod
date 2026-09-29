@@ -17,6 +17,7 @@ Only the duplication that existed was extracted, and nothing else:
 | Canonical source | Replaces |
 | --- | --- |
 | `shared/fast-forward-repo.sh` | the 123-line `fast_forward_or_reset_*` classifier, previously copied into `install.sh` and `src/shim/grok-shim.sh` (bodies were already byte-identical; only the function name differed, and the name is still injected per caller) |
+| `shared/classify-signature.sh` | the 19-line `codesign -dv` classifier, previously copied into `install.sh` and `src/shim/grok-shim.sh` (same shape as fast-forward: one body, name injected per caller) |
 | `shared/ps-engine-probe.cmd.part` | the 452-byte PowerShell engine probe, previously copied into two `.cmd` templates and `LauncherHelpers.ps1` |
 | `constants.json` | `PINNED_BASE_SHA`, the repo slug, the Windows asset name, and the compat-daily issue title, each previously hardcoded in one or more artifacts |
 
@@ -31,9 +32,9 @@ whose re-render is not byte-identical to the artifact it came from.
 Regenerating is not bit-for-bit on the first commit, and that is the point:
 
 - a `GENERATED FILE` banner is added to `install.sh` and `install.ps1`;
-- the two `Behavior must match the other copy ...` comments above the
-  fast-forward copies are deleted, because the build now makes the two copies
-  the same text and the warning would be false.
+- the `Behavior must match the other copy ...` comments above the
+  fast-forward and signature copies are deleted, because the build now makes
+  the copies the same text and the warning would be false.
 
 No executable line changed. `tests/install/test_install.sh`,
 `tests/install/test_install_windows.py`, `tests/shim/test_shim_windows.py` and

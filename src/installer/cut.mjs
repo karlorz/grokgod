@@ -33,13 +33,20 @@ const constants = JSON.parse(readFileSync(join(HERE, 'constants.json'), 'utf8'))
 
 const PS_PROBE_MARKER = '{{GROKGOD:ps-engine-probe.cmd}}';
 
-// The two copies of the fast-forward classifier carried a "keep this in sync"
-// comment. The build makes the copies one text, so the warning would be false;
-// the cut drops it. Running the cut again finds it already gone.
+// The duplicated copies carried a "keep this in sync" comment. The build makes
+// the copies one text, so the warning would be false; the cut drops it. Running
+// the cut again finds it already gone.
 const INSTALL_SH_SYNC_COMMENT =
   '# Behavior must match the other copy in src/shim/grok-shim.sh (fast_forward_or_reset_repo)';
 const SHIM_SYNC_COMMENT =
   '# Behavior must match the other copy in install.sh (sync_installed_grokgod_src)';
+const INSTALL_SH_SIG_SYNC_COMMENTS = [
+  '# Behavior must match the other copy in src/shim/grok-shim.sh',
+  "# (classify_signature): both must answer 'unsupported' off Darwin, or the",
+  '# recorded value can never agree with the observed one.',
+];
+const SHIM_SIG_SYNC_COMMENT =
+  '# Behavior must match the other copy in install.sh (classify_signature).';
 
 /** Offset of the closing brace of the shell/PowerShell function at `start`. */
 function functionSpan(text, signature) {
@@ -73,17 +80,22 @@ function dropLine(text, line) {
   return text.replace(`${line}\n`, '');
 }
 
+/** Delete each of a run of whole lines, idempotently. */
+function dropLines(text, lines) {
+  return lines.reduce((current, line) => dropLine(current, line), text);
+}
+
 /**
  * Replace a whole function with an include marker.
  *
  * The marker expands to a body that ends in `}` with no trailing newline, so
  * the template supplies the blank lines around it.
  */
-function cutFunction(text, signature, functionName) {
+function cutFunction(text, signature, functionName, sharedFile) {
   const [start, end] = functionSpan(text, signature);
   const commentStart = text.lastIndexOf('\n', start) + 1;
   return `${text.slice(0, commentStart)}` +
-    `{{GROKGOD:shared/fast-forward-repo.sh#${functionName}}}` +
+    `{{GROKGOD:shared/${sharedFile}#${functionName}}}` +
     text.slice(end);
 }
 
@@ -97,9 +109,12 @@ const CUTS = [
     output: 'templates/install.sh.in',
     input: 'install.sh',
     cut(original, label) {
-      const expected = dropLine(original, INSTALL_SH_SYNC_COMMENT);
+      let expected = dropLine(original, INSTALL_SH_SYNC_COMMENT);
+      expected = dropLines(expected, INSTALL_SH_SIG_SYNC_COMMENTS);
       let text = cutFunction(expected, 'fast_forward_or_reset_grokgod_src() {',
-        'fast_forward_or_reset_grokgod_src');
+        'fast_forward_or_reset_grokgod_src', 'fast-forward-repo.sh');
+      text = cutFunction(text, 'manifest_classify_signature() {',
+        'manifest_classify_signature', 'classify-signature.sh');
       text = replaceOnce(text, `COMPAT_ISSUE_TITLE="${constants.compatIssueTitle}"`,
         'COMPAT_ISSUE_TITLE="{{GROKGOD:compatIssueTitle}}"', label);
       text = replaceOnce(text, `https://github.com/${constants.githubRepoSlug}/issues`,
@@ -131,8 +146,12 @@ const CUTS = [
     output: 'templates/grok-shim.sh.in',
     input: 'src/shim/grok-shim.sh',
     cut(original, label) {
-      const expected = dropLine(original, SHIM_SYNC_COMMENT);
-      let text = cutFunction(expected, 'fast_forward_or_reset_repo() {', 'fast_forward_or_reset_repo');
+      let expected = dropLine(original, SHIM_SYNC_COMMENT);
+      expected = dropLine(expected, SHIM_SIG_SYNC_COMMENT);
+      let text = cutFunction(expected, 'fast_forward_or_reset_repo() {', 'fast_forward_or_reset_repo',
+        'fast-forward-repo.sh');
+      text = cutFunction(text, 'classify_signature() {', 'classify_signature',
+        'classify-signature.sh');
       text = replaceOnce(text,
         `https://api.github.com/repos/${constants.githubRepoSlug}/releases/latest`,
         'https://api.github.com/repos/{{GROKGOD:apiRepoSlug}}/releases/latest', label);

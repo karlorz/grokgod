@@ -35,8 +35,8 @@ const PLACEHOLDER_RE = /\{\{GROKGOD:[^}]+\}\}/g;
 const STRIP_HEADER_BEGIN = '#@build:strip-header';
 const STRIP_HEADER_END = '#@build:end-header';
 const FUNCTION_NAME_MARKER = '{{GROKGOD:functionName}}';
-const FAST_FORWARD_INCLUDE_RE =
-  /\{\{GROKGOD:shared\/fast-forward-repo\.sh#([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
+const SHARED_INCLUDE_RE =
+  /\{\{GROKGOD:shared\/([A-Za-z0-9._-]+)#([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
 const PS_PROBE_MARKER = '{{GROKGOD:ps-engine-probe.cmd}}';
 
 /**
@@ -81,12 +81,12 @@ const CONSTANT_VALUES = {
   apiRepoSlug: constants.githubRepoSlug,
 };
 
-function renderFastForward(functionName) {
-  const body = readPart('fast-forward-repo.sh');
+function renderSharedPart(file, functionName) {
+  const body = readPart(file);
   const occurrences = body.split(FUNCTION_NAME_MARKER).length - 1;
   if (occurrences !== 1) {
     throw new Error(
-      `shared/fast-forward-repo.sh: expected one ${FUNCTION_NAME_MARKER}, found ${occurrences}`,
+      `shared/${file}: expected one ${FUNCTION_NAME_MARKER}, found ${occurrences}`,
     );
   }
   // The part is `{{GROKGOD:functionName}}() { ... }`; only the name is injected.
@@ -95,8 +95,8 @@ function renderFastForward(functionName) {
 
 export function renderTemplate(template, label) {
   let output = template.replace(
-    FAST_FORWARD_INCLUDE_RE,
-    (_match, name) => renderFastForward(name),
+    SHARED_INCLUDE_RE,
+    (_match, file, name) => renderSharedPart(file, name),
   );
   output = output.split(PS_PROBE_MARKER).join(readPart('ps-engine-probe.cmd.part'));
 
