@@ -213,12 +213,12 @@ assert d["launcherPath"].endswith("/.local/bin/grok"), d["launcherPath"]
 assert d["patchedBinaryPath"].endswith("/bin/grok"), d["patchedBinaryPath"]
 assert d["installedAt"] == "2026-09-29T00:00:00Z", d["installedAt"]
 assert d["healthDetails"] == [], d["healthDetails"]
-assert len(d["persist"]) == 20, len(d["persist"])
+assert len(d["persist"]) == 21, len(d["persist"])
 assert d["persist"][0].startswith("0001-normalize-plugin-skill-join: applied"), d["persist"][0]
-assert d["persist"][16] == "overlay-pin: missing", d["persist"][16]
-assert d["persist"][17] == "eval-home: missing", d["persist"][17]
-assert d["persist"][18] == "weekly-pin: global-default", d["persist"][18]
-assert d["persist"][19] == "orca-pin: absent", d["persist"][19]
+assert d["persist"][-4] == "overlay-pin: missing", d["persist"][-4]
+assert d["persist"][-3] == "eval-home: missing", d["persist"][-3]
+assert d["persist"][-2] == "weekly-pin: global-default", d["persist"][-2]
+assert d["persist"][-1] == "orca-pin: absent", d["persist"][-1]
 assert d["sourceDrift"] == "unknown", d["sourceDrift"]
 assert d["sourceDriftInstalled"] is None, d["sourceDriftInstalled"]
 assert d["sourceDriftUpstream"] is None, d["sourceDriftUpstream"]
@@ -230,7 +230,7 @@ python3 - "$TMP_DIR/t1b.json" << 'PY' || { echo "FAIL: persist entries do not fo
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["patchStatus"] == "missing", d["patchStatus"]
-assert all(e.endswith(": missing") for e in d["persist"][:16]), d["persist"][:16]
+assert all(e.endswith(": missing") for e in d["persist"][:-4]), d["persist"][:-4]
 PY
 # overlay/eval/orca-pin entries reflect the filesystem, like the human report.
 touch "$SRC/src/grokgod-run.sh" "$SRC/src/grokgod-eval.sh"
@@ -240,9 +240,9 @@ run_json status --json > "$TMP_DIR/t1c.json"
 python3 - "$TMP_DIR/t1c.json" << 'PY' || { echo "FAIL: persist overlay entries do not follow the filesystem"; exit 1; }
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert d["persist"][16] == "overlay-pin: wrapper", d["persist"][16]
-assert d["persist"][17] == "eval-home: wrapper", d["persist"][17]
-assert d["persist"][19] == "orca-pin: present, not applied", d["persist"][19]
+assert d["persist"][-4] == "overlay-pin: wrapper", d["persist"][-4]
+assert d["persist"][-3] == "eval-home: wrapper", d["persist"][-3]
+assert d["persist"][-1] == "orca-pin: present, not applied", d["persist"][-1]
 PY
 rm -f "$SRC/src/grokgod-run.sh" "$SRC/src/grokgod-eval.sh" "$GH/pin/orca-pin.toml"
 write_stamp "SHA=$BIN_SHA
@@ -309,6 +309,7 @@ grep -q "^~/.local/bin/grok is grokgod shim: yes$" "$TMP_DIR/t2.txt" || { echo "
 grep -q "^free disk: " "$TMP_DIR/t2.txt" || { echo "FAIL: human status lost free disk line"; exit 1; }
 grep -q "^persist:$" "$TMP_DIR/t2.txt" || { echo "FAIL: human status lost persist header"; exit 1; }
 grep -q "^  0016-credit-limit-switch-model: applied$" "$TMP_DIR/t2.txt" || { echo "FAIL: human status lost 0016 line"; exit 1; }
+grep -q "^  0017-welcome-logo-chat-accent: applied$" "$TMP_DIR/t2.txt" || { echo "FAIL: human status lost 0017 line"; exit 1; }
 grep -q "^  overlay-pin: missing$" "$TMP_DIR/t2.txt" || { echo "FAIL: human status lost overlay-pin line"; exit 1; }
 grep -q "^  weekly-pin: global-default$" "$TMP_DIR/t2.txt" || { echo "FAIL: human status lost weekly-pin line"; exit 1; }
 grep -q "^source-drift: unknown$" "$TMP_DIR/t2.txt" || { echo "FAIL: human status lost source-drift line"; exit 1; }

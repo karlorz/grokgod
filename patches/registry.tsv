@@ -30,3 +30,4 @@ base-sha	97f190f644ae1ba07fd6ee185ef54c650e142666
 0014	0014-deepseek-tool-image-hoist	patches/0014-deepseek-tool-image-hoist.patch
 0015	0015-cli-model-ephemeral	patches/0015-cli-model-ephemeral.patch
 0016	0016-credit-limit-switch-model	patches/0016-credit-limit-switch-model.patch
+0017	0017-welcome-logo-chat-accent	patches/0017-welcome-logo-chat-accent.patch

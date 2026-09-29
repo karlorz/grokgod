@@ -1,0 +1,25 @@
+diff --git a/crates/codegen/xai-grok-pager/src/views/welcome/logo.rs b/crates/codegen/xai-grok-pager/src/views/welcome/logo.rs
+index 0ffb88d8..7e5dff3b 100644
+--- a/crates/codegen/xai-grok-pager/src/views/welcome/logo.rs
++++ b/crates/codegen/xai-grok-pager/src/views/welcome/logo.rs
+@@ -122,7 +122,7 @@ fn shine_opacity(diag: f32, secs: f32) -> f32 {
+     const BAND: f32 = 0.38; // half-width of the shine band; wider means a more gradual falloff
+     const CYCLE: f32 = 4.0; // seconds for one sweep plus its rest
+     const SWEEP_FRAC: f32 = 0.32; // portion of the cycle spent sweeping (~1.3s glint, rest idles)
+-    const SHINE: f32 = 0.33; // peak shine strength
++    const SHINE: f32 = 1.0; // peak shine strength: full text-primary white so the sweep reads on the magenta rest
+     const PULSE: f32 = 0.06; // global breathing amount
+     const PULSE_SECS: f32 = 5.0; // breathing period
+ 
+@@ -151,9 +151,9 @@ fn render_into(area: Rect, buf: &mut Buffer, theme: &Theme, logo: &str) {
+         .max(1) as f32;
+     let secs = anim_phase_secs();
+ 
+-    // Blend each glyph from the resting gray toward the bright text color by its shine opacity, so a sheen sweeps across the braille art
++    // Blend each glyph from the chat-assistant accent toward the bright text color by its shine opacity, so a sheen sweeps across the braille art
+     // Adjacent glyphs that land on the same blended color share one Span to hold down the per-frame allocation
+-    let base = theme.gray;
++    let base = theme.accent_assistant;
+     let hilite = theme.text_primary;
+     let logo_lines: Vec<Line> = lines
+         .iter()

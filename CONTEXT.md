@@ -12,7 +12,9 @@ on `grok update` / `grokgod update`. Current set: `0001-normalize-plugin-skill-j
 `0005-model-tools-deny-allow`, `0006-web-search-call-tolerant-parse`, `0007-hosted-web-search-splice-decouple`,
 `0008-claude-permissions-import-gate`, `0009-deepseek-chat-fix`,
 `0010-deepseek-chat-compact-lenient`, `0011-ask-question-timeout-action`,
-`0012-protoc-dependency-output-portable`, `0013-same-session-compaction-warning`.
+`0012-protoc-dependency-output-portable`, `0013-same-session-compaction-warning`,
+`0014-deepseek-tool-image-hoist`, `0015-cli-model-ephemeral`,
+`0016-credit-limit-switch-model`, `0017-welcome-logo-chat-accent`.
 _Avoid_: Mach-O hex edit, plugin.json rewrite as the engine fix
 
 **Patch registry**:

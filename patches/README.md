@@ -30,10 +30,11 @@ files, from the order below, or from `PINNED_BASE_SHA`.
 - `0014-deepseek-tool-image-hoist.patch`: Hoists tool-result images into an immediately following user message (`Attached image(s) from tool result:`) when `input_modalities` includes `"image"`, allowing DeepSeek and OpenAI Chat Completions endpoints to consume tool-returned images without protocol errors.
 - `0015-cli-model-ephemeral.patch`: A startup `-m` / `--model` switch applies to that process only and does not write `[models].default`. A later `/model` still saves the preferred model.
 - `0016-credit-limit-switch-model.patch`: Adds `Switch model & retry` immediately before `Try Again` in the paid weekly/credit-limit dialogs and as the final choice in the free-plan usage-limit paywall. The free-plan failure path retains the exact sent prompt through `RetryState::Retrying` and free-usage `RetryState::Exhausted`, then captures it before `PromptResponse` turn cleanup; non-free exhausted/failed paths keep their existing clear behavior. Upgrade choices retain their URLs, while only the `FreeUsageLimit` paywall (not a `RestrictedCommand` upsell) exposes the switch action. It opens the existing direct `/model` picker in the same session and, only after a successful switch from that picker, consumes the stashed failed prompt once through the existing front-queue retry path. Dismissal or switch failure keeps the prompt stashed and sends nothing on the old model; ordinary `/model` remains unchanged.
+- `0017-welcome-logo-chat-accent.patch`: Welcome braille logo rests on `theme.accent_assistant` and shimmers to `theme.text_primary` with full-white peak shine (`SHINE = 1.0`).
 
 ## Target Commit
 
-- Base commit: `grok-build` commit `97f190f6` (`97f190f644ae1ba07fd6ee185ef54c650e142666`) — origin/main 1.0.45; patches 0001–0016 are authored/rebased against this base. Source mode still tracks the moving `origin/main`; this is the patch-authorship/release pin.
+- Base commit: `grok-build` commit `97f190f6` (`97f190f644ae1ba07fd6ee185ef54c650e142666`) — origin/main 1.0.45; patches 0001–0017 are authored/rebased against this base. Source mode still tracks the moving `origin/main`; this is the patch-authorship/release pin.
 
 ## Verification
 
