@@ -94,6 +94,7 @@ grok update                                                  # check latest upst
                                                              # (release: compares release tag; source: resolved origin/main SHA+patchset)
 grok status                                                  # shim ownership + .source-version
 grokgod status [--json]                                      # detailed status & health inspection (POSIX & Windows)
+                                                             # POSIX --json: schema + health exit codes 0/1/2 (see below)
 grokgod cache report                                         # disk / target size + ~/.grok/sessions age buckets
 grokgod sessions prune                                       # dry-run old sessions; --yes --max-age 7d uses grok sessions delete
 grokgod pin check [--expect-default M] [--expect-no-overlay] [--expect-orca-pin M]  # fail-closed pin precheck assertion
@@ -114,6 +115,77 @@ attempt time is recorded before launch to enforce a 24-hour interval. Refresh
 failures are silent. Source-mode
 installs and the `update`, `status`, and `cache` administrative commands never
 show the notice.
+
+### POSIX Status & Artifact Manifest
+
+`grok status` / `grokgod status` prints the human-readable report (shim path,
+target binary, `.source-version`, launcher ownership, `persist:` inventory,
+`source-drift`). `grokgod status --json` (or `grok status --json`, `-json`)
+instead prints one JSON document on stdout and nothing on stderr:
+
+```sh
+grokgod status --json | python3 -m json.tool
+```
+
+The human report is unchanged by `--json`; any other trailing argument (for
+example `status --verbose`) still selects the human report. Exit codes are
+opt-in with the JSON document: `0` healthy, `1` degraded, `2` corrupt. The
+human report keeps its unconditional `0`.
+
+`health` is `healthy` (exit `0`), `degraded` (exit `1`), or `corrupt`
+(exit `2`). A home installed before the manifest existed stays `healthy`:
+health is only ever downgraded by the binary being missing/unreadable, a
+recorded artifact digest that disagrees with the installed file, a missing or
+malformed stamp, or a missing hashing tool.
+
+Fields (exact order): `schemaVersion`, `health`, `healthDetails`, `mode`,
+`version`, `sourceSha`, `patchset`, `patchStatus`, `persist`,
+`launcherIdentity`, `resolvedCommandPath`, `launcherPath`,
+`launcherOwnership`, `patchedBinaryPath`, `patchedBinaryExists`,
+`patchedBinaryVersion`, `officialBinaryPath`, `officialBinaryExists`,
+`officialBinaryVersion`, `artifactSha256`, `computedSha256`, `hashAlgorithm`,
+`artifactHashMatchesRecord`, `signature`, `recordedSignature`,
+`signatureVerified`, `manifestPath`, `manifestExists`, `manifestValid`,
+`manifestDetail`, `installedAt`, `freeDiskBytes`, `freeDiskGigabytes`,
+`sourceDrift`, `sourceDriftInstalled`, `sourceDriftUpstream`.
+
+Value vocabularies: `healthDetails` is always an array of diagnostic strings
+(empty when healthy), `patchStatus` is `applied`/`missing`,
+`launcherOwnership` is `shim`/`foreign`/`absent`, `signature` is
+`adhoc`/`signed`/`unsigned`/`unsupported`,
+`artifactHashMatchesRecord`/`signatureVerified` are `true`/`false`/`null`, and
+`persist` lists the 16 source patches plus `overlay-pin`, `eval-home`,
+`weekly-pin`, and `orca-pin` with the same statuses as the human report.
+
+`patchedBinaryVersion`, `officialBinary*` are `null`/`false` on POSIX: status
+never executes the target binary (that would risk launching the TUI) and there
+is no official-binary resolver outside Windows.
+
+#### Artifact Manifest (`~/.grokgod/manifest.json`)
+
+Install/update commit points write a POSIX artifact manifest next to the stamp
+(release and source modes, after the binary is installed and ad-hoc signed).
+It records `formatVersion`, `platform: "posix"`, `installedAt`,
+`installedAtEpoch`, `mode`, `version`, `patchset`, `sourceSha`,
+`assetSha256` (the downloaded asset digest; empty in source mode),
+`artifactSha256` (the digest of the installed binary, computed **after**
+codesign), `signature`, `targetExe`, and `grokgodHome`. It is written
+atomically and best-effort: a manifest failure never fails an otherwise
+successful install (a host with neither `sha256sum` nor `shasum` skips the
+manifest and leaves the stamp authoritative), and `install.sh` never reads it —
+`.source-version` remains the single source of truth for install/update
+decisions.
+
+`grok update` records the manifest; a home installed before this change has
+none, and `status --json` reports `manifestExists: false` with an explanatory
+`manifestDetail` while staying `healthy` (stamp-only behavior, unchanged).
+`artifactSha256` is taken from the manifest only: a release stamp holds the
+pre-codesign download digest and a source stamp holds a git commit, so neither
+can be compared against the installed file. A manifest is only trusted when it
+is unmistakably ours (object-shaped, exactly one `formatVersion: 1`, exactly
+one `platform: "posix"`, exactly one `artifactSha256`); anything else —
+truncated JSON, arbitrary bytes, or the Windows installer's `manifest.json` —
+is reported as invalid in `manifestDetail` and otherwise ignored.
 
 ### Windows Dispatcher & Command Matrix
 
@@ -157,7 +229,11 @@ The Windows installer provides transactional install, update, and uninstall sema
 Source mode tracks upstream `origin/main` on bare `grok update` (fetching latest,
 re-applying persist patches, and rebuilding), mirroring ClawGod's `@latest`
 lifecycle. `--version <sha>` locks to a specific commit. `--no-upgrade` skips
-fetch and checkout to re-apply / restore launchers on the current tree.
+fetch and checkout to re-apply / restore launchers on the current tree. Both
+POSIX modes record `~/.grokgod/manifest.json` (see
+[POSIX Status & Artifact Manifest](#posix-status--artifact-manifest));
+uninstall removes `~/.grokgod` wholesale, so the POSIX manifest deliberately
+carries no owned-file or backup lists.
 
 Patch authorship base SHA: `07e35a3dfeed2f200d319ef6c893b5ea286d9a51` (`patches/README.md`). Source mode still tracks moving `origin/main`; this authorship pin is not the source-mode update target. Session-start
 checks: [docs/RUNBOOK-session-start.md](docs/RUNBOOK-session-start.md) (auto-load

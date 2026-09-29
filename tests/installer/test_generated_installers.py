@@ -166,9 +166,9 @@ def main():
         "install.sh and grok-shim.sh still agree on fast-forward behavior",
     )
     check(
-        "Behavior must match the other copy in src/shim/grok-shim.sh"
+        "Behavior must match the other copy in src/shim/grok-shim.sh (fast_forward_or_reset_repo)"
         not in install_sh_text
-        and "Behavior must match the other copy in install.sh"
+        and "Behavior must match the other copy in install.sh (sync_installed_grokgod_src)"
         not in shim_text,
         "the hand-sync comments above the fast-forward copies are gone",
     )

@@ -34,6 +34,8 @@ jobs:
       - name: Run Shim, Cache, and Run Test Suites
         run: |
           sh tests/shim/test_shim.sh
+          sh tests/shim/test_manifest_status.sh
+          python3 tests/shim/fuzz_status_json.py
           sh tests/shim/test_shim_windows.sh
           sh tests/install/test_install_windows.sh
           sh tests/cache/test_cache.sh

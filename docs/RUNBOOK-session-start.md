@@ -51,10 +51,11 @@ grok --version                          # expect: grok 1.0.6 (<origin/main short
                                         # git -C ~/Desktop/code/grok-build rev-parse origin/main
                                         # (authorship pin in patches/README.md is not the update target)
 grokgod status | head -6                # shim ownership + source-version
+grokgod status --json                   # structured health; exit 1 degraded, 2 corrupt
 ls -la ~/.local/bin/grok ~/.local/bin/grok.orig
 ```
 
-`grok status` / `grokgod status` prints `source-drift` vs local `origin/main` (no fetch). `grok --version` stderr warns when behind.
+`grok status` / `grokgod status` prints `source-drift` vs local `origin/main` (no fetch). `grok --version` stderr warns when behind. `grokgod status --json` is stamp+manifest derived; `artifactSha256` is `null` until a `grok update` records `~/.grokgod/manifest.json`, and a missing manifest is not a failure.
 
 - `~/.local/bin/grok` should be OUR shim (1632+ bytes, contains "GROKGOD").
 - If it is a symlink to `~/.grok/bin/grok` again, the official installer
