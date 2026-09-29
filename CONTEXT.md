@@ -14,7 +14,8 @@ on `grok update` / `grokgod update`. Current set: `0001-normalize-plugin-skill-j
 `0010-deepseek-chat-compact-lenient`, `0011-ask-question-timeout-action`,
 `0012-protoc-dependency-output-portable`, `0013-same-session-compaction-warning`,
 `0014-deepseek-tool-image-hoist`, `0015-cli-model-ephemeral`,
-`0016-credit-limit-switch-model`, `0017-welcome-logo-chat-accent`.
+`0016-credit-limit-switch-model`, `0017-welcome-logo-chat-accent`,
+`0018-gemini-option-enum-null-schema`.
 _Avoid_: Mach-O hex edit, plugin.json rewrite as the engine fix
 
 **Patch registry**:
@@ -112,6 +113,16 @@ _Avoid_: reusing legacy attempt/double-count telemetry, duplicating the header w
 **Welcome logo chat accent**:
 `0017-welcome-logo-chat-accent` rests the welcome braille logo on `theme.accent_assistant` (GrokNight MAGENTA `#bb9af7`) and raises the official diagonal shimmer peak to full `theme.text_primary` white (`SHINE = 1.0`). Art files and shimmer timing stay stock.
 _Avoid_: rewriting `logo05.txt`/`logo07.txt`, GBOOM red, or a gray rest with a dim 0.33 sheen (unreadable on magenta)
+
+**Generated enum schema sanitization**:
+`0018-gemini-option-enum-null-schema` recursively cleans generated tool-input
+JSON Schema `enum` arrays before they are advertised. It preserves every
+non-empty string member, removes `null`, empty strings, and non-string members,
+and removes the `enum` keyword when nothing valid remains. Optional enum fields
+keep their nullable `type` and stay optional. This is a schema compatibility fix
+for Gemini-style validators, not a tool-call payload rewrite.
+_Avoid_: removing `"null"` from a field's type, making optional fields required,
+changing deserialization, or special-casing only `todo_write`
 
 **Per-model tool gating**:
 `[model."<id>".tools]` with `deny` and `allow` lists in grokgod `0005`. Strips

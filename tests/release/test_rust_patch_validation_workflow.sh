@@ -94,6 +94,20 @@ assert content.count("cargo test -p xai-grok-pager --lib") == 2, (
     "workflow must contain exactly the two focused pager library test commands"
 )
 
+registry_tests = (
+    "registry::types::tests::non_pi_finalized_contract_snapshot_is_unchanged",
+    "registry::types::tests::sanitize_enum_arrays_recurses_and_removes_empty_keywords",
+    "registry::types::tests::finalized_generated_schemas_advertise_string_only_enums",
+)
+for test_name in registry_tests:
+    require(
+        f"cargo test -p xai-grok-tools --lib {test_name} -- --exact",
+        f"exact xai-grok-tools registry test missing: {test_name}",
+    )
+assert content.count("cargo test -p xai-grok-tools --lib") == len(registry_tests), (
+    "workflow must contain exactly the three focused xai-grok-tools registry test commands"
+)
+
 lower = content.lower()
 for forbidden in (
     "cargo test --workspace",

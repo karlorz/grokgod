@@ -114,3 +114,15 @@ jobs:
       - name: Run exact idempotent model-selection regression test
         working-directory: grok-build
         run: cargo test -p xai-grok-pager --lib app::dispatch::tests::settings::set_default_model_idempotent_when_already_current -- --exact
+
+      - name: Run exact generated-schema snapshot regression test
+        working-directory: grok-build
+        run: cargo test -p xai-grok-tools --lib registry::types::tests::non_pi_finalized_contract_snapshot_is_unchanged -- --exact
+
+      - name: Run exact enum-sanitization unit test
+        working-directory: grok-build
+        run: cargo test -p xai-grok-tools --lib registry::types::tests::sanitize_enum_arrays_recurses_and_removes_empty_keywords -- --exact
+
+      - name: Run exact finalized-schema enum regression test
+        working-directory: grok-build
+        run: cargo test -p xai-grok-tools --lib registry::types::tests::finalized_generated_schemas_advertise_string_only_enums -- --exact

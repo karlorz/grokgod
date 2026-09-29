@@ -1,0 +1,236 @@
+diff --git a/crates/codegen/xai-grok-tools/src/registry/types.rs b/crates/codegen/xai-grok-tools/src/registry/types.rs
+index ca598e93..755528bf 100644
+--- a/crates/codegen/xai-grok-tools/src/registry/types.rs
++++ b/crates/codegen/xai-grok-tools/src/registry/types.rs
+@@ -2176,8 +2176,38 @@ pub fn generate_schema<T: schemars::JsonSchema>() -> serde_json::Value {
+         obj.entry("required")
+             .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+     }
++    sanitize_enum_arrays(&mut value);
+     value
+ }
++/// Gemini-compatible JSON Schema enum cleanup. Some generators include the
++/// nullable branch (`null`) inside an enum for `Option<Enum>` fields. Keep
++/// nullability in `type`, but advertise only non-empty string enum members.
++/// Remove an enum keyword entirely when no valid members remain.
++fn sanitize_enum_arrays(value: &mut serde_json::Value) {
++    match value {
++        serde_json::Value::Object(object) => {
++            let remove_enum = if let Some(serde_json::Value::Array(values)) = object.get_mut("enum")
++            {
++                values.retain(|value| value.as_str().is_some_and(|value| !value.is_empty()));
++                values.is_empty()
++            } else {
++                false
++            };
++            if remove_enum {
++                object.remove("enum");
++            }
++            for value in object.values_mut() {
++                sanitize_enum_arrays(value);
++            }
++        }
++        serde_json::Value::Array(values) => {
++            for value in values {
++                sanitize_enum_arrays(value);
++            }
++        }
++        _ => {}
++    }
++}
+ fn merge_json(base: &serde_json::Value, overlay: &serde_json::Value) -> serde_json::Value {
+     match (base, overlay) {
+         (serde_json::Value::Object(b), serde_json::Value::Object(o)) => {
+@@ -3974,8 +4004,7 @@ mod tests {
+                           "pending",
+                           "in_progress",
+                           "completed",
+-                          "cancelled",
+-                          null
++                          "cancelled"
+                         ]
+                       }
+                     },
+@@ -5384,6 +5413,182 @@ mod tests {
+             "a type's schema must be generated at most once per process"
+         );
+     }
++    #[test]
++    fn sanitize_enum_arrays_recurses_and_removes_empty_keywords() {
++        let mut schema = serde_json::json!({
++            "enum": ["root", "", null, 1, true],
++            "properties": {
++                "kept": {"enum": ["one", null, "two"]},
++                "removed": {"type": ["string", "null"], "enum": [null, "", 7]},
++                "nested": [{"enum": ["value", false]}]
++            }
++        });
++        sanitize_enum_arrays(&mut schema);
++        assert_eq!(schema["enum"], serde_json::json!(["root"]));
++        assert_eq!(
++            schema["properties"]["kept"]["enum"],
++            serde_json::json!(["one", "two"])
++        );
++        assert!(schema["properties"]["removed"].get("enum").is_none());
++        assert_eq!(
++            schema["properties"]["removed"]["type"],
++            serde_json::json!(["string", "null"]),
++            "enum cleanup must not change nullable type semantics"
++        );
++        assert_eq!(
++            schema["properties"]["nested"][0]["enum"],
++            serde_json::json!(["value"])
++        );
++    }
++    #[tokio::test]
++    async fn finalized_generated_schemas_advertise_string_only_enums() {
++        let tmp = TempDir::new().unwrap();
++        let toolset = ToolRegistryBuilder::new()
++            .finalize(
++                ToolServerConfig {
++                    tools: [
++                        "todo_write",
++                        "task",
++                        "get_task_output",
++                        "kill_task",
++                        "send_feedback",
++                        "send_subagent_message",
++                    ]
++                    .into_iter()
++                    .map(|id| ToolConfig::from_id(format!("GrokBuild:{id}")))
++                    .collect(),
++                    behavior_preset: None,
++                },
++                test_session_context(&tmp),
++            )
++            .expect("enum-bearing toolset should finalize");
++        let definitions = toolset.tool_definitions();
++        let parameters = |name: &str| {
++            &definitions
++                .iter()
++                .find(|definition| definition.function.name == name)
++                .unwrap_or_else(|| panic!("missing tool definition: {name}"))
++                .function
++                .parameters
++        };
++        fn property<'a>(schema: &'a serde_json::Value, name: &str) -> &'a serde_json::Value {
++            schema
++                .pointer(&format!("/properties/{name}"))
++                .unwrap_or_else(|| panic!("missing property {name}: {schema}"))
++        }
++        let assert_optional_nullable_enum =
++            |schema: &serde_json::Value, name: &str, expected: Option<&[&str]>| {
++                let field = property(schema, name);
++                assert_eq!(
++                    field.get("type"),
++                    Some(&serde_json::json!(["string", "null"])),
++                    "{name} must remain nullable: {field}"
++                );
++                assert!(
++                    !schema
++                        .get("required")
++                        .and_then(serde_json::Value::as_array)
++                        .is_some_and(|required| required.iter().any(|value| value == name)),
++                    "{name} must remain optional: {schema}"
++                );
++                let values = field
++                    .get("enum")
++                    .and_then(serde_json::Value::as_array)
++                    .unwrap_or_else(|| panic!("{name} must retain its enum: {field}"));
++                if let Some(expected) = expected {
++                    assert_eq!(
++                        values,
++                        &expected
++                            .iter()
++                            .map(|value| serde_json::Value::String((*value).to_owned()))
++                            .collect::<Vec<_>>(),
++                        "{name} enum members changed"
++                    );
++                }
++            };
++
++        let todo = parameters("todo_write");
++        let todo_status = todo
++            .pointer("/properties/todos/items")
++            .expect("todo item schema");
++        assert_optional_nullable_enum(
++            todo_status,
++            "status",
++            Some(&["pending", "in_progress", "completed", "cancelled"]),
++        );
++
++        let task = parameters("task");
++        assert_optional_nullable_enum(task, "isolation", Some(&["none", "worktree"]));
++        assert!(
++            task.pointer("/properties/capability_mode").is_none(),
++            "capability_mode must remain skipped: {task}"
++        );
++
++        let feedback = parameters("send_feedback");
++        assert_optional_nullable_enum(feedback, "task_category", None);
++        assert_optional_nullable_enum(feedback, "failure_mode", None);
++
++        let message = parameters("send_subagent_message");
++        let delivery = property(message, "delivery");
++        assert!(
++            !message
++                .get("required")
++                .and_then(serde_json::Value::as_array)
++                .is_some_and(|required| required.iter().any(|value| value == "delivery")),
++            "delivery must remain optional: {message}"
++        );
++        assert!(
++            delivery
++                .pointer("/anyOf/1/type")
++                .is_some_and(|value| value == "null"),
++            "delivery must retain its nullable branch: {delivery}"
++        );
++        let delivery_values = delivery
++            .pointer("/anyOf/0/oneOf")
++            .and_then(serde_json::Value::as_array)
++            .expect("delivery string variants");
++        assert_eq!(
++            delivery_values
++                .iter()
++                .map(|variant| variant.get("const").and_then(serde_json::Value::as_str))
++                .collect::<Vec<_>>(),
++            vec![Some("steer"), Some("queue"), Some("interject")],
++            "delivery variants changed"
++        );
++
++        fn assert_all_enum_members_are_non_empty_strings(
++            tool_name: &str,
++            value: &serde_json::Value,
++        ) {
++            match value {
++                serde_json::Value::Object(object) => {
++                    if let Some(values) = object.get("enum").and_then(serde_json::Value::as_array) {
++                        assert!(
++                            values
++                                .iter()
++                                .all(|value| value.as_str().is_some_and(|value| !value.is_empty())),
++                            "{tool_name} advertised an invalid enum: {values:?}"
++                        );
++                    }
++                    for value in object.values() {
++                        assert_all_enum_members_are_non_empty_strings(tool_name, value);
++                    }
++                }
++                serde_json::Value::Array(values) => {
++                    for value in values {
++                        assert_all_enum_members_are_non_empty_strings(tool_name, value);
++                    }
++                }
++                _ => {}
++            }
++        }
++        for definition in &definitions {
++            assert_all_enum_members_are_non_empty_strings(
++                &definition.function.name,
++                &definition.function.parameters,
++            );
++        }
++    }
+     fn toolset_with_viewer_ctx(
+         viewer_ctx: Option<xai_tool_runtime::WorkspaceViewerContext>,
+         truncation: crate::types::context::TruncationConfig,
