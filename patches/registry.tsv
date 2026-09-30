@@ -33,3 +33,4 @@ base-sha	2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8
 0017	0017-welcome-logo-chat-accent	patches/0017-welcome-logo-chat-accent.patch
 0018	0018-gemini-option-enum-null-schema	patches/0018-gemini-option-enum-null-schema.patch
 0019	0019-plan-mode-globset-dependency	patches/0019-plan-mode-globset-dependency.patch
+0020	0020-switch-model-complete-test-model-choice	patches/0020-switch-model-complete-test-model-choice.patch

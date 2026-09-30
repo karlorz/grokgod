@@ -1,0 +1,88 @@
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs
+index 6ae3f30..ab8f911 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs
+@@ -1533,8 +1533,7 @@ fn free_usage_send_retry_exhausted_switch_retries_exact_prompt_once() {
+     let retry_effects = dispatch(
+         Action::TaskComplete(TaskResult::SwitchModelComplete {
+             agent_id: id,
+-            model_id: model_id.clone(),
+-            effort: None,
++            choice: ModelChoice::new(model_id.clone()),
+             result: Ok(()),
+             prev_model_id: None,
+         }),
+@@ -1581,8 +1580,7 @@ fn free_usage_send_retry_exhausted_switch_retries_exact_prompt_once() {
+     let duplicate_effects = dispatch(
+         Action::TaskComplete(TaskResult::SwitchModelComplete {
+             agent_id: id,
+-            model_id,
+-            effort: None,
++            choice: ModelChoice::new(model_id),
+             result: Ok(()),
+             prev_model_id: None,
+         }),
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs
+index 25ab8d2..ca47d07 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/task_result.rs
+@@ -1391,8 +1391,7 @@ fn switch_model_complete_skips_persist_for_cli_model_once() {
+     let effects = dispatch(
+         Action::TaskComplete(TaskResult::SwitchModelComplete {
+             agent_id: id,
+-            model_id: model_id.clone(),
+-            effort: None,
++            choice: ModelChoice::new(model_id.clone()),
+             result: Ok(()),
+             prev_model_id: None,
+         }),
+@@ -1416,8 +1415,7 @@ fn switch_model_complete_skips_persist_for_cli_model_once() {
+     let again = dispatch(
+         Action::TaskComplete(TaskResult::SwitchModelComplete {
+             agent_id: id,
+-            model_id: model_id.clone(),
+-            effort: None,
++            choice: ModelChoice::new(model_id.clone()),
+             result: Ok(()),
+             prev_model_id: None,
+         }),
+@@ -1650,8 +1648,7 @@ fn credit_limit_model_switch_success_reuses_retry_once() {
+     let effects = dispatch(
+         Action::TaskComplete(TaskResult::SwitchModelComplete {
+             agent_id: id,
+-            model_id: model_id.clone(),
+-            effort: None,
++            choice: ModelChoice::new(model_id.clone()),
+             result: Ok(()),
+             prev_model_id: None,
+         }),
+@@ -1679,8 +1676,7 @@ fn credit_limit_model_switch_success_reuses_retry_once() {
+     let duplicate_effects = dispatch(
+         Action::TaskComplete(TaskResult::SwitchModelComplete {
+             agent_id: id,
+-            model_id,
+-            effort: None,
++            choice: ModelChoice::new(model_id),
+             result: Ok(()),
+             prev_model_id: None,
+         }),
+@@ -1704,8 +1700,7 @@ fn credit_limit_model_switch_failure_preserves_stash_and_sends_nothing() {
+     let effects = dispatch(
+         Action::TaskComplete(TaskResult::SwitchModelComplete {
+             agent_id: id,
+-            model_id: acp::ModelId::new(std::sync::Arc::from("bad-model")),
+-            effort: None,
++            choice: ModelChoice::new(acp::ModelId::new(std::sync::Arc::from("bad-model"))),
+             result: Err(SwitchModelError::Other("model not found".into())),
+             prev_model_id: None,
+         }),
+@@ -1741,8 +1736,7 @@ fn ordinary_model_switch_never_retries_credit_limit_stash() {
+     let effects = dispatch(
+         Action::TaskComplete(TaskResult::SwitchModelComplete {
+             agent_id: id,
+-            model_id,
+-            effort: None,
++            choice: ModelChoice::new(model_id),
+             result: Ok(()),
+             prev_model_id: None,
+         }),

@@ -33,6 +33,7 @@ files, from the order below, or from `PINNED_BASE_SHA`.
 - `0017-welcome-logo-chat-accent.patch`: Welcome braille logo rests on `theme.accent_assistant` and shimmers to `theme.text_primary` with full-white peak shine (`SHINE = 1.0`).
 - `0018-gemini-option-enum-null-schema.patch`: Recursively sanitizes generated advertised JSON Schema `enum` arrays to non-empty strings only. Optional enums keep their nullable `type` and optional/required semantics; an enum keyword is removed if no valid string members remain. Payload parsing is unchanged.
 - `0019-plan-mode-globset-dependency.patch`: Declares the `globset` workspace dependency used by plan-mode glob matching in `xai-grok-shell`, so the stacked source patches resolve deterministically in CI.
+- `0020-switch-model-complete-test-model-choice.patch`: Updates stale patch-0016 pager test constructors to the current `TaskResult::SwitchModelComplete { choice: ModelChoice, ... }` API. Tests-only follow-up; runtime behavior is unchanged.
 
 ## Target Commit
 

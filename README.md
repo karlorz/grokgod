@@ -155,7 +155,7 @@ Value vocabularies: `healthDetails` is always an array of diagnostic strings
 `launcherOwnership` is `shim`/`foreign`/`absent`, `signature` is
 `adhoc`/`signed`/`unsigned`/`unsupported`,
 `artifactHashMatchesRecord`/`signatureVerified` are `true`/`false`/`null`, and
-`persist` lists the 19 source patches plus `overlay-pin`, `eval-home`,
+`persist` lists the 20 source patches plus `overlay-pin`, `eval-home`,
 `weekly-pin`, and `orca-pin` with the same statuses as the human report.
 
 `patchedBinaryVersion`, `officialBinary*` are `null`/`false` on POSIX: status

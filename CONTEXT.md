@@ -15,7 +15,8 @@ on `grok update` / `grokgod update`. Current set: `0001-normalize-plugin-skill-j
 `0012-protoc-dependency-output-portable`, `0013-same-session-compaction-warning`,
 `0014-deepseek-tool-image-hoist`, `0015-cli-model-ephemeral`,
 `0016-credit-limit-switch-model`, `0017-welcome-logo-chat-accent`,
-`0018-gemini-option-enum-null-schema`, `0019-plan-mode-globset-dependency`.
+`0018-gemini-option-enum-null-schema`, `0019-plan-mode-globset-dependency`,
+`0020-switch-model-complete-test-model-choice`.
 _Avoid_: Mach-O hex edit, plugin.json rewrite as the engine fix
 
 **Patch registry**:
@@ -131,6 +132,14 @@ for `xai-grok-shell`, matching the `globset` usage added by plan-mode patch
 keeps the complete 0001–0019 stack resolvable in deterministic CI builds.
 _Avoid_: changing the workspace dependency version, adding unrelated crates, or
 editing plan-mode source in this dependency-only patch
+
+**Switch-model test ModelChoice migration**:
+`0020-switch-model-complete-test-model-choice` updates stale patch-0016 pager
+tests to construct `TaskResult::SwitchModelComplete` with the current
+`choice: ModelChoice` field. It is tests-only compatibility maintenance; runtime
+behavior and production sources are unchanged.
+_Avoid_: changing `SwitchModelComplete` runtime handling, retaining removed
+`model_id`/`effort` fields, or widening this patch beyond pager tests
 
 **Per-model tool gating**:
 `[model."<id>".tools]` with `deny` and `allow` lists in grokgod `0005`. Strips
