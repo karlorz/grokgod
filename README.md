@@ -86,6 +86,7 @@ the disabled DEV-TEST fixture and future per-job pins.
 
 ```sh
 sh install.sh                                                # release mode: download prebuilt binary + shims
+sh install.sh --release                                      # force GitHub prebuilt; overrides MODE=source stamp
 sh install.sh --from-source                                  # source mode: fetch latest origin/main + apply patches + rebuild
 sh install.sh --from-source --version <sha>                  # source mode: checkout specific tag/SHA + apply patches + rebuild
 sh install.sh --no-upgrade                                   # re-apply / restore launchers, skip fetch/checkout/build
@@ -93,6 +94,8 @@ sh install.sh --force                                        # rebuild / re-down
 sh install.sh --uninstall                                    # restore grok.orig
 grok update                                                  # check latest upstream origin/main; re-apply patches + rebuild; no-op "Already up to date" when current
                                                              # (release: compares release tag; source: resolved origin/main SHA+patchset)
+grok update --release                                        # same via shim (production on a dual-use machine)
+grok update --from-source                                    # lab cargo rebuild
 grok status                                                  # shim ownership + .source-version
 grokgod status [--json]                                      # detailed status & health inspection (POSIX & Windows)
                                                              # POSIX --json: schema + health exit codes 0/1/2 (see below)

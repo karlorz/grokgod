@@ -212,12 +212,14 @@ def main():
     ver_eq_match = re.search(r'arg\s*-match\s*[\'"](\^.+?version\)=\(\.\*\)\$)[\'"]', shim_src)
     noup_match = re.search(r'arg\s*-match\s*[\'"](\^.+?no-upgrade.+?)[\'"]', shim_src)
     force_match = re.search(r'arg\s*-match\s*[\'"](\^.+?force.+?)[\'"]', shim_src)
+    release_match = re.search(r'arg\s*-match\s*[\'"](\^.+?release.+?)[\'"]', shim_src)
     uninst_match = re.search(r'arg\s*-match\s*[\'"](\^.+?uninstall.+?)[\'"]', shim_src)
 
     check(bool(ver_match), "Found update --version regex")
     check(bool(ver_eq_match), "Found update --version= regex")
     check(bool(noup_match), "Found update --no-upgrade regex")
     check(bool(force_match), "Found update --force regex")
+    check(bool(release_match), "Found update --release regex")
     check(bool(uninst_match), "Found update --uninstall regex")
 
     # Verify no broken character class ranges like [--|-]
@@ -228,6 +230,7 @@ def main():
     ver_eq_regex = r'^(--|-)(version)=(.*)$'
     noup_regex = r'^(--|-)(no-upgrade|noupgrade)$'
     force_regex = r'^(--|-)(force)$'
+    release_regex = r'^(--|-)(release)$'
     uninst_regex = r'^(--|-)(uninstall)$'
 
     # Valid matches
@@ -241,6 +244,8 @@ def main():
     check(bool(re.match(noup_regex, "-noupgrade", re.IGNORECASE)), "Regex matches '-noupgrade'")
     check(bool(re.match(force_regex, "--force", re.IGNORECASE)), "Regex matches '--force'")
     check(bool(re.match(force_regex, "-Force", re.IGNORECASE)), "Regex matches '-Force'")
+    check(bool(re.match(release_regex, "--release", re.IGNORECASE)), "Regex matches '--release'")
+    check(bool(re.match(release_regex, "-Release", re.IGNORECASE)), "Regex matches '-Release'")
     check(bool(re.match(uninst_regex, "--uninstall", re.IGNORECASE)), "Regex matches '--uninstall'")
     check(bool(re.match(uninst_regex, "-Uninstall", re.IGNORECASE)), "Regex matches '-Uninstall'")
 
@@ -250,6 +255,8 @@ def main():
     check(not re.match(ver_regex, "version"), "Regex rejects bare 'version'")
     check(not re.match(force_regex, "_force"), "Regex rejects '_force'")
     check(not re.match(force_regex, "force"), "Regex rejects bare 'force'")
+    check(not re.match(release_regex, "_release"), "Regex rejects '_release'")
+    check(not re.match(release_regex, "release"), "Regex rejects bare 'release'")
     check(not re.match(noup_regex, "no-upgrade"), "Regex rejects bare 'no-upgrade'")
 
     # Test transformed flags for install.ps1

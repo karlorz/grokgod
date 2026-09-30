@@ -129,17 +129,6 @@ EOF_DIFF
   if [ -n "$untracked_out" ]; then
     while IFS= read -r path || [ -n "$path" ]; do
       [ -z "$path" ] && continue
-      cur="$path"
-      while [ "$cur" != "." ] && [ "$cur" != "/" ]; do
-        cur="$(dirname "$cur")"
-        [ "$cur" = "." ] || [ "$cur" = "/" ] && break
-        if git -C "$repo" cat-file -e "origin/main:$cur" 2>/dev/null; then
-          if [ -d "$repo/$cur" ]; then
-            echo "grokgod: src differs from origin/main: $cur" >&2
-            return 1
-          fi
-        fi
-      done
 
       if git -C "$repo" cat-file -e "origin/main:$path" 2>/dev/null; then
         if [ -d "$repo/$path" ]; then
@@ -161,6 +150,18 @@ $path"
           echo "grokgod: src differs from origin/main: $path" >&2
           return 1
         fi
+      else
+        cur="$path"
+        while [ "$cur" != "." ] && [ "$cur" != "/" ]; do
+          cur="$(dirname "$cur")"
+          [ "$cur" = "." ] || [ "$cur" = "/" ] && break
+          if git -C "$repo" cat-file -e "origin/main:$cur" 2>/dev/null; then
+            if [ -d "$repo/$cur" ]; then
+              echo "grokgod: src differs from origin/main: $cur" >&2
+              return 1
+            fi
+          fi
+        done
       fi
     done << EOF_UNTRACKED
 $untracked_out
@@ -995,9 +996,28 @@ cmd="${1:-}"
 case "$cmd" in
   update)
     shift || true
-    # Detect mode from stamp or default to release
+    # Scan arguments for explicit mode overrides
+    HAS_RELEASE=0
+    HAS_SOURCE=0
+    for update_arg in "$@"; do
+      case "$update_arg" in
+        --release)
+          HAS_RELEASE=1
+          ;;
+        --from-source)
+          HAS_SOURCE=1
+          ;;
+      esac
+    done
+
+    if [ "$HAS_RELEASE" = "1" ] && [ "$HAS_SOURCE" = "1" ]; then
+      echo "grokgod: --release and --from-source cannot be combined" >&2
+      exit 1
+    fi
+
+    # Detect mode from arguments or stamp, defaulting to release
     MODE_ARG=""
-    if [ -f "$GROKGOD_HOME/.source-version" ]; then
+    if [ "$HAS_RELEASE" = "0" ] && [ "$HAS_SOURCE" = "0" ] && [ -f "$GROKGOD_HOME/.source-version" ]; then
       INST_MODE="$(grep '^MODE=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
       if [ "$INST_MODE" = "source" ]; then
         MODE_ARG="--from-source"

@@ -2912,4 +2912,52 @@ assert_no_tx_leftovers "Test (am3) clean"
 assert_no_tx_leftovers "Test (am2)"
 echo "PASS: Test (am) - grok.orig tracks the newest official grok"
 
+# ─────────────────────────────────────────────────────────
+# Test (aq): --release overrides source stamp, conflicting flags rejected
+# ─────────────────────────────────────────────────────────
+echo "Test (aq): --release flag and conflict detection"
+setup_sandbox "test_aq"
+
+# Existing source stamp
+printf "SHA=fake\nPATCHSET=test\nVERSION=test\nMODE=source\n" > "$FAKE_GROKGOD_HOME/.source-version"
+
+# sh install.sh --release --dry-run (GROK_BUILD_SRC pointing at nonexistent is ok)
+# -> exit 0, output contains MODE=release, not cargo/from-source build
+AQ_REL_OUT="$(
+  PATH="$FAKE_BIN_SHADOW:$PATH" \
+  HOME="$FAKE_HOME" \
+  GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+  GROK_BUILD_SRC="$TMP_ROOT/nonexistent_src" \
+  BIN_DIR="$FAKE_BIN_DIR" \
+  CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+  sh "$INSTALL_SCRIPT" --release --dry-run
+)"
+echo "$AQ_REL_OUT" | grep -q "MODE=release" || {
+  echo "FAIL: Test (aq) - --release did not select MODE=release ($AQ_REL_OUT)"; exit 1
+}
+echo "$AQ_REL_OUT" | grep -q "cargo build" && {
+  echo "FAIL: Test (aq) - cargo build mentioned in release dry-run ($AQ_REL_OUT)"; exit 1
+}
+
+# --from-source --release --dry-run -> nonzero
+set +e
+AQ_CONFLICT_OUT="$(
+  PATH="$FAKE_BIN_SHADOW:$PATH" \
+  HOME="$FAKE_HOME" \
+  GROKGOD_HOME="$FAKE_GROKGOD_HOME" \
+  GROK_BUILD_SRC="$TMP_ROOT/nonexistent_src" \
+  BIN_DIR="$FAKE_BIN_DIR" \
+  CARGO_TARGET_DIR="$FAKE_CARGO_TARGET_DIR" \
+  sh "$INSTALL_SCRIPT" --from-source --release --dry-run 2>&1
+)"
+AQ_CONFLICT_STATUS=$?
+set -eu
+if [ "$AQ_CONFLICT_STATUS" -eq 0 ]; then
+  echo "FAIL: Test (aq) - Expected nonzero exit for conflicting flags, got 0 ($AQ_CONFLICT_OUT)"; exit 1
+fi
+echo "$AQ_CONFLICT_OUT" | grep -q "cannot be combined" || {
+  echo "FAIL: Test (aq) - missing cannot be combined message ($AQ_CONFLICT_OUT)"; exit 1
+}
+echo "PASS: Test (aq) - --release flag and conflict detection"
+
 echo "=== All install.sh tests passed successfully! ==="

@@ -71,17 +71,6 @@ EOF_DIFF
   if [ -n "$untracked_out" ]; then
     while IFS= read -r path || [ -n "$path" ]; do
       [ -z "$path" ] && continue
-      cur="$path"
-      while [ "$cur" != "." ] && [ "$cur" != "/" ]; do
-        cur="$(dirname "$cur")"
-        [ "$cur" = "." ] || [ "$cur" = "/" ] && break
-        if git -C "$repo" cat-file -e "origin/main:$cur" 2>/dev/null; then
-          if [ -d "$repo/$cur" ]; then
-            echo "grokgod: src differs from origin/main: $cur" >&2
-            return 1
-          fi
-        fi
-      done
 
       if git -C "$repo" cat-file -e "origin/main:$path" 2>/dev/null; then
         if [ -d "$repo/$path" ]; then
@@ -103,6 +92,18 @@ $path"
           echo "grokgod: src differs from origin/main: $path" >&2
           return 1
         fi
+      else
+        cur="$path"
+        while [ "$cur" != "." ] && [ "$cur" != "/" ]; do
+          cur="$(dirname "$cur")"
+          [ "$cur" = "." ] || [ "$cur" = "/" ] && break
+          if git -C "$repo" cat-file -e "origin/main:$cur" 2>/dev/null; then
+            if [ -d "$repo/$cur" ]; then
+              echo "grokgod: src differs from origin/main: $cur" >&2
+              return 1
+            fi
+          fi
+        done
       fi
     done << EOF_UNTRACKED
 $untracked_out

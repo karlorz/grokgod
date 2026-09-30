@@ -2,7 +2,7 @@
 set -eu
 
 # grokgod install.sh - POSIX sh installer / patch wrapper for grok-build
-# Usage: install.sh [--version TAG_OR_SHA] [--from-source] [--no-upgrade] [--force] [--yes] [--uninstall] [--dry-run] [--prefix DIR]
+# Usage: install.sh [--version TAG_OR_SHA] [--from-source] [--release] [--no-upgrade] [--force] [--yes] [--uninstall] [--dry-run] [--prefix DIR]
 # ---------------------------------------------------------------------------
 # GENERATED FILE - do not edit by hand.
 # Source: src/installer/templates/install.sh.in + src/installer/shared/*
@@ -28,6 +28,8 @@ WARN_FREE_KB=$((WARN_FREE_GB * 1024 * 1024))
 
 CLI_VERSION=""
 FROM_SOURCE=""
+WANT_SOURCE=0
+WANT_RELEASE=0
 NO_UPGRADE=0
 FORCE=0
 YES=0
@@ -552,7 +554,13 @@ while [ $# -gt 0 ]; do
       shift 2
       ;;
     --from-source)
+      WANT_SOURCE=1
       FROM_SOURCE=1
+      shift
+      ;;
+    --release)
+      WANT_RELEASE=1
+      FROM_SOURCE=0
       shift
       ;;
     --no-upgrade)
@@ -588,16 +596,21 @@ while [ $# -gt 0 ]; do
       shift 2
       ;;
     -h|--help)
-      echo "Usage: install.sh [--version TAG_OR_SHA] [--from-source] [--no-upgrade] [--force] [--yes] [--uninstall] [--dry-run] [--prefix DIR]"
+      echo "Usage: install.sh [--version TAG_OR_SHA] [--from-source] [--release] [--no-upgrade] [--force] [--yes] [--uninstall] [--dry-run] [--prefix DIR]"
       exit 0
       ;;
     *)
       log_err "Unknown option: $1"
-      echo "Usage: install.sh [--version TAG_OR_SHA] [--from-source] [--no-upgrade] [--force] [--yes] [--uninstall] [--dry-run] [--prefix DIR]" >&2
+      echo "Usage: install.sh [--version TAG_OR_SHA] [--from-source] [--release] [--no-upgrade] [--force] [--yes] [--uninstall] [--dry-run] [--prefix DIR]" >&2
       exit 1
       ;;
   esac
 done
+
+if [ "$WANT_RELEASE" = "1" ] && [ "$WANT_SOURCE" = "1" ]; then
+  log_err "--release and --from-source cannot be combined"
+  exit 1
+fi
 
 # Determine install mode: "release" (default) or "source"
 INSTALLED_MODE=""

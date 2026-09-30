@@ -160,6 +160,35 @@ chmod +x "$TEST_GROKGOD_SRC/install.sh"
 UPDATE_OUT="$(run_shim update --release v1.0)"
 echo "$UPDATE_OUT" | grep -q "INSTALL_CALLED:--release v1.0" || { echo "FAIL: install.sh not called with args ($UPDATE_OUT)"; exit 1; }
 
+# Test 2-modes: update mode argument handling
+echo "Test 2-modes: update mode argument handling"
+# MODE=source stamp + update --release -> INSTALL_CALLED contains --release, does not contain --from-source
+printf "SHA=fake\nPATCHSET=v1.2.3\nVERSION=v1.2.3\nMODE=source\n" > "$TEST_GROKGOD_HOME/.source-version"
+UPDATE_REL_OUT="$(run_shim update --release)"
+echo "$UPDATE_REL_OUT" | grep -q "INSTALL_CALLED:--release" || { echo "FAIL: install.sh not called with --release ($UPDATE_REL_OUT)"; exit 1; }
+echo "$UPDATE_REL_OUT" | grep -q -- "--from-source" && { echo "FAIL: install.sh unexpectedly called with --from-source on update --release ($UPDATE_REL_OUT)"; exit 1; }
+
+# MODE=source stamp + bare update -> INSTALL_CALLED contains --from-source
+UPDATE_SRC_OUT="$(run_shim update)"
+echo "$UPDATE_SRC_OUT" | grep -q "INSTALL_CALLED:--from-source" || { echo "FAIL: install.sh not called with --from-source on bare update ($UPDATE_SRC_OUT)"; exit 1; }
+
+# update --from-source --release -> nonzero, install.sh not called
+set +e
+UPDATE_CONFLICT_OUT="$(run_shim update --from-source --release 2>&1)"
+UPDATE_CONFLICT_STATUS=$?
+set -eu
+if [ "$UPDATE_CONFLICT_STATUS" -eq 0 ]; then
+  echo "FAIL: Expected nonzero exit from update --from-source --release, got 0 ($UPDATE_CONFLICT_OUT)"; exit 1
+fi
+echo "$UPDATE_CONFLICT_OUT" | grep -q "INSTALL_CALLED" && {
+  echo "FAIL: install.sh was called when conflicting flags passed ($UPDATE_CONFLICT_OUT)"; exit 1; }
+echo "$UPDATE_CONFLICT_OUT" | grep -q "cannot be combined" || {
+  echo "FAIL: missing cannot be combined message ($UPDATE_CONFLICT_OUT)"; exit 1
+}
+
+# Reset stamp to release for subsequent tests
+printf "SHA=fake\nPATCHSET=v1.2.3\nVERSION=v1.2.3\nMODE=release\n" > "$TEST_GROKGOD_HOME/.source-version"
+
 # Test 2b: Update dispatch exit code passthrough (e.g. failing with 42)
 cat << 'EOF' > "$TEST_GROKGOD_SRC/install.sh"
 #!/bin/sh
@@ -342,6 +371,50 @@ if [ "$SHIM_2F_HEAD" != "$LOCAL_2F_SHA" ]; then
   echo "FAIL: Test 2f - HEAD changed from local commit ($SHIM_2F_HEAD vs $LOCAL_2F_SHA)"; exit 1
 fi
 echo "PASS: Test 2f"
+
+# Test 2g: behind clone, untracked file exists on origin with identical bytes -> succeeds, HEAD==origin
+echo "Test 2g: Behind clone with untracked matching origin file"
+SHIM_ORIGIN_2G="$TMP_DIR/shim_origin_2g"
+SHIM_BEHIND_2G="$TMP_DIR/shim_behind_2g"
+mkdir -p "$SHIM_ORIGIN_2G/patches"
+git -C "$SHIM_ORIGIN_2G" init -b main >/dev/null 2>&1
+git -C "$SHIM_ORIGIN_2G" config user.name "CI"
+git -C "$SHIM_ORIGIN_2G" config user.email "ci@example.com"
+printf '%s\n' '#!/bin/sh' 'echo INSTALL_OLD' > "$SHIM_ORIGIN_2G/install.sh"
+chmod +x "$SHIM_ORIGIN_2G/install.sh"
+git -C "$SHIM_ORIGIN_2G" add install.sh
+git -C "$SHIM_ORIGIN_2G" commit -m "old src" >/dev/null 2>&1
+OLD_SHIM_2G_SHA="$(git -C "$SHIM_ORIGIN_2G" rev-parse HEAD)"
+
+printf '%s\n' '#!/bin/sh' 'echo INSTALL_NEW' > "$SHIM_ORIGIN_2G/install.sh"
+printf '%s\n' 'patch 0021 content' > "$SHIM_ORIGIN_2G/patches/0021-test.patch"
+git -C "$SHIM_ORIGIN_2G" add install.sh patches/0021-test.patch
+git -C "$SHIM_ORIGIN_2G" commit -m "new src with patch" >/dev/null 2>&1
+ORIGIN_2G_SHA="$(git -C "$SHIM_ORIGIN_2G" rev-parse HEAD)"
+
+git clone --quiet "$SHIM_ORIGIN_2G" "$SHIM_BEHIND_2G"
+git -C "$SHIM_BEHIND_2G" reset --hard "$OLD_SHIM_2G_SHA" >/dev/null 2>&1
+
+# In behind clone, untracked file under patches/ with identical bytes to origin/main
+mkdir -p "$SHIM_BEHIND_2G/patches"
+printf '%s\n' 'patch 0021 content' > "$SHIM_BEHIND_2G/patches/0021-test.patch"
+
+SHIM_2G_OUT="$(
+  HOME="$TEST_HOME" \
+  GROKGOD_HOME="$TEST_GROKGOD_HOME" \
+  GROKGOD_SRC="$SHIM_BEHIND_2G" \
+  GROK_BUILD_SRC="${TEST_GROK_BUILD_SRC:-$TMP_DIR/nonexistent_grok_build}" \
+  TMP_DIR="$TMP_DIR" \
+  sh "$SHIM_SRC" update
+)"
+echo "$SHIM_2G_OUT" | grep -q "INSTALL_NEW" || {
+  echo "FAIL: Test 2g - expected pulled install.sh ($SHIM_2G_OUT)"; exit 1
+}
+SHIM_2G_HEAD="$(git -C "$SHIM_BEHIND_2G" rev-parse HEAD)"
+if [ "$SHIM_2G_HEAD" != "$ORIGIN_2G_SHA" ]; then
+  echo "FAIL: Test 2g - HEAD ($SHIM_2G_HEAD) does not equal origin ($ORIGIN_2G_SHA)"; exit 1
+fi
+echo "PASS: Test 2g"
 
 # Test 3: Status subcommand
 echo "Test 3: Status subcommand"

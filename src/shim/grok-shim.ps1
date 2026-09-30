@@ -522,6 +522,8 @@ function Invoke-UpdateCommand([string[]]$argsList) {
             $parsedArgs += "-NoUpgrade"
         } elseif ($arg -match '^(--|-)(force)$') {
             $parsedArgs += "-Force"
+        } elseif ($arg -match '^(--|-)(release)$') {
+            # No-op: release is default mode on Windows, do not pass -Release to install.ps1
         } elseif ($arg -match '^(--|-)(uninstall)$') {
             [Console]::Error.WriteLine("error: uninstall cannot be invoked through grok update. Use .\install.ps1 -Uninstall directly.")
             exit 1
@@ -530,7 +532,7 @@ function Invoke-UpdateCommand([string[]]$argsList) {
             exit 1
         } else {
             [Console]::Error.WriteLine("error: unrecognized or disallowed update argument '$arg'")
-            [Console]::Error.WriteLine("allowed arguments: --version <tag>, --no-upgrade, --force")
+            [Console]::Error.WriteLine("allowed arguments: --version <tag>, --release, --no-upgrade, --force")
             exit 1
         }
         $i++
