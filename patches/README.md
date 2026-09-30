@@ -32,10 +32,11 @@ files, from the order below, or from `PINNED_BASE_SHA`.
 - `0016-credit-limit-switch-model.patch`: Adds `Switch model & retry` immediately before `Try Again` in the paid weekly/credit-limit dialogs and as the final choice in the free-plan usage-limit paywall. The free-plan failure path retains the exact sent prompt through `RetryState::Retrying` and free-usage `RetryState::Exhausted`, then captures it before `PromptResponse` turn cleanup; non-free exhausted/failed paths keep their existing clear behavior. Upgrade choices retain their URLs, while only the `FreeUsageLimit` paywall (not a `RestrictedCommand` upsell) exposes the switch action. It opens the existing direct `/model` picker in the same session and, only after a successful switch from that picker, consumes the stashed failed prompt once through the existing front-queue retry path. Dismissal or switch failure keeps the prompt stashed and sends nothing on the old model; ordinary `/model` remains unchanged.
 - `0017-welcome-logo-chat-accent.patch`: Welcome braille logo rests on `theme.accent_assistant` and shimmers to `theme.text_primary` with full-white peak shine (`SHINE = 1.0`).
 - `0018-gemini-option-enum-null-schema.patch`: Recursively sanitizes generated advertised JSON Schema `enum` arrays to non-empty strings only. Optional enums keep their nullable `type` and optional/required semantics; an enum keyword is removed if no valid string members remain. Payload parsing is unchanged.
+- `0019-plan-mode-globset-dependency.patch`: Declares the `globset` workspace dependency used by plan-mode glob matching in `xai-grok-shell`, so the stacked source patches resolve deterministically in CI.
 
 ## Target Commit
 
-- Base commit: `grok-build` commit `2bdd1d6a` (`2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8`) — origin/main after the 1.0.45 pin; patches 0001–0018 are authored/rebased against this base. Source mode still tracks the moving `origin/main`; this is the patch-authorship/release pin.
+- Base commit: `grok-build` commit `2bdd1d6a` (`2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8`) — origin/main after the 1.0.45 pin; patches 0001–0019 are authored/rebased against this base. Source mode still tracks the moving `origin/main`; this is the patch-authorship/release pin.
 
 ## Verification
 

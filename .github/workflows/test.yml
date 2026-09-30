@@ -46,6 +46,7 @@ jobs:
           sh tests/patches/test_registry.sh
           sh tests/patches/test_0003_apply.sh
           sh tests/patches/test_0018_apply.sh
+          sh tests/patches/test_0019_apply.sh
           sh tests/release/test_release_workflow.sh
           sh tests/release/test_rust_patch_validation_workflow.sh
 
