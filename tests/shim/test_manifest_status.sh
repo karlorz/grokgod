@@ -213,7 +213,7 @@ assert d["launcherPath"].endswith("/.local/bin/grok"), d["launcherPath"]
 assert d["patchedBinaryPath"].endswith("/bin/grok"), d["patchedBinaryPath"]
 assert d["installedAt"] == "2026-09-29T00:00:00Z", d["installedAt"]
 assert d["healthDetails"] == [], d["healthDetails"]
-assert len(d["persist"]) == 24, len(d["persist"])
+assert len(d["persist"]) == 25, len(d["persist"])
 assert d["persist"][0].startswith("0001-normalize-plugin-skill-join: applied"), d["persist"][0]
 assert d["persist"][-4] == "overlay-pin: missing", d["persist"][-4]
 assert d["persist"][-3] == "eval-home: missing", d["persist"][-3]
@@ -313,6 +313,7 @@ grep -q "^  0017-welcome-logo-chat-accent: applied$" "$TMP_DIR/t2.txt" || { echo
 grep -q "^  0018-gemini-option-enum-null-schema: applied$" "$TMP_DIR/t2.txt" || { echo "FAIL: human status lost 0018 line"; exit 1; }
 grep -q "^  0019-plan-mode-globset-dependency: applied$" "$TMP_DIR/t2.txt" || { echo "FAIL: human status lost 0019 line"; exit 1; }
 grep -q "^  0020-switch-model-complete-test-model-choice: applied$" "$TMP_DIR/t2.txt" || { echo "FAIL: human status lost 0020 line"; exit 1; }
+grep -q "^  0021-idle-resume-ignore-context-window-downgrade: applied$" "$TMP_DIR/t2.txt" || { echo "FAIL: human status lost 0021 line"; exit 1; }
 grep -q "^  overlay-pin: missing$" "$TMP_DIR/t2.txt" || { echo "FAIL: human status lost overlay-pin line"; exit 1; }
 grep -q "^  weekly-pin: global-default$" "$TMP_DIR/t2.txt" || { echo "FAIL: human status lost weekly-pin line"; exit 1; }
 grep -q "^source-drift: unknown$" "$TMP_DIR/t2.txt" || { echo "FAIL: human status lost source-drift line"; exit 1; }

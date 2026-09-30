@@ -16,7 +16,8 @@ on `grok update` / `grokgod update`. Current set: `0001-normalize-plugin-skill-j
 `0014-deepseek-tool-image-hoist`, `0015-cli-model-ephemeral`,
 `0016-credit-limit-switch-model`, `0017-welcome-logo-chat-accent`,
 `0018-gemini-option-enum-null-schema`, `0019-plan-mode-globset-dependency`,
-`0020-switch-model-complete-test-model-choice`.
+`0020-switch-model-complete-test-model-choice`,
+`0021-idle-resume-ignore-context-window-downgrade`.
 _Avoid_: Mach-O hex edit, plugin.json rewrite as the engine fix
 
 **Patch registry**:
@@ -140,6 +141,15 @@ tests to construct `TaskResult::SwitchModelComplete` with the current
 behavior and production sources are unchanged.
 _Avoid_: changing `SwitchModelComplete` runtime handling, retaining removed
 `model_id`/`effort` fields, or widening this patch beyond pager tests
+
+**Idle-resume context-window downgrade ignore**:
+`0021-idle-resume-ignore-context-window-downgrade` prevents idle-resume
+`/models-v2` refreshes from overwriting a larger active sampling context
+window (such as 500k) with a smaller value (such as cli-chat-proxy 256k).
+It mirrors the response-header downgrade protection in `session_setup.rs`,
+keeping upward upgrades intact while logging a warning and ignoring downgrades.
+_Avoid_: blocking context_window upgrades, modifying default context window constants,
+or changing response-header metadata handling
 
 **Per-model tool gating**:
 `[model."<id>".tools]` with `deny` and `allow` lists in grokgod `0005`. Strips
