@@ -126,10 +126,10 @@ index af280df5..62f0e23b 100644
          let tools_is_empty = req.tools.is_empty();
          let tools: Option<Vec<ToolDefinition>> = if tools_is_empty {
 diff --git a/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions_tests.rs b/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions_tests.rs
-index 47395b6a..b05c7986 100644
+index 47395b6a..16f35864 100644
 --- a/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions_tests.rs
 +++ b/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions_tests.rs
-@@ -629,3 +629,157 @@ fn upgrade_then_fold_through_conversation_to_chat_messages() {
+@@ -629,3 +629,342 @@ fn upgrade_then_fold_through_conversation_to_chat_messages() {
          "reconstructed sibling folded onto assistant.reasoning_content"
      );
  }
@@ -286,6 +286,191 @@ index 47395b6a..b05c7986 100644
 +        assert_eq!(chat_req.messages[1].role, Role::Tool);
 +        assert_eq!(chat_req.messages[2].role, Role::User);
 +    }
++}
++
++#[test]
++fn test_tool_image_hoisting_mixed_tool_run() {
++    let text_tool = ConversationItem::tool_result("call_text", "Text-only tool output");
++    let img_tool = ConversationItem::tool_result_with_images(
++        "call_img",
++        "Image-bearing tool output",
++        vec![ContentPart::Image {
++            url: "data:image/png;base64,mixed_img".into(),
++        }],
++    );
++
++    let req = ConversationRequest {
++        items: vec![
++            ConversationItem::user("mixed run prompt"),
++            text_tool,
++            img_tool,
++        ],
++        input_modalities: vec!["text".to_string(), "image".to_string()],
++        ..Default::default()
++    };
++    let chat_req: ChatCompletionRequest = req.into();
++    // user prompt, tool 1 (text), tool 2 (text after stripping img), hoisted user msg
++    assert_eq!(chat_req.messages.len(), 4);
++    assert_eq!(chat_req.messages[0].role, Role::User);
++    assert_eq!(chat_req.messages[0].text_content(), "mixed run prompt");
++
++    assert_eq!(chat_req.messages[1].role, Role::Tool);
++    assert_eq!(chat_req.messages[1].tool_call_id, Some("call_text".to_string()));
++    assert_eq!(chat_req.messages[1].text_content(), "Text-only tool output");
++    assert!(matches!(chat_req.messages[1].content, MessageContent::Text(_)));
++
++    assert_eq!(chat_req.messages[2].role, Role::Tool);
++    assert_eq!(chat_req.messages[2].tool_call_id, Some("call_img".to_string()));
++    assert_eq!(chat_req.messages[2].text_content(), "Image-bearing tool output");
++    assert!(matches!(chat_req.messages[2].content, MessageContent::Text(_)));
++
++    assert_eq!(chat_req.messages[3].role, Role::User);
++    let MessageContent::Blocks(user_blocks) = &chat_req.messages[3].content else {
++        panic!("expected Blocks in hoisted user message");
++    };
++    assert_eq!(user_blocks.len(), 2);
++    assert!(matches!(&user_blocks[0], ChatContentBlock::Text { text } if text == "Attached image(s) from tool result:"));
++    assert!(matches!(&user_blocks[1], ChatContentBlock::ImageUrl { image_url } if image_url.url == "data:image/png;base64,mixed_img"));
++}
++
++#[test]
++fn test_tool_image_hoisting_multiple_images_in_single_result() {
++    let multi_img_tool = ConversationItem::tool_result_with_images(
++        "call_multi",
++        "Multi image output",
++        vec![
++            ContentPart::Image {
++                url: "data:image/png;base64,first_img".into(),
++            },
++            ContentPart::Image {
++                url: "data:image/png;base64,second_img".into(),
++            },
++        ],
++    );
++
++    let req = ConversationRequest {
++        items: vec![
++            ConversationItem::user("multi img prompt"),
++            multi_img_tool,
++        ],
++        input_modalities: vec!["image".to_string(), "text".to_string()],
++        ..Default::default()
++    };
++    let chat_req: ChatCompletionRequest = req.into();
++    assert_eq!(chat_req.messages.len(), 3);
++    assert_eq!(chat_req.messages[0].role, Role::User);
++
++    assert_eq!(chat_req.messages[1].role, Role::Tool);
++    assert_eq!(chat_req.messages[1].tool_call_id, Some("call_multi".to_string()));
++    assert_eq!(chat_req.messages[1].text_content(), "Multi image output");
++    assert!(matches!(chat_req.messages[1].content, MessageContent::Text(_)));
++
++    assert_eq!(chat_req.messages[2].role, Role::User);
++    let MessageContent::Blocks(user_blocks) = &chat_req.messages[2].content else {
++        panic!("expected Blocks in hoisted user message");
++    };
++    assert_eq!(user_blocks.len(), 3);
++    assert!(matches!(&user_blocks[0], ChatContentBlock::Text { text } if text == "Attached image(s) from tool result:"));
++    assert!(matches!(&user_blocks[1], ChatContentBlock::ImageUrl { image_url } if image_url.url == "data:image/png;base64,first_img"));
++    assert!(matches!(&user_blocks[2], ChatContentBlock::ImageUrl { image_url } if image_url.url == "data:image/png;base64,second_img"));
++}
++
++#[test]
++fn test_tool_image_hoisting_preserves_both_tool_call_ids() {
++    let tool_1 = ConversationItem::tool_result_with_images(
++        "tool_call_alpha_123",
++        "Alpha output",
++        vec![ContentPart::Image {
++            url: "data:image/png;base64,alpha_img".into(),
++        }],
++    );
++    let tool_2 = ConversationItem::tool_result_with_images(
++        "tool_call_beta_456",
++        "Beta output",
++        vec![ContentPart::Image {
++            url: "data:image/png;base64,beta_img".into(),
++        }],
++    );
++
++    let req = ConversationRequest {
++        items: vec![
++            ConversationItem::user("run two tools"),
++            tool_1,
++            tool_2,
++        ],
++        input_modalities: vec!["text".to_string(), "image".to_string()],
++        ..Default::default()
++    };
++    let chat_req: ChatCompletionRequest = req.into();
++    assert_eq!(chat_req.messages.len(), 4);
++
++    assert_eq!(chat_req.messages[1].role, Role::Tool);
++    assert_eq!(
++        chat_req.messages[1].tool_call_id,
++        Some("tool_call_alpha_123".to_string())
++    );
++    assert_eq!(chat_req.messages[1].text_content(), "Alpha output");
++
++    assert_eq!(chat_req.messages[2].role, Role::Tool);
++    assert_eq!(
++        chat_req.messages[2].tool_call_id,
++        Some("tool_call_beta_456".to_string())
++    );
++    assert_eq!(chat_req.messages[2].text_content(), "Beta output");
++
++    assert_eq!(chat_req.messages[3].role, Role::User);
++    let MessageContent::Blocks(user_blocks) = &chat_req.messages[3].content else {
++        panic!("expected Blocks in hoisted user message");
++    };
++    assert_eq!(user_blocks.len(), 3);
++    assert!(matches!(&user_blocks[0], ChatContentBlock::Text { text } if text == "Attached image(s) from tool result:"));
++    assert!(matches!(&user_blocks[1], ChatContentBlock::ImageUrl { image_url } if image_url.url == "data:image/png;base64,alpha_img"));
++    assert!(matches!(&user_blocks[2], ChatContentBlock::ImageUrl { image_url } if image_url.url == "data:image/png;base64,beta_img"));
++}
++
++#[test]
++fn test_tool_image_hoisting_system_message_untouched() {
++    let system_item = ConversationItem::system("You are a strict code review assistant.");
++    let tool_item = ConversationItem::tool_result_with_images(
++        "call_sys_check",
++        "Sys check output",
++        vec![ContentPart::Image {
++            url: "data:image/png;base64,sys_img".into(),
++        }],
++    );
++
++    let req = ConversationRequest {
++        items: vec![
++            system_item,
++            ConversationItem::user("perform check"),
++            tool_item,
++        ],
++        input_modalities: vec!["text".to_string(), "image".to_string()],
++        ..Default::default()
++    };
++    let chat_req: ChatCompletionRequest = req.into();
++    assert_eq!(chat_req.messages.len(), 4);
++
++    // Message 0: system message passes through unmodified, no hoisted images attached
++    assert_eq!(chat_req.messages[0].role, Role::System);
++    assert_eq!(chat_req.messages[0].text_content(), "You are a strict code review assistant.");
++    assert!(matches!(chat_req.messages[0].content, MessageContent::Text(_)));
++
++    assert_eq!(chat_req.messages[1].role, Role::User);
++    assert_eq!(chat_req.messages[1].text_content(), "perform check");
++
++    assert_eq!(chat_req.messages[2].role, Role::Tool);
++    assert_eq!(chat_req.messages[2].tool_call_id, Some("call_sys_check".to_string()));
++    assert_eq!(chat_req.messages[2].text_content(), "Sys check output");
++
++    // Hoisted images appear in a dedicated synthetic user message after tool results, never on system
++    assert_eq!(chat_req.messages[3].role, Role::User);
++    let MessageContent::Blocks(user_blocks) = &chat_req.messages[3].content else {
++        panic!("expected Blocks in hoisted user message");
++    };
++    assert_eq!(user_blocks.len(), 2);
++    assert!(matches!(&user_blocks[0], ChatContentBlock::Text { text } if text == "Attached image(s) from tool result:"));
++    assert!(matches!(&user_blocks[1], ChatContentBlock::ImageUrl { image_url } if image_url.url == "data:image/png;base64,sys_img"));
 +}
 diff --git a/crates/codegen/xai-grok-sampling-types/src/types.rs b/crates/codegen/xai-grok-sampling-types/src/types.rs
 index efe4d4e1..bc5e4546 100644
