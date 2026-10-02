@@ -647,6 +647,73 @@ if ($Tag -eq "latest" -and -not $env:GROKGOD_DOWNLOAD_BASE_URL) {
     }
 }
 
+# Local verification fast path: trust only a complete release stamp whose
+# recorded artifact hash still matches the installed binary. A missing
+# manifest is compatible with older installs; a present manifest is advisory
+# only where its relevant fields exist, but conflicts or parse errors force the
+# normal verified download path.
+$LocalReleaseVerified = $false
+if (-not $Force -and (Test-Path -LiteralPath $TargetExe)) {
+    try {
+        # Re-read under the install lock so the decision uses one coherent
+        # post-lock view even if another installer completed while we waited.
+        $fastPathStamp = Get-StampDict
+        $stampSha = if ($fastPathStamp.ContainsKey("SHA")) { [string]$fastPathStamp["SHA"] } else { "" }
+        $stampPatchset = if ($fastPathStamp.ContainsKey("PATCHSET")) { [string]$fastPathStamp["PATCHSET"] } else { "" }
+        $stampMode = if ($fastPathStamp.ContainsKey("MODE")) { [string]$fastPathStamp["MODE"] } else { "" }
+
+        if (($stampSha -match '^[0-9a-fA-F]{64}$') -and
+            ($stampPatchset -eq $Tag) -and
+            ($stampMode -eq "release")) {
+            $normalizedStampSha = $stampSha.ToLower()
+            $manifestCompatible = $true
+            if (Test-Path -LiteralPath $ManifestFile) {
+                $fastPathManifest = Read-Manifest
+                if (-not $fastPathManifest) {
+                    $manifestCompatible = $false
+                } else {
+                    $manifestChecks = @{
+                        "mode"           = "release"
+                        "patchset"       = $Tag
+                        "artifactSha256" = $normalizedStampSha
+                    }
+                    foreach ($field in $manifestChecks.Keys) {
+                        $property = $fastPathManifest.PSObject.Properties[$field]
+                        if ($property -and $null -ne $property.Value -and ([string]$property.Value).Length -gt 0) {
+                            $actualValue = [string]$property.Value
+                            $expectedValue = [string]$manifestChecks[$field]
+                            if ($field -eq "artifactSha256") {
+                                $actualValue = $actualValue.ToLower()
+                            }
+                            if ($actualValue -ne $expectedValue) {
+                                $manifestCompatible = $false
+                                break
+                            }
+                        }
+                    }
+                }
+            }
+            if ($manifestCompatible) {
+                $installedHash = (Get-FileHash -LiteralPath $TargetExe -Algorithm SHA256 -ErrorAction Stop).Hash.ToLower()
+                if ($installedHash -eq $normalizedStampSha) {
+                    $LocalReleaseVerified = $true
+                }
+            }
+        }
+    } catch {
+        # Any local hashing or metadata error is a cache miss. Continue with
+        # the normal download, checksum verification, and candidate preflight.
+        $LocalReleaseVerified = $false
+    }
+}
+
+if ($LocalReleaseVerified) {
+    Install-DailyMinimalAgent
+    Write-OK "Installed release $Tag was locally verified. Skipping binary/checksum download and candidate preflight."
+    Release-InstallLock
+    exit 0
+}
+
 $BaseUrl = if ($env:GROKGOD_DOWNLOAD_BASE_URL) {
     $env:GROKGOD_DOWNLOAD_BASE_URL.TrimEnd('/')
 } elseif ($Tag -eq "latest") {

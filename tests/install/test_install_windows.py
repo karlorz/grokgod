@@ -116,6 +116,28 @@ def main():
     check("$sumLines[0]" not in src and "sumLines[0]" not in src, "No first-line checksum fallback ($sumLines[0] eliminated)")
     check("Checksum verification failed for runtime asset" in src, "Verifies runtime asset checksums fail-closed")
 
+    # 7b. Locally verified release fast path
+    fast_path_pos = src.find("$LocalReleaseVerified = $false")
+    latest_resolution_pos = src.find("# Resolve real tag for 'latest' release")
+    candidate_create_pos = src.find("$CandidateSibling = Join-Path")
+    download_step_pos = src.find('Write-Step "Downloading $TARGET_ASSET and SHA256SUMS')
+    check(fast_path_pos != -1, "Defines locally verified release fast path")
+    check("if (-not $Force -and (Test-Path -LiteralPath $TargetExe))" in src, "Force bypasses locally verified release fast path")
+    check("'^[0-9a-fA-F]{64}$'" in src, "Fast path requires a 64-hex stamped SHA")
+    check('$stampPatchset -eq $Tag' in src, "Fast path requires stamped PATCHSET to equal resolved tag")
+    check('$stampMode -eq "release"' in src, "Fast path requires release mode stamp")
+    check("Get-FileHash -LiteralPath $TargetExe -Algorithm SHA256 -ErrorAction Stop" in src, "Fast path hashes installed target fail-safely")
+    check('"mode"           = "release"' in src and '"patchset"       = $Tag' in src and '"artifactSha256" = $normalizedStampSha' in src, "Fast path rejects conflicting manifest release metadata")
+    check("if (Test-Path -LiteralPath $ManifestFile)" in src[fast_path_pos:candidate_create_pos], "Fast path allows a missing manifest")
+    check("Any local hashing or metadata error is a cache miss" in src, "Fast path metadata errors fall back to verified download")
+    check(latest_resolution_pos < fast_path_pos < candidate_create_pos < download_step_pos, "Fast path runs after latest-tag resolution and before candidate/temp download flow")
+    fast_hit_pos = src.find("if ($LocalReleaseVerified)")
+    fast_hit_end = src.find("$BaseUrl =", fast_hit_pos)
+    fast_hit_src = src[fast_hit_pos:fast_hit_end]
+    check("Install-DailyMinimalAgent" in fast_hit_src and "-DownloadedPath" not in fast_hit_src, "Fast-path hit refreshes agent from local/cache content")
+    check("Skipping binary/checksum download and candidate preflight" in fast_hit_src, "Fast-path success message names skipped verified work")
+    check("Release-InstallLock" in fast_hit_src and "exit 0" in fast_hit_src, "Fast-path hit releases lock and exits successfully")
+
     # 8. Candidate Preflight Verification
     preflight_pos = src.find("--version")
     move_pos = src.find("Move-Item -LiteralPath $CandidateSibling -Destination $TargetExe")
@@ -276,6 +298,10 @@ def main():
         check("HostShell" in install_test_src and "PSEdition" in install_test_src, "Native install test aligns child runner with host PSEdition")
         check('$serverPsi.FileName = $HostShell' in install_test_src, "Native install test launches mock server with HostShell")
         check("Combined" in install_test_src, "Native install test uses combined output for robust stderr matching")
+        check("request.log" in install_test_src, "Native install test records mock HTTP requests")
+        check("Fast path skips grokgod-windows-x64.exe request" in install_test_src, "Native install test asserts fast path skips binary request")
+        check("Fast path skips SHA256SUMS request" in install_test_src, "Native install test asserts fast path skips checksum request")
+        check("Fast path skips candidate preflight output" in install_test_src, "Native install test asserts fast path skips candidate preflight")
 
         # Invariant checks for no duplicate test headings and no uninitialized variables
         test_9_count = len(re.findall(r'Write-Host\s+"Test 9:', install_test_src))

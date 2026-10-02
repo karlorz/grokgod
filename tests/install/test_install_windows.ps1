@@ -239,6 +239,8 @@ $mockDailyMinimalHash = (Get-FileHash -LiteralPath $mockDailyMinimal -Algorithm 
 
 # Create SHA256SUMS containing exact entries for binary and all runtime scripts
 $sumsFile = Join-Path $mockServerDir "SHA256SUMS"
+$requestLog = Join-Path $fixtureRoot "request.log"
+Set-Content -LiteralPath $requestLog -Value "" -Encoding ASCII
 $sumsLines = @(
     "$mockExeHash *grokgod-windows-x64.exe",
     "$mockShimHash *grok-shim.ps1",
@@ -261,6 +263,7 @@ while (`$listener.IsListening) {
         `$req = `$context.Request
         `$res = `$context.Response
         `$p = `$req.Url.AbsolutePath.TrimStart('/')
+        [System.IO.File]::AppendAllText("$($requestLog.Replace('\', '\\'))", `$p + [Environment]::NewLine, [System.Text.Encoding]::ASCII)
         if (`$p -eq "healthz") {
             `$bytes = [System.Text.Encoding]::ASCII.GetBytes("OK")
             `$res.ContentType = "text/plain"
@@ -392,10 +395,16 @@ try {
 
     # Already-up-to-date / second install with identical exe hash still writes/refreshes the agent
     Set-Content -LiteralPath $expectedAgentPath -Value "STALE_UP_TO_DATE" -Encoding ASCII
+    Set-Content -LiteralPath $requestLog -Value "" -Encoding ASCII
     $resUpToDate = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile } -ScriptArgs @("-Prefix", $targetPrefix)
     Assert-Test ($resUpToDate.ExitCode -eq 0) "Already-up-to-date install succeeds"
     $upToDateAgentContent = Get-Content -LiteralPath $expectedAgentPath -Raw
     Assert-Test ($upToDateAgentContent.Trim() -eq $expectedTmplContent.Trim()) "Already-up-to-date install refreshes agent"
+    $fastPathRequests = @(Get-Content -LiteralPath $requestLog -ErrorAction SilentlyContinue | Where-Object { $_ -match '\S' })
+    Assert-Test (-not ($fastPathRequests -contains "grokgod-windows-x64.exe")) "Fast path skips grokgod-windows-x64.exe request"
+    Assert-Test (-not ($fastPathRequests -contains "SHA256SUMS")) "Fast path skips SHA256SUMS request"
+    Assert-Test ($resUpToDate.Combined -notmatch "Running candidate preflight verification") "Fast path skips candidate preflight output"
+    Assert-Test ($resUpToDate.Combined -match "Installed release .* was locally verified") "Fast path reports locally verified installed release"
 
     # -------------------------------------------------------------------------
     # Test 5: Full Rollback Across All Failure Injection Points
