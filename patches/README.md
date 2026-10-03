@@ -35,10 +35,11 @@ files, from the order below, or from `PINNED_BASE_SHA`.
 - `0019-plan-mode-globset-dependency.patch`: Declares the `globset` workspace dependency used by plan-mode glob matching in `xai-grok-shell`, so the stacked source patches resolve deterministically in CI.
 - `0020-switch-model-complete-test-model-choice.patch`: Updates stale patch-0016 pager test constructors to the current `TaskResult::SwitchModelComplete { choice: ModelChoice, ... }` API. Tests-only follow-up; runtime behavior is unchanged.
 - `0021-idle-resume-ignore-context-window-downgrade.patch`: Prevents idle-resume `/models-v2` refreshes from overwriting a larger live sampling context window with a smaller value (such as cli-chat-proxy 256k). Retains upgrades and matches response-header downgrade protection.
+- `0022-background-task-process-group-cleanup.patch`: Terminates the full process group on background task kill and actor cleanup so leaked child processes spawned by background tasks do not survive actor teardown.
 
 ## Target Commit
 
-- Base commit: `grok-build` commit `2bdd1d6a` (`2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8`) — origin/main after the 1.0.45 pin; patches 0001–0021 are authored/rebased against this base. Source mode still tracks the moving `origin/main`; this is the patch-authorship/release pin.
+- Base commit: `grok-build` commit `2bdd1d6a` (`2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8`) — origin/main after the 1.0.45 pin; patches 0001–0022 are authored/rebased against this base. Source mode still tracks the moving `origin/main`; this is the patch-authorship/release pin.
 
 ## Verification
 

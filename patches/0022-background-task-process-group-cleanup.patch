@@ -1,0 +1,286 @@
+diff --git a/crates/codegen/xai-grok-tools/src/computer/local/terminal.rs b/crates/codegen/xai-grok-tools/src/computer/local/terminal.rs
+index f09831ba..d991744f 100644
+--- a/crates/codegen/xai-grok-tools/src/computer/local/terminal.rs
++++ b/crates/codegen/xai-grok-tools/src/computer/local/terminal.rs
+@@ -1299,7 +1299,7 @@ impl LocalTerminalActor {
+             };
+         };
+ 
+-        if process.lifecycle.has_exited() {
++        if process.lifecycle.has_exited() && !owned_group_has_members(process) {
+             return KillOutcome::AlreadyExited;
+         }
+ 
+@@ -1506,8 +1506,13 @@ impl LocalTerminalActor {
+         // `ProcessState::process_group`); after the loop so every reap path is caught.
+         #[cfg(unix)]
+         for process in self.processes.values_mut() {
+-            if process.process_group.is_some() && process.child.id().is_none() {
+-                process.process_group = None;
++            if process.child.id().is_none() {
++                if process.explicitly_killed && owned_group_has_members(process) {
++                    send_sigkill_to_group(process);
++                }
++                if !owned_group_has_members(process) {
++                    process.process_group = None;
++                }
+             }
+         }
+ 
+@@ -1756,7 +1761,7 @@ impl LocalTerminalActor {
+         if self
+             .processes
+             .get(task_id)
+-            .is_some_and(|p| !p.bg_status.is_backgrounded())
++            .is_some_and(|p| !p.bg_status.is_backgrounded() && !owned_group_has_members(p))
+         {
+             self.processes.remove(task_id);
+         }
+@@ -1768,7 +1773,7 @@ impl LocalTerminalActor {
+             .iter()
+             .filter(|(_, p)| {
+                 // A mid-drain entry stays: its DrainedOutput resolves by this key.
+-                if p.draining || !p.lifecycle.has_exited() {
++                if p.draining || !p.lifecycle.has_exited() || owned_group_has_members(p) {
+                     return false;
+                 }
+                 if !p.bg_status.is_backgrounded() {
+@@ -2850,28 +2855,35 @@ fn try_read_nonblocking(
+         Poll::Pending => None,
+     }
+ }
+-/// Fire-and-forget; the poll loop reaps on the next tick.
+-fn send_sigterm_to_group(process: &ProcessState) {
+-    // Unix: skip if already reaped — the stored leader_pid may have been recycled.
++fn owned_group_has_members(process: &ProcessState) -> bool {
+     #[cfg(unix)]
+-    if process.child.id().is_none() {
+-        return;
++    {
++        process
++            .process_group
++            .as_ref()
++            .is_some_and(|group| group.has_live_members() != Some(false))
+     }
+-    if let Some(pg) = process.process_group.as_ref() {
+-        let _ = pg.terminate();
++    #[cfg(not(unix))]
++    {
++        process.process_group.is_some() && process.child.id().is_some()
+     }
+ }
+ 
+-/// `start_kill` on the immediate child is the fallback when group teardown is degraded.
+-fn send_sigkill_to_group(process: &mut ProcessState) {
+-    // Unix: skip if already reaped (see send_sigterm_to_group).
+-    #[cfg(unix)]
+-    if process.child.id().is_none() {
+-        let _ = process.child.start_kill();
+-        return;
++/// Fire-and-forget; the poll loop reaps on the next tick.
++fn send_sigterm_to_group(process: &ProcessState) {
++    if owned_group_has_members(process)
++        && let Some(group) = process.process_group.as_ref()
++    {
++        let _ = group.terminate();
+     }
+-    if let Some(pg) = process.process_group.as_ref() {
+-        let _ = pg.kill();
++}
++
++/// A reaped wrapper can still have live descendants in its process group.
++fn send_sigkill_to_group(process: &mut ProcessState) {
++    if owned_group_has_members(process)
++        && let Some(group) = process.process_group.as_ref()
++    {
++        let _ = group.kill();
+     }
+     let _ = process.child.start_kill();
+ }
+@@ -3015,32 +3027,44 @@ fn read_available(reader: &mut (impl tokio::io::AsyncRead + Unpin), out: &mut Ve
+ /// bounded so the actor loop never blocks indefinitely.
+ async fn graceful_kill_and_wait(process: &mut ProcessState) {
+     send_sigterm_to_group(process);
+-
+-    if tokio::time::timeout(SIGTERM_GRACE, process.child.wait())
+-        .await
+-        .is_ok()
+-    {
+-        drain_remaining_output(process).await;
+-        return;
++    let deadline = Instant::now() + SIGTERM_GRACE;
++    loop {
++        let child_reaped = matches!(process.child.try_wait(), Ok(Some(_)));
++        #[cfg(unix)]
++        let stopped = child_reaped && !owned_group_has_members(process);
++        #[cfg(not(unix))]
++        let stopped = child_reaped;
++        if stopped {
++            drain_remaining_output(process).await;
++            return;
++        }
++        if Instant::now() >= deadline {
++            break;
++        }
++        tokio::time::sleep(Duration::from_millis(10)).await;
+     }
+ 
+     send_sigkill_to_group(process);
+-
+-    // SIGKILL almost always reaps instantly; the cap protects against D-state
+-    // (uninterruptible kernel I/O). On timeout, abandon — poll_process retries.
+     const SIGKILL_REAP_TIMEOUT: Duration = Duration::from_secs(5);
+-    if tokio::time::timeout(SIGKILL_REAP_TIMEOUT, process.child.wait())
+-        .await
+-        .is_err()
+-    {
+-        tracing::warn!(
+-            pid = ?process.child.id(),
+-            "Process did not exit after SIGKILL within {:?}, \
+-             abandoning reap — poll loop will pick it up",
+-            SIGKILL_REAP_TIMEOUT
+-        );
++    if let Some(group) = process.process_group.as_ref() {
++        group.schedule_reap(SIGKILL_REAP_TIMEOUT);
++    }
++    let deadline = Instant::now() + SIGKILL_REAP_TIMEOUT;
++    loop {
++        let child_reaped = matches!(process.child.try_wait(), Ok(Some(_)));
++        #[cfg(unix)]
++        let stopped = child_reaped && !owned_group_has_members(process);
++        #[cfg(not(unix))]
++        let stopped = child_reaped;
++        if stopped {
++            break;
++        }
++        if Instant::now() >= deadline {
++            tracing::warn!(pid = ?process.child.id(), "Process group cleanup exceeded its reap deadline");
++            break;
++        }
++        tokio::time::sleep(Duration::from_millis(10)).await;
+     }
+-
+     drain_remaining_output(process).await;
+ }
+ 
+@@ -3051,22 +3075,17 @@ async fn graceful_kill_and_wait(process: &mut ProcessState) {
+ )]
+ async fn kill_and_finalize(process: &mut ProcessState) -> KillOutcome {
+     // Reaped between the caller's check and here (race with poll_process).
+-    if process.lifecycle.has_exited() {
++    if process.lifecycle.has_exited() && !owned_group_has_members(process) {
+         return KillOutcome::AlreadyExited;
+     }
+ 
+     match process.child.try_wait() {
+-        Ok(Some(status)) => {
++        Ok(Some(status)) if !owned_group_has_members(process) => {
+             drain_remaining_output(process).await;
+             finalize_process(process, Some(status)).await;
+             return KillOutcome::AlreadyExited;
+         }
+-        Err(_) => {
+-            drain_remaining_output(process).await;
+-            finalize_process(process, None).await;
+-            return KillOutcome::AlreadyExited;
+-        }
+-        Ok(None) => {}
++        _ => {}
+     }
+ 
+     graceful_kill_and_wait(process).await;
+@@ -3074,7 +3093,7 @@ async fn kill_and_finalize(process: &mut ProcessState) -> KillOutcome {
+     // Drop the scope handle now (not at the next sweep) so a racing kill_all()
+     // can't killpg the recycled pid; kept if the reap was abandoned (id still Some).
+     #[cfg(unix)]
+-    if process.child.id().is_none() {
++    if process.child.id().is_none() && !owned_group_has_members(process) {
+         process.process_group = None;
+     }
+ 
+@@ -3515,6 +3534,85 @@ mod tests {
+         }
+     }
+ 
++    #[cfg(unix)]
++    struct CleanupTestGroup(crate::util::ProcessGroup);
++
++    #[cfg(unix)]
++    impl Drop for CleanupTestGroup {
++        fn drop(&mut self) {
++            if self.0.has_live_members() != Some(false) {
++                self.0.kill_and_reap(Duration::from_secs(1));
++            }
++        }
++    }
++
++    #[cfg(unix)]
++    async fn check_background_group_cleanup(leader_exits_first: bool) {
++        let directory = tempfile::tempdir().unwrap();
++        let marker = directory.path().join("ready");
++        let script = directory.path().join("child.py");
++        let code = format!(
++            r#"import os, signal, time
++read_fd, write_fd = os.pipe()
++child = os.fork()
++if child == 0:
++    os.close(read_fd)
++    signal.signal(signal.SIGTERM, signal.SIG_IGN)
++    with open(os.devnull, 'wb') as sink:
++        os.dup2(sink.fileno(), 1)
++        os.dup2(sink.fileno(), 2)
++    os.write(write_fd, b'ready')
++    os.close(write_fd)
++    while True: time.sleep(0.05)
++os.close(write_fd)
++os.read(read_fd, 5)
++os.close(read_fd)
++with open({marker:?} + '.pending', 'w') as out: out.write(str(os.getpgrp()))
++os.replace({marker:?} + '.pending', {marker:?})
++if {early}: os._exit(0)
++while True: time.sleep(0.05)
++"#,
++            marker = marker.to_string_lossy(),
++            early = if leader_exits_first { "True" } else { "False" },
++        );
++        std::fs::write(&script, code).unwrap();
++        let backend = LocalTerminalBackend::new();
++        let mut request = make_request(&format!("python3 '{}'", script.display()));
++        request.output_file = directory.path().join("output");
++        let task = backend.run_background(request).await.unwrap();
++        let deadline = Instant::now() + Duration::from_secs(5);
++        while !marker.exists() && Instant::now() < deadline {
++            tokio::time::sleep(Duration::from_millis(10)).await;
++        }
++        let pgid: u32 = std::fs::read_to_string(&marker).unwrap().parse().unwrap();
++        let mut group = crate::util::ProcessGroup::new().unwrap();
++        group.attach_pid(pgid).unwrap();
++        let guard = CleanupTestGroup(group);
++        if leader_exits_first {
++            assert!(
++                poll_until_task_completed(&backend, &task.task_id, Duration::from_secs(5)).await
++            );
++        }
++        assert_eq!(backend.kill_task(&task.task_id).await, KillOutcome::Killed);
++        assert_eq!(
++            guard.0.has_live_members(),
++            Some(false),
++            "descendants survived successful kill"
++        );
++    }
++
++    #[cfg(unix)]
++    #[tokio::test]
++    async fn background_group_cleanup_after_wrapper_term() {
++        check_background_group_cleanup(false).await;
++    }
++
++    #[cfg(unix)]
++    #[tokio::test]
++    async fn background_group_cleanup_after_wrapper_exit() {
++        check_background_group_cleanup(true).await;
++    }
++
+     #[tokio::test]
+     async fn run_background_preserves_description_on_snapshot() {
+         let backend = LocalTerminalBackend::new();
