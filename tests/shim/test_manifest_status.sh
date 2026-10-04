@@ -200,7 +200,7 @@ json_valid "$TMP_DIR/t1.json" || { echo "FAIL: status --json is not valid JSON";
 [ "$(json_field "$TMP_DIR/t1.json" patchedBinaryExists)" = "True" ] || { echo "FAIL: expected patchedBinaryExists true"; exit 1; }
 # Pinned POSIX nulls: status never executes the target binary and there is no
 # official-binary resolver outside Windows.
-python3 - "$TMP_DIR/t1.json" << 'PY' || { echo "FAIL: POSIX null parity fields drifted"; exit 1; }
+python3 - "$TMP_DIR/t1.json" "$SRC/patches/registry.tsv" << 'PY' || { echo "FAIL: POSIX null parity fields drifted"; exit 1; }
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["schemaVersion"] == 1, d["schemaVersion"]
@@ -213,8 +213,17 @@ assert d["launcherPath"].endswith("/.local/bin/grok"), d["launcherPath"]
 assert d["patchedBinaryPath"].endswith("/bin/grok"), d["patchedBinaryPath"]
 assert d["installedAt"] == "2026-09-29T00:00:00Z", d["installedAt"]
 assert d["healthDetails"] == [], d["healthDetails"]
-assert len(d["persist"]) == 25, len(d["persist"])
-assert d["persist"][0].startswith("0001-normalize-plugin-skill-join: applied"), d["persist"][0]
+expected_patches = []
+with open(sys.argv[2], encoding="utf-8") as registry:
+    for line in registry:
+        line = line.rstrip("\r\n")
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) == 3 and len(parts[0]) == 4 and parts[0].isdigit():
+            expected_patches.append(f"{parts[1]}: applied")
+assert expected_patches, "expected patches list is empty"
+assert d["persist"][:-4] == expected_patches, (d["persist"][:-4], expected_patches)
 assert d["persist"][-4] == "overlay-pin: missing", d["persist"][-4]
 assert d["persist"][-3] == "eval-home: missing", d["persist"][-3]
 assert d["persist"][-2] == "weekly-pin: global-default", d["persist"][-2]
