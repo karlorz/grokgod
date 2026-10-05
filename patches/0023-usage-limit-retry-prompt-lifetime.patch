@@ -1,0 +1,885 @@
+diff --git a/crates/codegen/xai-grok-pager/src/app/acp_handler/session_notification.rs b/crates/codegen/xai-grok-pager/src/app/acp_handler/session_notification.rs
+index e9680874..fa10fe32 100644
+--- a/crates/codegen/xai-grok-pager/src/app/acp_handler/session_notification.rs
++++ b/crates/codegen/xai-grok-pager/src/app/acp_handler/session_notification.rs
+@@ -647,6 +647,7 @@ pub(super) fn handle_session_notification_with_origin(
+                     user_model_preference: None,
+                     deferred_model_switch: None,
+                     in_flight_prompt: None,
++                    usage_limit_retry_prompt: None,
+                     compact_held_prompt: None,
+                     current_prompt_id: None,
+                     created_via_new: false,
+diff --git a/crates/codegen/xai-grok-pager/src/app/acp_handler/tests/mod.rs b/crates/codegen/xai-grok-pager/src/app/acp_handler/tests/mod.rs
+index 76f92789..756c7344 100644
+--- a/crates/codegen/xai-grok-pager/src/app/acp_handler/tests/mod.rs
++++ b/crates/codegen/xai-grok-pager/src/app/acp_handler/tests/mod.rs
+@@ -69,6 +69,7 @@ pub(super) fn make_session(session_id: Option<&str>) -> AgentSession {
+         bg_tool_call_to_task: std::collections::HashMap::new(),
+         scheduled_tasks: std::collections::HashMap::new(),
+         in_flight_prompt: None,
++        usage_limit_retry_prompt: None,
+         compact_held_prompt: None,
+         current_prompt_id: None,
+         created_via_new: false,
+diff --git a/crates/codegen/xai-grok-pager/src/app/agent.rs b/crates/codegen/xai-grok-pager/src/app/agent.rs
+index 69e59d86..2435e086 100644
+--- a/crates/codegen/xai-grok-pager/src/app/agent.rs
++++ b/crates/codegen/xai-grok-pager/src/app/agent.rs
+@@ -759,6 +759,8 @@ pub struct AgentSession {
+     /// Used by `do_cancel_turn` to "rewind" a prompt back to the input box if the user cancels before any response arrives.
+     /// `None` for skill-injected prompts (cannot be reversed) and bash/cron.
+     pub in_flight_prompt: Option<InFlightPrompt>,
++    /// Independent of cancel/rewind; survives server activity until the usage-limit `PromptResponse`.
++    pub usage_limit_retry_prompt: Option<InFlightPrompt>,
+     /// Prompt held across auto-compact for reauth resubmit after `/login`.
+     /// `in_flight_prompt` is cleared on compact start so cancel cannot rewind.
+     pub compact_held_prompt: Option<InFlightPrompt>,
+@@ -865,6 +867,7 @@ impl AgentSession {
+         self.tracker.expect_user_echo();
+         self.state = AgentState::TurnRunning;
+         self.in_flight_prompt = None;
++        self.usage_limit_retry_prompt = None;
+         self.models.set_served_model_name(None);
+     }
+     /// Finish the current turn: cleanup tracker, set state to Idle.
+@@ -878,6 +881,7 @@ impl AgentSession {
+         self.credit_limit_blocked = false;
+         self.free_usage_blocked = false;
+         self.in_flight_prompt = None;
++        self.usage_limit_retry_prompt = None;
+         self.compact_held_prompt = None;
+         self.current_prompt_id = None;
+     }
+@@ -892,8 +896,13 @@ impl AgentSession {
+     /// Cancel the current turn: cleanup tracker, set state to Cancelling.
+     pub fn cancel_turn(&mut self, scrollback: &mut ScrollbackState) {
+         self.tracker.finish_turn(scrollback);
++        self.usage_limit_retry_prompt = None;
+         self.state = AgentState::TurnCancelling;
+     }
++    pub fn capture_in_flight_prompt(&mut self, prompt: InFlightPrompt) {
++        self.usage_limit_retry_prompt = Some(prompt.clone());
++        self.in_flight_prompt = Some(prompt);
++    }
+     /// Current activity within a running turn (for turn status line display).
+     ///
+     /// Returns `None` when not in `TurnRunning` state.
+@@ -1133,6 +1142,7 @@ mod tests {
+             bg_tool_call_to_task: HashMap::new(),
+             scheduled_tasks: HashMap::new(),
+             in_flight_prompt: None,
++            usage_limit_retry_prompt: None,
+             compact_held_prompt: None,
+             current_prompt_id: None,
+             created_via_new: false,
+diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs
+index 372dd832..a17e97ec 100644
+--- a/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs
++++ b/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs
+@@ -1389,6 +1389,7 @@ mod cancel_turn_mouse_tests {
+                 bg_tool_call_to_task: std::collections::HashMap::new(),
+                 scheduled_tasks: std::collections::HashMap::new(),
+                 in_flight_prompt: None,
++                usage_limit_retry_prompt: None,
+                 compact_held_prompt: None,
+                 current_prompt_id: None,
+                 created_via_new: false,
+diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
+index ee2c0263..b2962c78 100644
+--- a/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
++++ b/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
+@@ -2451,6 +2451,7 @@ pub(crate) mod test_fixtures {
+             bg_tool_call_to_task: std::collections::HashMap::new(),
+             scheduled_tasks: std::collections::HashMap::new(),
+             in_flight_prompt: None,
++            usage_limit_retry_prompt: None,
+             compact_held_prompt: None,
+             current_prompt_id: None,
+             created_via_new: false,
+@@ -2516,6 +2517,7 @@ pub(crate) mod test_fixtures {
+                 bg_tool_call_to_task: std::collections::HashMap::new(),
+                 scheduled_tasks: std::collections::HashMap::new(),
+                 in_flight_prompt: None,
++                usage_limit_retry_prompt: None,
+                 compact_held_prompt: None,
+                 current_prompt_id: None,
+                 created_via_new: false,
+@@ -3351,6 +3353,7 @@ pub(crate) fn test_agent_view(session_id: Option<&str>, cwd: std::path::PathBuf)
+             bg_tool_call_to_task: std::collections::HashMap::new(),
+             scheduled_tasks: std::collections::HashMap::new(),
+             in_flight_prompt: None,
++            usage_limit_retry_prompt: None,
+             compact_held_prompt: None,
+             current_prompt_id: None,
+             created_via_new: false,
+diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/paste.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/paste.rs
+index eec009c4..89df9c95 100644
+--- a/crates/codegen/xai-grok-pager/src/app/agent_view/paste.rs
++++ b/crates/codegen/xai-grok-pager/src/app/agent_view/paste.rs
+@@ -572,6 +572,7 @@ pub(super) mod paste_key_tests {
+                 bg_tool_call_to_task: std::collections::HashMap::new(),
+                 scheduled_tasks: std::collections::HashMap::new(),
+                 in_flight_prompt: None,
++                usage_limit_retry_prompt: None,
+                 compact_held_prompt: None,
+                 current_prompt_id: None,
+                 created_via_new: false,
+diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/plan.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/plan.rs
+index 51e0ad88..1749ae7d 100644
+--- a/crates/codegen/xai-grok-pager/src/app/agent_view/plan.rs
++++ b/crates/codegen/xai-grok-pager/src/app/agent_view/plan.rs
+@@ -1183,6 +1183,7 @@ mod plan_chip_tests {
+                 bg_tool_call_to_task: std::collections::HashMap::new(),
+                 scheduled_tasks: std::collections::HashMap::new(),
+                 in_flight_prompt: None,
++                usage_limit_retry_prompt: None,
+                 compact_held_prompt: None,
+                 current_prompt_id: None,
+                 created_via_new: false,
+diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/rewind.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/rewind.rs
+index 879a1555..e1bb3751 100644
+--- a/crates/codegen/xai-grok-pager/src/app/agent_view/rewind.rs
++++ b/crates/codegen/xai-grok-pager/src/app/agent_view/rewind.rs
+@@ -214,6 +214,7 @@ mod sync_rewind_anchor_to_picker_tests {
+                 bg_tool_call_to_task: std::collections::HashMap::new(),
+                 scheduled_tasks: std::collections::HashMap::new(),
+                 in_flight_prompt: None,
++                usage_limit_retry_prompt: None,
+                 compact_held_prompt: None,
+                 current_prompt_id: None,
+                 created_via_new: false,
+diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
+index f93a4ae8..05842a78 100644
+--- a/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
++++ b/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
+@@ -37,6 +37,7 @@ impl AgentView {
+     /// A stale cursor relies on exact-match failure for safety; a stale highwater could dedup-drop the new session's events outright.
+     pub(crate) fn bind_session_id(&mut self, session_id: agent_client_protocol::SessionId) {
+         if self.session.session_id.as_ref() != Some(&session_id) {
++            self.session.usage_limit_retry_prompt = None;
+             self.session_binding_epoch = self.session_binding_epoch.wrapping_add(1);
+             self.last_seen_event_id = None;
+             self.last_seen_event_seq = None;
+@@ -79,6 +80,7 @@ impl AgentView {
+     }
+     /// Unbind this view from its current session identity.
+     pub(crate) fn unbind_session_id(&mut self) {
++        self.session.usage_limit_retry_prompt = None;
+         if self.session.session_id.take().is_some() {
+             self.session_binding_epoch = self.session_binding_epoch.wrapping_add(1);
+             self.deferred_subagent_finishes.clear();
+@@ -669,6 +671,7 @@ impl AgentView {
+     /// Open a reconnect reload window: stash the current transcript/tracker and point the live fields at fresh state for the `session/load` replay.
+     /// The transcript is NOT cleared; it stays recoverable until [`finish_session_reload`](Self::finish_session_reload) decides the outcome.
+     pub(crate) fn begin_session_reload(&mut self, generation: u64) {
++        self.session.usage_limit_retry_prompt = None;
+         self.dismiss_jump_picker();
+         if let Some(prev) = self.session_reload.take() {
+             tracing::warn!(
+diff --git a/crates/codegen/xai-grok-pager/src/app/app_view_tests.rs b/crates/codegen/xai-grok-pager/src/app/app_view_tests.rs
+index fa1ffb4a..b74cca09 100644
+--- a/crates/codegen/xai-grok-pager/src/app/app_view_tests.rs
++++ b/crates/codegen/xai-grok-pager/src/app/app_view_tests.rs
+@@ -369,6 +369,7 @@ pub(crate) fn test_app_with_agent() -> AppView {
+             bg_tool_call_to_task: std::collections::HashMap::new(),
+             scheduled_tasks: std::collections::HashMap::new(),
+             in_flight_prompt: None,
++            usage_limit_retry_prompt: None,
+             compact_held_prompt: None,
+             current_prompt_id: None,
+             created_via_new: false,
+@@ -576,6 +577,7 @@ fn idle_child_view(app: &AppView, id_n: usize, sid: &str) -> Box<AgentView> {
+         bg_tool_call_to_task: std::collections::HashMap::new(),
+         scheduled_tasks: std::collections::HashMap::new(),
+         in_flight_prompt: None,
++        usage_limit_retry_prompt: None,
+         compact_held_prompt: None,
+         current_prompt_id: None,
+         created_via_new: false,
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
+index bf0c37e1..d4506715 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
+@@ -1655,7 +1655,12 @@ pub(super) fn handle_prompt_response(
+         // Credit failures may emit CreditLimitRecheck below; free-usage failures
+         // do not, so their stash is consumed only by an explicit retry action.
+         if (credit_limit_blocked || free_usage_blocked)
+-            && let Some(prompt) = agent.session.in_flight_prompt.clone()
++            && !was_cancelling
++            && let Some(prompt) = agent
++                .session
++                .usage_limit_retry_prompt
++                .take()
++                .or_else(|| agent.session.in_flight_prompt.take())
+         {
+             agent.credit_limit_stashed_prompt = Some(prompt);
+         }
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/queue.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/queue.rs
+index f31452a6..d49e6ca9 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/queue.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/queue.rs
+@@ -487,13 +487,15 @@ pub(super) fn maybe_drain_queue(agent: &mut AgentView, notices: &mut Vec<String>
+                     .copied()
+                     .filter(|id| *id != prompt_entry_id)
+                     .collect();
+-                agent.session.in_flight_prompt = Some(crate::app::agent::InFlightPrompt {
+-                    text: queued.text.clone(),
+-                    images: queued.images.clone(),
+-                    scrollback_entry: prompt_entry_id,
+-                    combined_scrollback_entries: earlier,
+-                    chip_elements: queued.chip_elements.clone(),
+-                });
++                agent
++                    .session
++                    .capture_in_flight_prompt(crate::app::agent::InFlightPrompt {
++                        text: queued.text.clone(),
++                        images: queued.images.clone(),
++                        scrollback_entry: prompt_entry_id,
++                        combined_scrollback_entries: earlier,
++                        chip_elements: queued.chip_elements.clone(),
++                    });
+             }
+             let flip = page_flip_on_send();
+             agent.scrollback.follow_new_turn(Some(prompt_idx), flip);
+@@ -947,13 +949,15 @@ pub(crate) fn apply_turn_start_shim(
+             let earlier = all_ids.into_iter().filter(|id| *id != last_id).collect();
+             // An adopted turn arrives with text only, never the original attachments, so a Ctrl+C rewind restores just the joined text
+             // The local drain path, which owns the data, restores images/chips.
+-            agent.session.in_flight_prompt = Some(crate::app::agent::InFlightPrompt {
+-                text: restore,
+-                images: Vec::new(),
+-                scrollback_entry: last_id,
+-                combined_scrollback_entries: earlier,
+-                chip_elements: Vec::new(),
+-            });
++            agent
++                .session
++                .capture_in_flight_prompt(crate::app::agent::InFlightPrompt {
++                    text: restore,
++                    images: Vec::new(),
++                    scrollback_entry: last_id,
++                    combined_scrollback_entries: earlier,
++                    chip_elements: Vec::new(),
++                });
+         }
+         if skip_entry_top {
+             agent.scrollback.set_selected(Some(prompt_idx));
+@@ -1035,13 +1039,15 @@ pub(crate) fn apply_turn_start_shim(
+                 Some(RenderBlock::UserPrompt(ub)) if ub.text != text => ub.text.clone(),
+                 _ => text,
+             };
+-            agent.session.in_flight_prompt = Some(crate::app::agent::InFlightPrompt {
+-                text: restore_text,
+-                images: Vec::new(),
+-                scrollback_entry: prompt_entry_id,
+-                combined_scrollback_entries: Vec::new(),
+-                chip_elements: Vec::new(),
+-            });
++            agent
++                .session
++                .capture_in_flight_prompt(crate::app::agent::InFlightPrompt {
++                    text: restore_text,
++                    images: Vec::new(),
++                    scrollback_entry: prompt_entry_id,
++                    combined_scrollback_entries: Vec::new(),
++                    chip_elements: Vec::new(),
++                });
+         }
+         if skip_entry_top {
+             // Send-now: follow at the tail; never entry-top jump.
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/session/fork.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/session/fork.rs
+index 14ca09c2..7db9a89f 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/session/fork.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/session/fork.rs
+@@ -283,6 +283,7 @@ fn build_fork_placeholder(
+             bg_tool_call_to_task: std::collections::HashMap::new(),
+             scheduled_tasks: std::collections::HashMap::new(),
+             in_flight_prompt: None,
++            usage_limit_retry_prompt: None,
+             compact_held_prompt: None,
+             current_prompt_id: None,
+             created_via_new: false,
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
+index 37d71be3..ee162568 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
+@@ -419,6 +419,7 @@ pub(in crate::app::dispatch) fn dispatch_new_session_inner_with_id(
+             bg_tool_call_to_task: std::collections::HashMap::new(),
+             scheduled_tasks: std::collections::HashMap::new(),
+             in_flight_prompt: None,
++            usage_limit_retry_prompt: None,
+             compact_held_prompt: None,
+             current_prompt_id: None,
+             created_via_new: true,
+@@ -1240,6 +1241,7 @@ pub(in crate::app::dispatch) fn dispatch_new_worktree_session(
+             bg_tool_call_to_task: std::collections::HashMap::new(),
+             scheduled_tasks: std::collections::HashMap::new(),
+             in_flight_prompt: None,
++            usage_limit_retry_prompt: None,
+             compact_held_prompt: None,
+             current_prompt_id: None,
+             created_via_new: false,
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/session/load.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/session/load.rs
+index 1cd35ebf..524b3618 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/session/load.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/session/load.rs
+@@ -217,6 +217,7 @@ fn dispatch_load_session_ungated(
+             bg_tool_call_to_task: std::collections::HashMap::new(),
+             scheduled_tasks: std::collections::HashMap::new(),
+             in_flight_prompt: None,
++            usage_limit_retry_prompt: None,
+             compact_held_prompt: None,
+             current_prompt_id: None,
+             created_via_new: false,
+@@ -1145,6 +1146,7 @@ pub(in crate::app::dispatch) fn dispatch_load_session_with_restore(
+             bg_tool_call_to_task: std::collections::HashMap::new(),
+             scheduled_tasks: std::collections::HashMap::new(),
+             in_flight_prompt: None,
++            usage_limit_retry_prompt: None,
+             compact_held_prompt: None,
+             current_prompt_id: None,
+             created_via_new: false,
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs
+index ab8f911e..f5d76ad1 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs
+@@ -64,6 +64,462 @@ fn test_stashed_prompt(text: &str) -> crate::app::agent::InFlightPrompt {
+     }
+ }
+ 
++fn credit_limit_activity(app: &mut AppView, tool: bool) {
++    let agent = test_agent(app, AgentId(0));
++    let session_id = agent.session.session_id.clone().unwrap();
++    let prompt_id = agent.session.current_prompt_id.clone().unwrap();
++    let update = if tool {
++        acp::SessionUpdate::ToolCall(
++            acp::ToolCall::new("credit-limit-tool", "Read a file")
++                .kind(acp::ToolKind::Read)
++                .status(acp::ToolCallStatus::InProgress),
++        )
++    } else {
++        acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
++            acp::TextContent::new("I will inspect the files."),
++        )))
++    };
++    let (response_tx, _rx) = tokio::sync::oneshot::channel();
++    assert!(crate::app::acp_handler::handle(
++        xai_acp_lib::AcpClientMessage::SessionNotification(xai_acp_lib::AcpArgs {
++            request: acp::SessionNotification::new(session_id, update).meta(
++                serde_json::json!({ "promptId": prompt_id })
++                    .as_object()
++                    .cloned()
++            ),
++            response_tx,
++        }),
++        app,
++    ));
++    let agent = test_agent(app, AgentId(0));
++    assert!(agent.session.in_flight_prompt.is_none());
++    assert!(agent.session.usage_limit_retry_prompt.is_some());
++}
++
++fn credit_limit_fail_after_activity(app: &mut AppView, free: bool) {
++    use xai_grok_shell::extensions::notification::{RetryState, SessionUpdate};
++
++    let retry = if free {
++        RetryState::Exhausted {
++            attempts: 2,
++            reason: "status 429: subscription:free-usage-exhausted: all free usage used".into(),
++            is_rate_limited: true,
++        }
++    } else {
++        RetryState::Failed {
++            error_type: "api".into(),
++            message: "API error (status 402 Payment Required): Grok Build usage balance exhausted"
++                .into(),
++        }
++    };
++    let prompt_id = {
++        let agent = app.agents.get_mut(&AgentId(0)).unwrap();
++        crate::app::acp_handler::apply_session_event_for_test(
++            &SessionUpdate::RetryState(retry),
++            &mut agent.session,
++            &mut agent.scrollback,
++        );
++        assert!(agent.session.in_flight_prompt.is_none());
++        assert!(agent.session.usage_limit_retry_prompt.is_some());
++        assert_eq!(agent.session.free_usage_blocked, free);
++        assert_eq!(agent.session.credit_limit_blocked, !free);
++        agent.session.current_prompt_id.clone()
++    };
++    let effects = dispatch(
++        Action::TaskComplete(TaskResult::PromptResponse {
++            agent_id: AgentId(0),
++            result: Err(if free {
++                "rate limited"
++            } else {
++                "balance exhausted"
++            }
++            .into()),
++            http_status: Some(if free { 429 } else { 402 }),
++            prompt_id,
++        }),
++        app,
++    );
++    assert!(!effects.iter().any(|effect| matches!(
++        effect,
++        Effect::SendPrompt { .. } | Effect::SendPromptBlocks { .. }
++    )));
++    let agent = test_agent(app, AgentId(0));
++    assert!(agent.session.state.is_idle());
++    assert!(agent.session.usage_limit_retry_prompt.is_none());
++    assert!(agent.credit_limit_stashed_prompt.is_some());
++}
++
++#[test]
++fn credit_limit_retry_after_assistant_activity_resends_exact_prompt_once() {
++    use crate::app::agent_view::translate_local_submit_for_test;
++    use crate::app::app_view::InputOutcome;
++    use crate::views::question_view::QuestionSelection;
++
++    let mut app = test_app_with_agent();
++    let model = acp::ModelId::new("same-model");
++    app.agents
++        .get_mut(&AgentId(0))
++        .unwrap()
++        .session
++        .models
++        .current = Some(model.clone());
++    let text = "inspect the implementation\nthen continue my original request";
++    let sent = dispatch(Action::SendPrompt(text.into()), &mut app);
++    assert!(
++        matches!(sent.as_slice(), [Effect::SendPrompt { text: payload, .. }] if payload == text)
++    );
++    credit_limit_activity(&mut app, false);
++    credit_limit_fail_after_activity(&mut app, false);
++    assert_eq!(
++        test_agent(&app, AgentId(0))
++            .credit_limit_stashed_prompt
++            .as_ref()
++            .unwrap()
++            .text,
++        text
++    );
++    dispatch(
++        Action::TaskComplete(TaskResult::CreditLimitRecheckComplete {
++            agent_id: AgentId(0),
++            meta: None,
++        }),
++        &mut app,
++    );
++    let mut question = app
++        .agents
++        .get_mut(&AgentId(0))
++        .unwrap()
++        .question_view
++        .take()
++        .unwrap();
++    let retry_index = first_question(&question)
++        .options
++        .iter()
++        .position(|option| option.id.as_deref() == Some(CREDIT_LIMIT_RETRY_OPTION_ID))
++        .unwrap();
++    set_first_selection(&mut question, QuestionSelection::Single(Some(retry_index)));
++    let kind = question.local_kind.take().unwrap();
++    let InputOutcome::Action(retry) = translate_local_submit_for_test(&question, kind, false)
++    else {
++        panic!("Try Again must dispatch an action");
++    };
++    assert!(matches!(retry, Action::RetryCreditLimitPrompt));
++    let effects = dispatch(retry, &mut app);
++    assert_eq!(
++        effects
++            .iter()
++            .filter(|effect| matches!(
++                effect,
++                Effect::SendPrompt { .. } | Effect::SendPromptBlocks { .. }
++            ))
++            .count(),
++        1
++    );
++    assert!(effects.iter().any(|effect| matches!(effect,
++        Effect::SendPrompt { text: payload, .. } if payload == text
++    )));
++    assert_eq!(
++        test_agent(&app, AgentId(0)).session.models.current,
++        Some(model)
++    );
++    assert!(
++        test_agent(&app, AgentId(0))
++            .credit_limit_stashed_prompt
++            .is_none()
++    );
++    assert!(dispatch(Action::RetryCreditLimitPrompt, &mut app).is_empty());
++}
++
++#[test]
++fn credit_limit_tool_activity_autocompact_retains_combined_images_and_chips() {
++    use crate::app::agent::{ChipElement, QueueEntryKind, QueuedPrompt};
++    use xai_grok_shell::extensions::notification::SessionUpdate;
++
++    let mut app = test_app_with_agent();
++    let text = "first segment\n\nlook [Image #1]";
++    let image = crate::prompt_images::from_clipboard_data(&crate::clipboard::ImageData {
++        data: vec![1, 2, 3],
++        mime_type: "image/png".into(),
++    });
++    let chip = ChipElement {
++        range: 20..30,
++        kind: crate::views::prompt_widget::KIND_IMAGE,
++        display: Some(ratatui::text::Line::from("Image attachment")),
++    };
++    {
++        let agent = app.agents.get_mut(&AgentId(0)).unwrap();
++        let queue_id = agent.session.enqueue_prompt(text.into());
++        let queued = agent.session.pending_prompts.back_mut().unwrap();
++        *queued = QueuedPrompt {
++            images: vec![image.clone()],
++            chip_elements: vec![chip.clone()],
++            combined_texts: vec!["first segment".into(), "look [Image #1]".into()],
++            ..QueuedPrompt::plain(queue_id, text, QueueEntryKind::Prompt)
++        };
++    }
++    let effects = dispatch(Action::DrainQueue, &mut app);
++    assert!(
++        effects
++            .iter()
++            .any(|effect| matches!(effect, Effect::SendPromptBlocks { .. }))
++    );
++    let original = test_agent(&app, AgentId(0))
++        .session
++        .usage_limit_retry_prompt
++        .clone()
++        .unwrap();
++    assert_eq!(original.combined_scrollback_entries.len(), 1);
++    credit_limit_activity(&mut app, true);
++    {
++        let agent = app.agents.get_mut(&AgentId(0)).unwrap();
++        for update in [
++            SessionUpdate::AutoCompactStarted {
++                tokens_used: 180_000,
++                context_window: 200_000,
++                percentage: 90,
++                reason: "threshold".into(),
++            },
++            SessionUpdate::AutoCompactCompleted {
++                tokens_before: Some(180_000),
++                tokens_after: 40_000,
++                elapsed_ms: Some(20),
++                compaction_round_count: 1,
++                compaction_round_warning_limit: 3,
++                summary_preview: None,
++            },
++        ] {
++            crate::app::acp_handler::apply_session_event_for_test(
++                &update,
++                &mut agent.session,
++                &mut agent.scrollback,
++            );
++        }
++        assert!(agent.session.in_flight_prompt.is_none());
++        assert!(agent.session.compact_held_prompt.is_none());
++    }
++    credit_limit_fail_after_activity(&mut app, false);
++    let stashed = test_agent(&app, AgentId(0))
++        .credit_limit_stashed_prompt
++        .as_ref()
++        .unwrap();
++    assert_eq!(stashed.text, text);
++    assert_eq!(stashed.scrollback_entry, original.scrollback_entry);
++    assert_eq!(
++        stashed.combined_scrollback_entries,
++        original.combined_scrollback_entries
++    );
++    assert_eq!(stashed.images[0].encoded_bytes, image.encoded_bytes);
++    assert_eq!(stashed.images[0].mime_type, image.mime_type);
++    assert_eq!(stashed.chip_elements[0].range, chip.range);
++    assert_eq!(stashed.chip_elements[0].kind, chip.kind);
++    assert_eq!(stashed.chip_elements[0].display, chip.display);
++    let retry = dispatch(Action::RetryCreditLimitPrompt, &mut app);
++    assert_eq!(
++        retry
++            .iter()
++            .filter(|effect| matches!(
++                effect,
++                Effect::SendPrompt { .. } | Effect::SendPromptBlocks { .. }
++            ))
++            .count(),
++        1
++    );
++    assert!(
++        retry
++            .iter()
++            .any(|effect| matches!(effect, Effect::SendPromptBlocks { .. }))
++    );
++    let retained = test_agent(&app, AgentId(0))
++        .session
++        .usage_limit_retry_prompt
++        .as_ref()
++        .unwrap();
++    assert_eq!(retained.text, text);
++    assert_eq!(retained.images[0].encoded_bytes, image.encoded_bytes);
++    assert_eq!(retained.chip_elements[0].display, chip.display);
++}
++
++#[test]
++fn credit_limit_free_usage_after_activity_switch_resends_once() {
++    let mut app = test_app_with_agent();
++    let model = acp::ModelId::new("free-alternate");
++    app.agents
++        .get_mut(&AgentId(0))
++        .unwrap()
++        .session
++        .models
++        .available
++        .insert(
++            model.clone(),
++            acp::ModelInfo::new(model.clone(), "Free Alternate".to_string()),
++        );
++    dispatch(
++        Action::SendPrompt("retain the free prompt".into()),
++        &mut app,
++    );
++    credit_limit_activity(&mut app, false);
++    credit_limit_fail_after_activity(&mut app, true);
++    assert!(test_agent(&app, AgentId(0)).question_view.is_some());
++    dispatch(Action::OpenCreditLimitModelPicker, &mut app);
++    let effects = dispatch(
++        Action::TaskComplete(TaskResult::SwitchModelComplete {
++            agent_id: AgentId(0),
++            choice: ModelChoice::new(model.clone()),
++            result: Ok(()),
++            prev_model_id: None,
++        }),
++        &mut app,
++    );
++    assert_eq!(
++        effects
++            .iter()
++            .filter(|effect| matches!(
++                effect,
++                Effect::SendPrompt { .. } | Effect::SendPromptBlocks { .. }
++            ))
++            .count(),
++        1
++    );
++    assert!(effects.iter().any(|effect| matches!(effect,
++        Effect::SendPrompt { text, .. } if text == "retain the free prompt"
++    )));
++    assert_eq!(
++        test_agent(&app, AgentId(0)).session.models.current,
++        Some(model)
++    );
++    assert!(
++        test_agent(&app, AgentId(0))
++            .credit_limit_stashed_prompt
++            .is_none()
++    );
++}
++
++#[test]
++fn credit_limit_retry_snapshot_clears_on_completion_failure_cancel_and_reset() {
++    for result in [
++        Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)),
++        Err("ordinary server failure".into()),
++    ] {
++        let mut app = test_app_with_agent();
++        dispatch(Action::SendPrompt("old prompt".into()), &mut app);
++        credit_limit_activity(&mut app, false);
++        let prompt_id = test_agent(&app, AgentId(0))
++            .session
++            .current_prompt_id
++            .clone();
++        dispatch(
++            Action::TaskComplete(TaskResult::PromptResponse {
++                agent_id: AgentId(0),
++                result,
++                http_status: None,
++                prompt_id,
++            }),
++            &mut app,
++        );
++        assert!(
++            test_agent(&app, AgentId(0))
++                .session
++                .usage_limit_retry_prompt
++                .is_none()
++        );
++        assert!(
++            test_agent(&app, AgentId(0))
++                .credit_limit_stashed_prompt
++                .is_none()
++        );
++        dispatch(Action::SendPrompt("next prompt".into()), &mut app);
++        assert_eq!(
++            test_agent(&app, AgentId(0))
++                .session
++                .usage_limit_retry_prompt
++                .as_ref()
++                .unwrap()
++                .text,
++            "next prompt"
++        );
++    }
++    let mut app = test_app_with_agent();
++    dispatch(Action::SendPrompt("cancel me".into()), &mut app);
++    credit_limit_activity(&mut app, false);
++    let prompt_id = test_agent(&app, AgentId(0))
++        .session
++        .current_prompt_id
++        .clone();
++    let effects = dispatch(Action::CancelTurn, &mut app);
++    assert!(
++        effects
++            .iter()
++            .any(|effect| matches!(effect, Effect::CancelTurn { .. }))
++    );
++    assert!(
++        test_agent(&app, AgentId(0))
++            .session
++            .usage_limit_retry_prompt
++            .is_none()
++    );
++    dispatch(
++        Action::TaskComplete(TaskResult::PromptResponse {
++            agent_id: AgentId(0),
++            result: Err("status 402: balance exhausted".into()),
++            http_status: Some(402),
++            prompt_id,
++        }),
++        &mut app,
++    );
++    assert!(
++        test_agent(&app, AgentId(0))
++            .credit_limit_stashed_prompt
++            .is_none()
++    );
++    let agent = app.agents.get_mut(&AgentId(0)).unwrap();
++    agent
++        .session
++        .capture_in_flight_prompt(test_stashed_prompt("old turn"));
++    agent.begin_local_turn("replacement");
++    assert!(agent.session.usage_limit_retry_prompt.is_none());
++    agent
++        .session
++        .capture_in_flight_prompt(test_stashed_prompt("old reload"));
++    agent.begin_session_reload(1);
++    assert!(agent.session.usage_limit_retry_prompt.is_none());
++    agent
++        .session
++        .capture_in_flight_prompt(test_stashed_prompt("old binding"));
++    agent.bind_session_id(acp::SessionId::new("replacement-session"));
++    assert!(agent.session.usage_limit_retry_prompt.is_none());
++    agent
++        .session
++        .capture_in_flight_prompt(test_stashed_prompt("unbound turn"));
++    agent.unbind_session_id();
++    assert!(agent.session.usage_limit_retry_prompt.is_none());
++}
++
++#[test]
++fn credit_limit_adopted_prompt_captures_both_plain_and_combined_payloads() {
++    for segments in [None, Some(vec!["alpha".into(), "beta".into()])] {
++        let mut app = test_app_with_agent();
++        let agent = app.agents.get_mut(&AgentId(0)).unwrap();
++        let text = if segments.is_some() {
++            "alpha\n\nbeta"
++        } else {
++            "alpha"
++        };
++        crate::app::dispatch::queue::apply_turn_start_shim(
++            agent,
++            "adopted-prompt".into(),
++            Some(text.into()),
++            "prompt",
++            segments.clone(),
++        );
++        let retained = agent.session.usage_limit_retry_prompt.as_ref().unwrap();
++        assert_eq!(retained.text, text);
++        assert_eq!(
++            retained.combined_scrollback_entries.len(),
++            usize::from(segments.is_some())
++        );
++    }
++}
++
+ /// Dispatch a `BillingFetched` task result with sensible defaults.
+ fn open_usage_modal_nonce(app: &AppView) -> u64 {
+     match test_agent(app, AgentId(0)).active_modal.as_ref() {
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
+index d6d9ae0d..cc994944 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
+@@ -383,6 +383,7 @@ fn make_test_agent_session(app: &AppView, id: AgentId, sid: &str) -> AgentSessio
+         bg_tool_call_to_task: std::collections::HashMap::new(),
+         scheduled_tasks: std::collections::HashMap::new(),
+         in_flight_prompt: None,
++        usage_limit_retry_prompt: None,
+         compact_held_prompt: None,
+         current_prompt_id: None,
+         created_via_new: false,
+@@ -659,6 +660,7 @@ fn insert_placeholder_agent(app: &mut AppView, id: AgentId) {
+             bg_tool_call_to_task: std::collections::HashMap::new(),
+             scheduled_tasks: std::collections::HashMap::new(),
+             in_flight_prompt: None,
++            usage_limit_retry_prompt: None,
+             compact_held_prompt: None,
+             current_prompt_id: None,
+             created_via_new: false,
+@@ -822,6 +824,7 @@ fn two_agent_app_with_bg_task() -> AppView {
+             bg_tool_call_to_task: std::collections::HashMap::new(),
+             scheduled_tasks: std::collections::HashMap::new(),
+             in_flight_prompt: None,
++            usage_limit_retry_prompt: None,
+             compact_held_prompt: None,
+             current_prompt_id: None,
+             created_via_new: false,
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
+index cb104e82..6766bd2f 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
+@@ -1952,6 +1952,7 @@ fn set_simple_mode_propagates_to_every_agent() {
+             bg_tool_call_to_task: std::collections::HashMap::new(),
+             scheduled_tasks: std::collections::HashMap::new(),
+             in_flight_prompt: None,
++            usage_limit_retry_prompt: None,
+             compact_held_prompt: None,
+             current_prompt_id: None,
+             created_via_new: false,
+diff --git a/crates/codegen/xai-grok-pager/src/app/subagent_tests.rs b/crates/codegen/xai-grok-pager/src/app/subagent_tests.rs
+index 6306b147..ae3d0f78 100644
+--- a/crates/codegen/xai-grok-pager/src/app/subagent_tests.rs
++++ b/crates/codegen/xai-grok-pager/src/app/subagent_tests.rs
+@@ -47,6 +47,7 @@ fn make_min_child_view() -> AgentView {
+         bg_tool_call_to_task: HashMap::new(),
+         scheduled_tasks: HashMap::new(),
+         in_flight_prompt: None,
++        usage_limit_retry_prompt: None,
+         compact_held_prompt: None,
+         current_prompt_id: None,
+         created_via_new: false,
+diff --git a/crates/codegen/xai-grok-pager/src/test_util.rs b/crates/codegen/xai-grok-pager/src/test_util.rs
+index 0004d3af..21bf0fc9 100644
+--- a/crates/codegen/xai-grok-pager/src/test_util.rs
++++ b/crates/codegen/xai-grok-pager/src/test_util.rs
+@@ -56,6 +56,7 @@ pub fn make_agent_view(session_id: Option<&str>, cwd: &str) -> crate::app::agent
+         bg_tool_call_to_task: std::collections::HashMap::new(),
+         scheduled_tasks: std::collections::HashMap::new(),
+         in_flight_prompt: None,
++        usage_limit_retry_prompt: None,
+         compact_held_prompt: None,
+         current_prompt_id: None,
+         created_via_new: false,
+diff --git a/crates/codegen/xai-grok-pager/src/views/dashboard/row.rs b/crates/codegen/xai-grok-pager/src/views/dashboard/row.rs
+index e2fd95f0..f0843b55 100644
+--- a/crates/codegen/xai-grok-pager/src/views/dashboard/row.rs
++++ b/crates/codegen/xai-grok-pager/src/views/dashboard/row.rs
+@@ -1565,6 +1565,7 @@ mod tests {
+             bg_tool_call_to_task: std::collections::HashMap::new(),
+             scheduled_tasks: std::collections::HashMap::new(),
+             in_flight_prompt: None,
++            usage_limit_retry_prompt: None,
+             compact_held_prompt: None,
+             current_prompt_id: None,
+             created_via_new: false,
