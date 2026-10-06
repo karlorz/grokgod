@@ -956,10 +956,10 @@ exit 1
 EOF
 chmod +x "$FAKE_BIN_SHADOW/curl"
 
-# Pre-populate GROKGOD_HOME with matching binary and stamp. A healthy install
-# means the live binary's bytes hash to the stamp's SHA, so a real no-op needs
-# the live bytes to hash to the requested release (as the installer's guard now
-# verifies).
+# Pre-populate GROKGOD_HOME with matching binary and stamp. A healthy no-op
+# means stamp SHA == live bytes when there is no usable artifact manifest;
+# with a manifest present, live bytes are compared to artifactSha256
+# (post-codesign). Here there is no manifest, so stamp SHA == live no-ops.
 mkdir -p "$FAKE_GROKGOD_HOME/bin"
 cat << 'BIN_EOF' > "$FAKE_GROKGOD_HOME/bin/grok"
 #!/bin/sh
@@ -2769,6 +2769,71 @@ grep -q "\"artifactSha256\": \"$AP_BASE_SHA\"" "$FAKE_GROKGOD_HOME/manifest.json
 }
 assert_no_tx_leftovers "Test (ap)"
 echo "PASS: Test (ap) - Torn install is repaired, not declared up to date"
+
+# ─────────────────────────────────────────────────────────
+# Test (ar): Darwin-like split: stamp SHA != live digest, but manifest artifactSha256 == live digest -> skip download
+#
+# On macOS, Darwin ad-hoc codesigning alters the binary post-download so the
+# live Mach-O hash differs from the download asset digest recorded in
+# .source-version. When manifest.json records the post-codesign digest as
+# artifactSha256 and matches the live binary, the release fast-path must skip
+# downloading again.
+# ─────────────────────────────────────────────────────────
+echo "Test (ar): Manifest artifactSha256 match skips download even when stamp SHA differs"
+setup_sandbox "test_ar"
+make_release_fixture 'echo "AR_BASE_BINARY"' "grokgod 9.9.9"
+
+run_release_install --version 1.0.0 >/dev/null 2>&1 || {
+  echo "FAIL: Test (ar) - base install failed"; exit 1
+}
+
+AR_STAMP_SHA="$(grep '^SHA=' "$FAKE_GROKGOD_HOME/.source-version" | cut -d= -f2-)"
+AR_ORIG_LIVE_SHA="$(sha256_of "$FAKE_GROKGOD_HOME/bin/grok")"
+[ "$AR_STAMP_SHA" = "$AR_ORIG_LIVE_SHA" ] || {
+  echo "FAIL: Test (ar) - fixture initial stamp SHA should match unmutated fixture binary"; exit 1
+}
+
+# Mutate the live binary (simulating Darwin ad-hoc codesign byte alteration)
+printf '#!/bin/sh\necho "AR_BASE_BINARY"\n# codesigned\n' > "$FAKE_GROKGOD_HOME/bin/grok"
+chmod +x "$FAKE_GROKGOD_HOME/bin/grok"
+AR_MUTATED_BIN="$(cat "$FAKE_GROKGOD_HOME/bin/grok")"
+AR_MUTATED_SHA="$(sha256_of "$FAKE_GROKGOD_HOME/bin/grok")"
+
+[ "$AR_MUTATED_SHA" != "$AR_STAMP_SHA" ] || {
+  echo "FAIL: Test (ar) - mutated live binary did not change SHA"; exit 1
+}
+
+# Rewrite manifest.json artifactSha256 to the mutated live SHA (AR_MUTATED_SHA),
+# leaving assetSha256 and .source-version SHA untouched as AR_STAMP_SHA.
+sed "s/\"artifactSha256\": \"[^\"]*\"/\"artifactSha256\": \"$AR_MUTATED_SHA\"/" \
+  "$FAKE_GROKGOD_HOME/manifest.json" > "$FAKE_GROKGOD_HOME/manifest.json.tmp"
+mv -f "$FAKE_GROKGOD_HOME/manifest.json.tmp" "$FAKE_GROKGOD_HOME/manifest.json"
+
+set +e
+AR_OUT="$(run_release_install --version 1.0.0 2>&1)"
+AR_STATUS=$?
+set -eu
+
+[ "$AR_STATUS" -eq 0 ] || { echo "FAIL: Test (ar) - install run failed ($AR_OUT)"; exit 1; }
+
+echo "$AR_OUT" | grep -q "Already up to date" || {
+  echo "FAIL: Test (ar) - missing 'Already up to date' in output ($AR_OUT)"; exit 1
+}
+
+if echo "$AR_OUT" | grep -q "does not match the recorded stamp"; then
+  echo "FAIL: Test (ar) - output unexpectedly contains stamp mismatch warning ($AR_OUT)"; exit 1
+fi
+
+if echo "$AR_OUT" | grep -q "Downloading prebuilt binary"; then
+  echo "FAIL: Test (ar) - output unexpectedly contains download step ($AR_OUT)"; exit 1
+fi
+
+[ "$(cat "$FAKE_GROKGOD_HOME/bin/grok")" = "$AR_MUTATED_BIN" ] || {
+  echo "FAIL: Test (ar) - live binary was unexpectedly overwritten ($AR_OUT)"; exit 1
+}
+
+assert_no_tx_leftovers "Test (ar)"
+echo "PASS: Test (ar) - Manifest artifactSha256 match skips download even when stamp SHA differs"
 
 # ─────────────────────────────────────────────────────────
 # Test (ao): Every live write goes through the atomic-write helpers

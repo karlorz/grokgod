@@ -504,21 +504,59 @@ file_sha256() {
   fi
 }
 
+# Helper: extract artifactSha256 from $GROKGOD_HOME/manifest.json if valid.
+# Expects a POSIX artifact manifest with formatVersion 1, platform "posix",
+# and exactly one 64-hex artifactSha256. Fails toward empty on any error.
+manifest_artifact_sha256() {
+  _mf_path="$GROKGOD_HOME/manifest.json"
+  [ -f "$_mf_path" ] || return 0
+
+  # Basic object sanity and schema gates
+  _mf_first="$(awk 'NF { sub(/^[ \t]+/, ""); sub(/[ \t\r]+$/, ""); print; exit }' "$_mf_path" 2>/dev/null || true)"
+  _mf_last="$(awk 'NF { line=$0 } END { if (line != "") { sub(/^[ \t]+/, "", line); sub(/[ \t\r]+$/, "", line); print line } }' "$_mf_path" 2>/dev/null || true)"
+  [ "$_mf_first" = "{" ] && [ "$_mf_last" = "}" ] || return 0
+
+  _mf_fv="$(sed -n 's/^[[:space:]]*"formatVersion"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\)[[:space:]]*,*$/\1/p' "$_mf_path" 2>/dev/null | head -n 1 || true)"
+  [ "$_mf_fv" = "1" ] || return 0
+
+  _mf_plat="$(sed -n 's/^[[:space:]]*"platform"[[:space:]]*:[[:space:]]*"\([^"]*\)"[[:space:]]*,*$/\1/p' "$_mf_path" 2>/dev/null | head -n 1 || true)"
+  [ "$_mf_plat" = "posix" ] || return 0
+
+  _mf_hash_count="$(grep -c '"artifactSha256"' "$_mf_path" 2>/dev/null || true)"
+  [ "$_mf_hash_count" = "1" ] || return 0
+
+  _mf_hash="$(sed -n 's/^[[:space:]]*"artifactSha256"[[:space:]]*:[[:space:]]*"\([0-9a-fA-F]\{64\}\)"[[:space:]]*,*$/\1/p' "$_mf_path" 2>/dev/null | head -n 1 || true)"
+  case "$(printf '%s\n' "$_mf_hash" | LC_ALL=C grep -c '^[0-9a-fA-F]\{64\}$' 2>/dev/null || true)" in
+    1) printf '%s\n' "$_mf_hash" ;;
+  esac
+}
+
 # Guard for the "already up to date" fast paths. A run killed between
 # activation and the commit point (SIGKILL, power loss) leaves the live binary
 # newer than the stamp and the manifest. Without this check that torn state is
-# declared healthy forever. Only release stamps carry a binary hash (source
-# stamps carry a git commit id), so every other case is treated as a match.
-# Returns 0 when the recorded hash matches, and 0 when the stamp carries no
-# usable hash or no hashing tool exists (best effort).
+# declared healthy forever.
+#
+# Release stamps carry the pre-codesign asset digest (ADR 0006); on Darwin,
+# ad-hoc codesigning rewrites the activated Mach-O binary, so the live SHA
+# differs from the download stamp SHA. The post-codesign digest lives in the
+# artifact manifest (manifest.json). The torn-install guard must compare
+# against manifest artifactSha256 when recorded, and fall back to stamp SHA
+# only when no usable artifact manifest exists (e.g. legacy/script fixtures).
+#
+# Non-release MODE returns 0 immediately (source stamps carry git commits).
+# Returns 0 when the recorded hash matches live, and 0 when no recorded hash
+# or no hashing tool exists (best effort).
 live_binary_matches_stamp() {
   _stamp_mode="$(grep '^MODE=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
   [ "$_stamp_mode" = "release" ] || return 0
-  _stamp_sha="$(grep '^SHA=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
-  [ -n "$_stamp_sha" ] || return 0
   _live_sha="$(file_sha256 "$GROKGOD_HOME/bin/grok")"
   [ -n "$_live_sha" ] || return 0
-  [ "$_stamp_sha" = "$_live_sha" ]
+  _recorded_sha="$(manifest_artifact_sha256)"
+  if [ -z "$_recorded_sha" ]; then
+    _recorded_sha="$(grep '^SHA=' "$GROKGOD_HOME/.source-version" 2>/dev/null | cut -d= -f2- || true)"
+  fi
+  [ -n "$_recorded_sha" ] || return 0
+  [ "$_recorded_sha" = "$_live_sha" ]
 }
 
 # Run the staged candidate once before it can replace anything live.

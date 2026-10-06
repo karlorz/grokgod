@@ -37,3 +37,25 @@ macOS releases and all source installs); adding a hashing step to the human
 `status` path (visible output must stay byte-identical); reusing the Windows
 schema wholesale (imports the `files`/`backups` uninstall hazard); letting
 `install.sh` read the manifest (creates a second source of truth).
+
+## Amendment (2026-10)
+
+The torn-install fast path in `live_binary_matches_stamp` added after this ADR
+compared the stamp SHA to the live binary SHA. Because Darwin ad-hoc
+`codesign -s - --force` modifies the live Mach-O binary upon activation, the
+live hash never equals the download asset hash in `.source-version`. This
+caused an infinite macOS re-download loop on `grok update` even when already on
+the latest release.
+
+Narrow exception: `install.sh` may read `artifactSha256` from `manifest.json`
+**only** to decide the release "already up to date" fast-path skip. If the
+manifest is missing or unusable (corrupt, malformed, non-posix platform, or
+lacking a valid 64-hex `artifactSha256`), `install.sh` falls back to comparing
+the stamp SHA against the live binary (preserving legacy/script fixture behavior).
+
+The stamp remains authoritative for `VERSION`, `PATCHSET`, `MODE`, and the
+initial download asset checksum. A corrupt manifest cannot declare "already up
+to date" on Darwin or skip a needed reinstall: parse failure triggers the stamp
+fallback, which mismatches the codesigned live binary and forces a reinstall.
+
+Still rejected: treating the stamp SHA as the live binary identity on Darwin.
