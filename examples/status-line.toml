@@ -11,8 +11,6 @@
 [ui.status_line]
 type = "builtin"
 items = [
-    "model",
-    "turn-timer",
-    "session-name",
     "compacts",
+    "session-name",
 ]

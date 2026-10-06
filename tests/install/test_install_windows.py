@@ -132,9 +132,11 @@ def main():
     check("Any local hashing or metadata error is a cache miss" in src, "Fast path metadata errors fall back to verified download")
     check(latest_resolution_pos < fast_path_pos < candidate_create_pos < download_step_pos, "Fast path runs after latest-tag resolution and before candidate/temp download flow")
     fast_hit_pos = src.find("if ($LocalReleaseVerified)")
-    fast_hit_end = src.find("$BaseUrl =", fast_hit_pos)
+    fast_hit_end = src.find("$CandidateSibling = Join-Path", fast_hit_pos)
     fast_hit_src = src[fast_hit_pos:fast_hit_end]
-    check("Install-DailyMinimalAgent" in fast_hit_src and "-DownloadedPath" not in fast_hit_src, "Fast-path hit refreshes agent from local/cache content")
+    check("Install-DailyMinimalAgent" in fast_hit_src, "Fast-path hit installs daily minimal agent")
+    check("Merge-SuggestedConfigProfile" in fast_hit_src, "Fast-path hit merges suggested config profile")
+    check("Write-Warn" in fast_hit_src and "keeping on-disk runtime" in fast_hit_src, "Fast-path warns and keeps on-disk runtime on refresh failure")
     check("Skipping binary/checksum download and candidate preflight" in fast_hit_src, "Fast-path success message names skipped verified work")
     check("Release-InstallLock" in fast_hit_src and "exit 0" in fast_hit_src, "Fast-path hit releases lock and exits successfully")
 
@@ -300,7 +302,7 @@ def main():
         check("Combined" in install_test_src, "Native install test uses combined output for robust stderr matching")
         check("request.log" in install_test_src, "Native install test records mock HTTP requests")
         check("Fast path skips grokgod-windows-x64.exe request" in install_test_src, "Native install test asserts fast path skips binary request")
-        check("Fast path skips SHA256SUMS request" in install_test_src, "Native install test asserts fast path skips checksum request")
+        check("Fast path checks SHA256SUMS for runtime refresh" in install_test_src, "Native install test asserts fast path checks checksum for runtime refresh")
         check("Fast path skips candidate preflight output" in install_test_src, "Native install test asserts fast path skips candidate preflight")
 
         # Invariant checks for no duplicate test headings and no uninitialized variables
@@ -328,6 +330,18 @@ def main():
             shim_test_src = f.read()
         check("grokgod test ünicode" in shim_test_src, "Native shim test uses fixture path with spaces and Unicode")
         check("hostShell" in shim_test_src and "PSEdition" in shim_test_src, "Native shim test aligns child runner with host PSEdition")
+
+    # 28. Suggested Profile & Skip-Download Runtime Convergence
+    check("Merge-PlanModeConfig" in src, "Defines Merge-PlanModeConfig")
+    check("Merge-WorkflowsBuiltinsConfig" in src, "Defines Merge-WorkflowsBuiltinsConfig")
+    check("Merge-StatusLineConfig" in src, "Defines Merge-StatusLineConfig")
+    check("Merge-AskUserQuestionConfig" in src, "Defines Merge-AskUserQuestionConfig")
+    check("Merge-SuggestedConfigProfile" in src, "Defines Merge-SuggestedConfigProfile")
+    check('`"compacts`"' in src and '`"session-name`"' in src, "Status-line seed contains compacts and session-name")
+    check('timeout_secs = 120' in src and 'timeout_action = `"recommended`"' in src, "Ask user question defaults to 120s and recommended")
+    check("requiredRuntimeFiles = @(" in src and "LauncherHelpers.ps1" in src, "Skip-download path refreshes runtime files including LauncherHelpers")
+    check("Regenerated command launchers" in src, "Skip-download path regenerates cmd launchers upon runtime refresh")
+    check("Merge-TomlScalarKey" in src, "Scalar suggested-profile keys share Merge-TomlScalarKey")
 
     print("\n===============================================")
     print(f"Total Passed: {passes}")

@@ -9,3 +9,6 @@ Do not copy: Bun extract, `cli.js` regex, Claude feature unlocks.
 v1 apply target: `manifest.rs` CurDir filter (0001), not plugin.json rewrite.
 
 0002: plan-mode extra writable globs + implement-via-subagents PlanReady.
+
+Install/update convergence and the suggested config profile (including AQU
+120s): [`update-runtime-convergence.md`](update-runtime-convergence.md).

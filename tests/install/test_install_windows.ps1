@@ -393,7 +393,7 @@ try {
     $expectedTmplContent = Get-Content -LiteralPath $DailyMinimalSource -Raw
     Assert-Test ($refreshedAgentContent.Trim() -eq $expectedTmplContent.Trim()) "Force reinstall replaces stale agent with template"
 
-    # Already-up-to-date / second install with identical exe hash still writes/refreshes the agent
+    # Already-up-to-date / second install with identical exe hash still writes/refreshes the agent and profile
     Set-Content -LiteralPath $expectedAgentPath -Value "STALE_UP_TO_DATE" -Encoding ASCII
     Set-Content -LiteralPath $requestLog -Value "" -Encoding ASCII
     $resUpToDate = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile } -ScriptArgs @("-Prefix", $targetPrefix)
@@ -402,9 +402,19 @@ try {
     Assert-Test ($upToDateAgentContent.Trim() -eq $expectedTmplContent.Trim()) "Already-up-to-date install refreshes agent"
     $fastPathRequests = @(Get-Content -LiteralPath $requestLog -ErrorAction SilentlyContinue | Where-Object { $_ -match '\S' })
     Assert-Test (-not ($fastPathRequests -contains "grokgod-windows-x64.exe")) "Fast path skips grokgod-windows-x64.exe request"
-    Assert-Test (-not ($fastPathRequests -contains "SHA256SUMS")) "Fast path skips SHA256SUMS request"
+    Assert-Test ($fastPathRequests -contains "SHA256SUMS") "Fast path checks SHA256SUMS for runtime refresh"
     Assert-Test ($resUpToDate.Combined -notmatch "Running candidate preflight verification") "Fast path skips candidate preflight output"
     Assert-Test ($resUpToDate.Combined -match "Installed release .* was locally verified") "Fast path reports locally verified installed release"
+
+    # Verify suggested profile merged in fast path
+    $grokCfgPath = Join-Path $testUserProfile ".grok\config.toml"
+    Assert-Test (Test-Path -LiteralPath $grokCfgPath) "Fast path created or merged config.toml"
+    $cfgContent = Get-Content -LiteralPath $grokCfgPath -Raw
+    Assert-Test ($cfgContent -match 'implement_via_subagents\s*=\s*true') "Fast path merged [plan_mode]"
+    Assert-Test ($cfgContent -match 'deep-research\s*=\s*false') "Fast path merged [workflows.builtins]"
+    Assert-Test ($cfgContent -match '"compacts"') "Fast path merged status_line compacts"
+    Assert-Test ($cfgContent -match 'timeout_secs\s*=\s*120') "Fast path merged ask_user_question 120s"
+    Assert-Test ($cfgContent -match 'timeout_action\s*=\s*"recommended"') "Fast path merged ask_user_question recommended"
 
     # -------------------------------------------------------------------------
     # Test 5: Full Rollback Across All Failure Injection Points

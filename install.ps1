@@ -325,6 +325,311 @@ function Get-DurableBackupPath([string]$targetPath) {
 # -----------------------------------------------------------------------------
 # 7. Uninstall Logic (Manifest-based)
 # -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# 7. Config Merge & Suggested Profile (Fill-if-missing)
+# -----------------------------------------------------------------------------
+function Get-GrokConfigFile {
+    $grokHome = if ($env:GROK_HOME) { $env:GROK_HOME } else { Join-Path $env:USERPROFILE ".grok" }
+    return (Join-Path $grokHome "config.toml")
+}
+
+function Write-AtomicFile([string]$targetPath, [string]$content) {
+    $parentDir = Split-Path -Path $targetPath -Parent
+    if (-not (Test-Path -LiteralPath $parentDir)) {
+        New-Item -ItemType Directory -Force -Path $parentDir | Out-Null
+    }
+    $tmpFile = Join-Path $parentDir "$([System.IO.Path]::GetFileName($targetPath)).grokgod-tmp.$([Guid]::NewGuid().ToString('N'))"
+    [System.IO.File]::WriteAllText($tmpFile, $content, [System.Text.Encoding]::UTF8)
+    Move-Item -LiteralPath $tmpFile -Destination $targetPath -Force
+}
+
+function Merge-TomlScalarKey {
+    param(
+        [string]$Section,
+        [string]$Key,
+        [string]$Value
+    )
+    $cfg = Get-GrokConfigFile
+    $assignment = "$Key = $Value"
+    $header = "[$Section]"
+    $headerRe = '^\s*\[' + [regex]::Escape($Section) + '\]\s*$'
+    $keyRe = '^\s*' + [regex]::Escape($Key) + '\s*='
+    if (Test-Path -LiteralPath $cfg) {
+        $lines = Get-Content -LiteralPath $cfg -ErrorAction SilentlyContinue
+        foreach ($line in $lines) {
+            if ($line -match $keyRe) {
+                return
+            }
+        }
+        $merged = @()
+        $added = $false
+        foreach ($line in $lines) {
+            $merged += $line
+            if ((-not $added) -and ($line -match $headerRe)) {
+                $merged += $assignment
+                $added = $true
+            }
+        }
+        if ($added) {
+            Write-AtomicFile -targetPath $cfg -content ($merged -join "`r`n")
+            Write-OK "Merged $assignment into $header in $cfg"
+            return
+        }
+        $newContent = ($lines -join "`r`n").TrimEnd() + "`r`n`r`n$header`r`n$assignment`r`n"
+        Write-AtomicFile -targetPath $cfg -content $newContent
+        Write-OK "Wrote $header $assignment to $cfg"
+        return
+    }
+    Write-AtomicFile -targetPath $cfg -content "$header`r`n$assignment`r`n"
+    Write-OK "Wrote $header $assignment to $cfg"
+}
+
+function Merge-PlanModeConfig {
+    Merge-TomlScalarKey -Section "plan_mode" -Key "implement_via_subagents" -Value "true"
+}
+
+function Merge-WorkflowsBuiltinsConfig {
+    Merge-TomlScalarKey -Section "workflows.builtins" -Key "deep-research" -Value "false"
+}
+
+function Merge-StatusLineConfig {
+    $cfg = Get-GrokConfigFile
+    if (-not (Test-Path -LiteralPath $cfg)) {
+        $initialContent = "[ui.status_line]`r`ntype = `"builtin`"`r`nitems = [`r`n    `"compacts`",`r`n    `"session-name`",`r`n]`r`n"
+        Write-AtomicFile -targetPath $cfg -content $initialContent
+        Write-OK "Wrote [ui.status_line] builtin items including compacts to $cfg"
+        return
+    }
+
+    $lines = Get-Content -LiteralPath $cfg -ErrorAction SilentlyContinue
+    $secStart = -1
+    $secEnd = $lines.Count - 1
+    $typeVal = ""
+    $hasItems = $false
+    $hasCompacts = $false
+    $inItems = $false
+
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $raw = $lines[$i]
+        if ($raw -match '^\s*\[([^\]]+)\]\s*$') {
+            if ($raw -match '^\s*\[ui\.status_line\]\s*$') {
+                $secStart = $i
+                continue
+            }
+            if ($secStart -ge 0) {
+                $secEnd = $i - 1
+                break
+            }
+        }
+        if ($secStart -ge 0) {
+            if ($raw -match '^\s*type\s*=\s*["'']?([^"'';#\s]+)["'']?') {
+                $typeVal = $matches[1].ToLower()
+            }
+            if ($raw -match '^\s*items\s*=') {
+                $hasItems = $true
+                $inItems = $true
+            }
+            if ($inItems) {
+                if ($raw -match '["'']compacts["'']') {
+                    $hasCompacts = $true
+                }
+                if ($raw -match '\]') {
+                    $inItems = $false
+                }
+            }
+        }
+    }
+
+    if ($secStart -lt 0) {
+        # Missing section: seed type=builtin with two items: compacts, session-name
+        $newContent = ($lines -join "`r`n").TrimEnd() + "`r`n`r`n[ui.status_line]`r`ntype = `"builtin`"`r`nitems = [`r`n    `"compacts`",`r`n    `"session-name`",`r`n]`r`n"
+        Write-AtomicFile -targetPath $cfg -content $newContent
+        Write-OK "Wrote [ui.status_line] builtin items including compacts to $cfg"
+        return
+    }
+
+    # Leave command/disabled/off/none/hidden or missing type or non-builtin or no items
+    if (-not $typeVal -or $typeVal -eq "disabled" -or $typeVal -eq "off" -or $typeVal -eq "none" -or $typeVal -eq "hidden" -or $typeVal -ne "builtin" -or -not $hasItems) {
+        return
+    }
+
+    if ($hasCompacts) {
+        return
+    }
+
+    # Append compacts to existing items
+    $itemsStart = -1
+    $itemsEnd = -1
+    for ($i = $secStart; $i -le $secEnd; $i++) {
+        $raw = $lines[$i]
+        if ($raw -match '^\s*items\s*=') {
+            $itemsStart = $i
+            if ($raw -match '\[.*\]') {
+                $itemsEnd = $i
+            } else {
+                for ($j = $i; $j -le $secEnd; $j++) {
+                    if ($j -gt $i -and $lines[$j] -match '\]') {
+                        $itemsEnd = $j
+                        break
+                    }
+                }
+            }
+            break
+        }
+    }
+
+    if ($itemsStart -lt 0 -or $itemsEnd -lt 0) {
+        return
+    }
+
+    $merged = @()
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($i -eq $itemsStart) {
+            if ($itemsStart -eq $itemsEnd) {
+                $raw = $lines[$i]
+                $cbr = $raw.LastIndexOf(']')
+                $pre = $raw.Substring(0, $cbr)
+                $post = $raw.Substring($cbr)
+                $inner = $pre.Substring($raw.IndexOf('[') + 1).Trim()
+                if (-not $inner) {
+                    $merged += ($pre.Substring(0, $raw.IndexOf('[') + 1) + '"compacts"' + $post)
+                } elseif ($inner.EndsWith(',')) {
+                    $merged += ($pre + ' "compacts"' + $post)
+                } else {
+                    $merged += ($pre + ', "compacts"' + $post)
+                }
+            } else {
+                # Multi-line array: insert before closing bracket line if bare close bracket
+                $merged += $lines[$itemsStart]
+                $lastItem = -1
+                for ($j = $itemsEnd - 1; $j -gt $itemsStart; $j--) {
+                    $t = $lines[$j].Trim()
+                    if ($t -and -not $t.StartsWith('#')) {
+                        $lastItem = $j
+                        break
+                    }
+                }
+                $indent = "    "
+                if ($lastItem -ge 0 -and $lines[$lastItem] -match '^(\s+)') {
+                    $indent = $matches[1]
+                }
+                for ($j = $itemsStart + 1; $j -lt $itemsEnd; $j++) {
+                    if ($j -eq $lastItem) {
+                        $t = $lines[$j].TrimEnd()
+                        if (-not $t.EndsWith(',')) {
+                            $merged += ($t + ",")
+                        } else {
+                            $merged += $lines[$j]
+                        }
+                    } else {
+                        $merged += $lines[$j]
+                    }
+                }
+                $cbrLine = $lines[$itemsEnd]
+                if ($cbrLine.Trim().StartsWith(']')) {
+                    $merged += ($indent + '"compacts",')
+                    $merged += $cbrLine
+                } else {
+                    $cbr = $cbrLine.LastIndexOf(']')
+                    $pre = $cbrLine.Substring(0, $cbr)
+                    $post = $cbrLine.Substring($cbr)
+                    $t = $pre.Trim()
+                    if (-not $t) {
+                        $merged += ($pre + '"compacts"' + $post)
+                    } elseif ($t.EndsWith(',')) {
+                        $merged += ($pre + ' "compacts"' + $post)
+                    } else {
+                        $merged += ($pre + ', "compacts"' + $post)
+                    }
+                }
+            }
+            $i = $itemsEnd
+            continue
+        }
+        $merged += $lines[$i]
+    }
+    Write-AtomicFile -targetPath $cfg -content ($merged -join "`r`n")
+    Write-OK "Merged compacts into [ui.status_line] items in $cfg"
+}
+
+function Merge-AskUserQuestionConfig {
+    $cfg = Get-GrokConfigFile
+    if (-not (Test-Path -LiteralPath $cfg)) {
+        $initialContent = "[toolset.ask_user_question]`r`ntimeout_enabled = true`r`ntimeout_secs = 120`r`ntimeout_action = `"recommended`"`r`ntimeout_reset_on_activity = true`r`n"
+        Write-AtomicFile -targetPath $cfg -content $initialContent
+        Write-OK "Wrote [toolset.ask_user_question] suggested profile to $cfg"
+        return
+    }
+
+    $lines = Get-Content -LiteralPath $cfg -ErrorAction SilentlyContinue
+    $secStart = -1
+    $secEnd = $lines.Count - 1
+    $hasEnabled = $false
+    $hasSecs = $false
+    $hasAction = $false
+    $hasReset = $false
+
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $raw = $lines[$i]
+        if ($raw -match '^\s*\[toolset\.ask_user_question\]\s*$') {
+            $secStart = $i
+            continue
+        }
+        if ($secStart -ge 0 -and $raw -match '^\s*\[[^\]]+\]\s*$') {
+            $secEnd = $i - 1
+            break
+        }
+        if ($secStart -ge 0) {
+            if ($raw -match '^\s*timeout_enabled\s*=') { $hasEnabled = $true }
+            if ($raw -match '^\s*timeout_secs\s*=') { $hasSecs = $true }
+            if ($raw -match '^\s*timeout_action\s*=') { $hasAction = $true }
+            if ($raw -match '^\s*timeout_reset_on_activity\s*=') { $hasReset = $true }
+        }
+    }
+
+    if ($secStart -lt 0) {
+        $newContent = ($lines -join "`r`n").TrimEnd() + "`r`n`r`n[toolset.ask_user_question]`r`ntimeout_enabled = true`r`ntimeout_secs = 120`r`ntimeout_action = `"recommended`"`r`ntimeout_reset_on_activity = true`r`n"
+        Write-AtomicFile -targetPath $cfg -content $newContent
+        Write-OK "Wrote [toolset.ask_user_question] suggested profile to $cfg"
+        return
+    }
+
+    if ($hasEnabled -and $hasSecs -and $hasAction -and $hasReset) {
+        return
+    }
+
+    $missing = @()
+    if (-not $hasEnabled) { $missing += "timeout_enabled = true" }
+    if (-not $hasSecs) { $missing += "timeout_secs = 120" }
+    if (-not $hasAction) { $missing += "timeout_action = `"recommended`"" }
+    if (-not $hasReset) { $missing += "timeout_reset_on_activity = true" }
+
+    $merged = @()
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($i -eq $secEnd) {
+            if (-not $lines[$i].Trim()) {
+                $merged += $missing
+                $merged += $lines[$i]
+            } else {
+                $merged += $lines[$i]
+                $merged += $missing
+            }
+        } else {
+            $merged += $lines[$i]
+        }
+    }
+
+    Write-AtomicFile -targetPath $cfg -content ($merged -join "`r`n")
+    Write-OK "Merged missing [toolset.ask_user_question] keys into $cfg"
+}
+
+function Merge-SuggestedConfigProfile {
+    Merge-PlanModeConfig
+    Merge-WorkflowsBuiltinsConfig
+    Merge-StatusLineConfig
+    Merge-AskUserQuestionConfig
+}
+
 function Install-DailyMinimalAgent([string]$DownloadedPath = "") {
     $target = if ($env:GROK_HOME) {
         Join-Path $env:GROK_HOME "agents\minimal.md"
@@ -707,19 +1012,108 @@ if (-not $Force -and (Test-Path -LiteralPath $TargetExe)) {
     }
 }
 
-if ($LocalReleaseVerified) {
-    Install-DailyMinimalAgent
-    Write-OK "Installed release $Tag was locally verified. Skipping binary/checksum download and candidate preflight."
-    Release-InstallLock
-    exit 0
-}
-
 $BaseUrl = if ($env:GROKGOD_DOWNLOAD_BASE_URL) {
     $env:GROKGOD_DOWNLOAD_BASE_URL.TrimEnd('/')
 } elseif ($Tag -eq "latest") {
     "https://github.com/$Repo/releases/latest/download"
 } else {
     "https://github.com/$Repo/releases/download/$Tag"
+}
+
+if ($LocalReleaseVerified) {
+    $fastTmpDir = Join-Path ([System.IO.Path]::GetTempPath()) "grokgod-fast-runtime-$([Guid]::NewGuid().ToString('N'))"
+    $downloadedDailyMinimal = ""
+
+    try {
+        New-Item -ItemType Directory -Force -Path $fastTmpDir | Out-Null
+        $fastSumsPath = Join-Path $fastTmpDir "SHA256SUMS"
+        $fastSumsUrl = "$BaseUrl/SHA256SUMS"
+
+        Write-Step "Checking for runtime updates from $BaseUrl ..."
+        Invoke-WebRequest -Uri $fastSumsUrl -OutFile $fastSumsPath -UseBasicParsing -ErrorAction Stop
+
+        if (Test-Path -LiteralPath $fastSumsPath) {
+            $fastChecksumMap = Get-ChecksumMap -SumsPath $fastSumsPath
+
+            $requiredRuntimeFiles = @("grok-shim.ps1", "LauncherHelpers.ps1", "install.ps1", "daily-minimal.md")
+            $missingChecksum = $false
+            foreach ($rf in $requiredRuntimeFiles) {
+                if (-not $fastChecksumMap.ContainsKey($rf)) {
+                    $missingChecksum = $true
+                    break
+                }
+            }
+
+            if (-not $missingChecksum) {
+                $fastStagedFiles = @{}
+                $allVerified = $true
+
+                foreach ($rf in $requiredRuntimeFiles) {
+                    $dlPath = Join-Path $fastTmpDir $rf
+                    $rfUrl = "$BaseUrl/$rf"
+                    Invoke-WebRequest -Uri $rfUrl -OutFile $dlPath -UseBasicParsing -ErrorAction Stop
+                    if (-not (Test-Path -LiteralPath $dlPath)) {
+                        $allVerified = $false
+                        break
+                    }
+                    $actHash = (Get-FileHash -LiteralPath $dlPath -Algorithm SHA256).Hash.ToLower()
+                    if ($actHash -ne $fastChecksumMap[$rf]) {
+                        $allVerified = $false
+                        break
+                    }
+                    $fastStagedFiles[$rf] = $dlPath
+                }
+
+                if ($allVerified) {
+                    # Activate refreshed runtime into GrokgodHome
+                    $fastInstalledShimDir = Join-Path $GrokgodHome "shim"
+                    $fastInstalledShimPs1 = Join-Path $fastInstalledShimDir "grok-shim.ps1"
+                    $fastInstalledHelpers = Join-Path $fastInstalledShimDir "LauncherHelpers.ps1"
+                    $fastInstalledSelf    = Join-Path $GrokgodHome "install.ps1"
+
+                    New-Item -ItemType Directory -Force -Path $fastInstalledShimDir | Out-Null
+                    Copy-Item -LiteralPath $fastStagedFiles["grok-shim.ps1"] -Destination $fastInstalledShimPs1 -Force
+                    Copy-Item -LiteralPath $fastStagedFiles["LauncherHelpers.ps1"] -Destination $fastInstalledHelpers -Force
+                    Copy-Item -LiteralPath $fastStagedFiles["install.ps1"] -Destination $fastInstalledSelf -Force
+
+                    $downloadedDailyMinimal = $fastStagedFiles["daily-minimal.md"]
+                    Write-OK "Refreshed runtime scripts from $BaseUrl"
+
+                    # Regenerate cmd launchers via LauncherHelpers
+                    . $fastInstalledHelpers
+                    $fastGrokCmd = Join-Path $BinDir "grok.cmd"
+                    $fastGrokgodCmd = Join-Path $BinDir "grokgod.cmd"
+                    Assert-NotOfficialGrok $fastGrokCmd
+                    Assert-NotOfficialGrok $fastGrokgodCmd
+
+                    $fastGrokContent = New-GrokgodLauncherScript -Identity "grok" -ShimPath $fastInstalledShimPs1
+                    $fastGrokgodContent = New-GrokgodLauncherScript -Identity "grokgod" -ShimPath $fastInstalledShimPs1
+                    Set-Content -LiteralPath $fastGrokCmd -Value $fastGrokContent -Encoding ASCII
+                    Set-Content -LiteralPath $fastGrokgodCmd -Value $fastGrokgodContent -Encoding ASCII
+                    Write-OK "Regenerated command launchers: $fastGrokCmd and $fastGrokgodCmd"
+                } else {
+                    Write-Warn "Runtime script checksum verification failed during fast path; keeping on-disk runtime."
+                }
+            } else {
+                Write-Warn "Incomplete checksum entries for runtime assets in SHA256SUMS; keeping on-disk runtime."
+            }
+        }
+    } catch {
+        Write-Warn "Could not refresh runtime scripts from $BaseUrl ($_); keeping on-disk runtime."
+    } finally {
+        if (Test-Path -LiteralPath $fastTmpDir) {
+            Remove-Item -LiteralPath $fastTmpDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    Install-DailyMinimalAgent -DownloadedPath $downloadedDailyMinimal
+
+    # Always merge suggested profile
+    Merge-SuggestedConfigProfile
+
+    Write-OK "Installed release $Tag was locally verified. Skipping binary/checksum download and candidate preflight."
+    Release-InstallLock
+    exit 0
 }
 
 $CandidateSibling = Join-Path $GrokgodBinDir "candidate-$([Guid]::NewGuid().ToString('N')).exe"
@@ -982,6 +1376,7 @@ MODE=$curMode
         }
     }
 
+    Merge-SuggestedConfigProfile
     Write-OK "Already up to date ($ActualHash). Skipping mutation."
     Release-InstallLock
     exit 0
@@ -1167,6 +1562,11 @@ try {
     Tx-Log "Wrote launcher $grokgodCmdPath"
     # Failure injection point: 'launcher-grokgod'
     Test-FailureInjection "launcher-grokgod"
+
+    # -------------------------------------------------------------------------
+    # Suggested Config Profile Merge
+    # -------------------------------------------------------------------------
+    Merge-SuggestedConfigProfile
 
     # -------------------------------------------------------------------------
     # Stamp & Manifest Generation (Commit Point: Written Last)

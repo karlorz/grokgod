@@ -93,10 +93,8 @@ cat > "$TMP/expected-missing.toml" <<'EOF'
 [ui.status_line]
 type = "builtin"
 items = [
-    "model",
-    "turn-timer",
-    "session-name",
     "compacts",
+    "session-name",
 ]
 EOF
 assert_file_eq "$TMP/missing/config.toml" "$TMP/expected-missing.toml" "missing config.toml seed"

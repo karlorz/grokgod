@@ -67,15 +67,61 @@ PATH `grok` / `grokgod` is the shim. Engine fixes are source patches plus
 `cargo build --release -p xai-grok-pager-bin`. Not plugin.json rewrite, not
 Mach-O hex.
 
-- `0001` — `manifest.rs` filters `Component::CurDir` after `plugin_root.join`
-- `0002` — plan-mode extra writable globs + `implement_via_subagents` (default
-  true). Skills may write matching PRD markdown while plan mode is Active.
-  After `a`, PlanReady tells the model to spawn second-tier implementers
-  (not “start coding”). Canonical session `plan.md` is unchanged.
-- `0004` — `[workflows.builtins] deep-research` (default on). Set `false` in
-  config or `/plugin` → Workflows Space to hide the compiled-in workflow so
-  plugin `deep-research:deep-research` can own `/deep-research` in the same
-  session. Install merges `false` when the key is missing. No `/settings` row.
+### Persist (what you get)
+
+Grouped; patch ids in the last column. Engine patches have no `patches.json`; full numbered inventory stays in [`docs/patch-inventory.md`](docs/patch-inventory.md).
+
+| Group | What you get | Patches |
+|-------|----------------|---------|
+| Plugin skills | `"./skills/"` joins resolve | 0001 |
+| Plan mode | Extra writable PRD globs; PlanReady spawns implementers | 0002, 0019 |
+| Workflows | Builtin `/deep-research` can yield to the plugin | 0004 |
+| BYOK / Chat Completions | Tool deny/allow, hosted search splice, DeepSeek null/index/image, Gemini enum | 0005–0007, 0009, 0010, 0014, 0018 |
+| Sessions | Single-turn persist toggle; compaction warning + `compacts` status item | 0003, 0013 |
+| Usage limits | Switch-model retry; prompt lifetime across compact | 0016, 0020, 0023 |
+| Platform | Windows protoc; process-group cleanup; idle-resume context window | 0012, 0021, 0022 |
+| UX | Ask-question timeout action; `-m` does not stick; welcome accent | 0011, 0015, 0017 |
+| Compat | Claude permissions import gate | 0008 |
+
+To drop an engine patch you rebuild without that file.
+
+### Suggested profile
+
+Install/update merges these fill-if-missing into `~/.grok/config.toml` (both POSIX and Windows):
+
+```toml
+[plan_mode]
+implement_via_subagents = true
+
+[workflows.builtins]
+deep-research = false
+
+[ui.status_line]
+type = "builtin"
+items = [
+    "compacts",
+    "session-name",
+]
+
+[toolset.ask_user_question]
+timeout_enabled = true
+timeout_secs = 120
+timeout_action = "recommended"
+timeout_reset_on_activity = true
+```
+
+| Key | Default (compiled) | On (suggested) | Off (opt-out) |
+|-----|--------------------|----------------|---------------|
+| `[plan_mode] implement_via_subagents` | `true` (0002) | `true` | `false` — parent “start coding” |
+| `[workflows.builtins] deep-research` | `true` (builtin owns `/deep-research`) | `false` — plugin owns slash | `true` — stock builtin |
+| `[ui.status_line] type` | `disabled` | `builtin` | `disabled` / `command` / off / none / hidden |
+| `[ui.status_line] items` (only if type builtin and section missing) | grok `DEFAULT_ITEMS`: cwd, model, context | `compacts`, `session-name` | Keep your own list; install never re-expands |
+| `[toolset.ask_user_question] timeout_enabled` | `true` | `true` | `false` — wait forever |
+| `[toolset.ask_user_question] timeout_secs` | `1800` (30 min) | `120` | Any positive integer, or omit for 1800 |
+| `[toolset.ask_user_question] timeout_action` | `decline` (Shift+X) | `recommended` | `decline` |
+| `[toolset.ask_user_question] timeout_reset_on_activity` | `true` | `true` | `false` — timer keeps running while you read |
+
+Set a key yourself to opt out. Existing status-line item lists are not expanded back to `model` / `turn-timer`. Ask-user-question keys are merged per-key when missing (a user who already set `timeout_secs = 120` is left alone). On Windows, skip-download (verified local release) still refreshes runtime from GitHub latest (warn-and-keep on network/checksum failure), always installs the daily minimal agent, merges the suggested profile, and regenerates `grok.cmd` / `grokgod.cmd` when that runtime refresh succeeds — without re-downloading the grok binary.
 
 Local headed grokgod real-session tests use `grok -m flash-max` (see
 [AGENTS.md](AGENTS.md)). Orca desktop v1.4.206-1 selects the automation model

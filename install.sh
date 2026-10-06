@@ -2286,10 +2286,8 @@ maybe_merge_status_line_config() {
     printf '%s\n' '[ui.status_line]'
     printf '%s\n' 'type = "builtin"'
     printf '%s\n' 'items = ['
-    printf '%s\n' '    "model",'
-    printf '%s\n' '    "turn-timer",'
-    printf '%s\n' '    "session-name",'
     printf '%s\n' '    "compacts",'
+    printf '%s\n' '    "session-name",'
     printf '%s\n' ']'
   } > "$tmp"
   rewrite_commit "$tmp" "$cfg"
@@ -2297,6 +2295,125 @@ maybe_merge_status_line_config() {
 }
 
 maybe_merge_status_line_config
+
+# Merge [toolset.ask_user_question] suggested profile into ~/.grok/config.toml.
+# Per-key fill-if-missing:
+#   timeout_enabled = true
+#   timeout_secs = 120
+#   timeout_action = "recommended"
+#   timeout_reset_on_activity = true
+# Table-scoped. Do not clobber user settings. If table missing, append stanza.
+maybe_merge_ask_user_question_config() {
+  cfg="$GROK_HOME/config.toml"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log_dry "Would merge [toolset.ask_user_question] suggested profile into $cfg"
+    return 0
+  fi
+  mkdir -p "$GROK_HOME"
+
+  if [ -f "$cfg" ] && grep -q '^[[:space:]]*\[toolset\.ask_user_question\]' "$cfg"; then
+    _aq_sec="$(awk '/^[[:space:]]*\[toolset\.ask_user_question\][[:space:]]*$/{p=1;next} p && /^[[:space:]]*\[/{exit} p' "$cfg")"
+    if printf '%s\n' "$_aq_sec" | grep -q '^[[:space:]]*timeout_enabled[[:space:]]*=' \
+      && printf '%s\n' "$_aq_sec" | grep -q '^[[:space:]]*timeout_secs[[:space:]]*=' \
+      && printf '%s\n' "$_aq_sec" | grep -q '^[[:space:]]*timeout_action[[:space:]]*=' \
+      && printf '%s\n' "$_aq_sec" | grep -q '^[[:space:]]*timeout_reset_on_activity[[:space:]]*='; then
+      log_info "toolset.ask_user_question suggested keys already set in $cfg"
+      return 0
+    fi
+    tmp="$(rewrite_stage "$cfg")"
+    awk '
+      function trim(s) {
+        gsub(/\r/, "", s)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+        return s
+      }
+      BEGIN {
+        in_sec = 0
+        sec_start = 0
+        sec_end = 0
+        has_enabled = 0
+        has_secs = 0
+        has_action = 0
+        has_reset = 0
+        n = 0
+      }
+      {
+        raw = $0
+        gsub(/\r/, "", raw)
+        lines[++n] = $0
+        if (raw ~ /^[[:space:]]*\[toolset\.ask_user_question\][[:space:]]*$/) {
+          in_sec = 1
+          sec_start = n
+          next
+        }
+        if (in_sec && raw ~ /^[[:space:]]*\[[^]]+\]/) {
+          in_sec = 0
+          sec_end = n - 1
+        }
+        if (in_sec) {
+          if (raw ~ /^[[:space:]]*timeout_enabled[[:space:]]*=/) has_enabled = 1
+          if (raw ~ /^[[:space:]]*timeout_secs[[:space:]]*=/) has_secs = 1
+          if (raw ~ /^[[:space:]]*timeout_action[[:space:]]*=/) has_action = 1
+          if (raw ~ /^[[:space:]]*timeout_reset_on_activity[[:space:]]*=/) has_reset = 1
+        }
+      }
+      END {
+        if (sec_start > 0 && sec_end == 0) sec_end = n
+        if (has_enabled && has_secs && has_action && has_reset) {
+          for (i = 1; i <= n; i++) print lines[i]
+          exit
+        }
+        for (i = 1; i <= n; i++) {
+          if (i == sec_end) {
+            # If the boundary line is blank/empty, print inserted keys before it to keep the gap clean.
+            t = trim(lines[i])
+            if (t == "") {
+              if (!has_enabled) print "timeout_enabled = true"
+              if (!has_secs) print "timeout_secs = 120"
+              if (!has_action) print "timeout_action = \"recommended\""
+              if (!has_reset) print "timeout_reset_on_activity = true"
+              print lines[i]
+            } else {
+              print lines[i]
+              if (!has_enabled) print "timeout_enabled = true"
+              if (!has_secs) print "timeout_secs = 120"
+              if (!has_action) print "timeout_action = \"recommended\""
+              if (!has_reset) print "timeout_reset_on_activity = true"
+            }
+          } else {
+            print lines[i]
+          }
+        }
+      }
+    ' "$cfg" > "$tmp"
+    if cmp -s "$tmp" "$cfg" 2>/dev/null; then
+      rm -f "$tmp" 2>/dev/null || true
+      log_info "toolset.ask_user_question suggested keys already set in $cfg"
+      return 0
+    fi
+    rewrite_commit "$tmp" "$cfg"
+    log_info "Merged missing [toolset.ask_user_question] keys into $cfg"
+    return 0
+  fi
+
+  # Same-directory temp + rename so config.toml is never half-written.
+  tmp="$(rewrite_stage "$cfg")"
+  {
+    if [ -f "$cfg" ] && [ -s "$cfg" ]; then
+      cat "$cfg"
+      printf '\n'
+    fi
+    printf '%s\n' '[toolset.ask_user_question]'
+    printf '%s\n' 'timeout_enabled = true'
+    printf '%s\n' 'timeout_secs = 120'
+    printf '%s\n' 'timeout_action = "recommended"'
+    printf '%s\n' 'timeout_reset_on_activity = true'
+  } > "$tmp"
+  rewrite_commit "$tmp" "$cfg"
+  log_info "Wrote [toolset.ask_user_question] suggested profile to $cfg"
+}
+
+maybe_merge_ask_user_question_config
 fail_after config
 
 # ─────────────────────────────────────────────────────────
