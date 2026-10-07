@@ -1,0 +1,1118 @@
+diff --git a/crates/codegen/xai-grok-config/src/compat.rs b/crates/codegen/xai-grok-config/src/compat.rs
+index 69afb21c..3d62fc5d 100644
+--- a/crates/codegen/xai-grok-config/src/compat.rs
++++ b/crates/codegen/xai-grok-config/src/compat.rs
+@@ -248,6 +248,86 @@ impl VendorCompatToml {
+     }
+ }
+ 
++/// `[compat.content_filter]` TOML table. Empty ContentFilter recovery.
++#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
++pub struct ContentFilterToml {
++    /// `error` | `retry_then_error` | `retry` | `notice`. Absent → `error`.
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub action: Option<String>,
++    /// Resample cap for `retry` / `retry_then_error`. Absent → 1.
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub max_retries: Option<u32>,
++}
++
++/// Resolved `[compat.content_filter]` action.
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
++pub enum ContentFilterAction {
++    /// Fail the turn (default). Session stays recoverable.
++    #[default]
++    Error,
++    /// One or more Empty-style resamples, then fail.
++    RetryThenError,
++    /// Resample like EmptyResponse up to max_retries.
++    Retry,
++    /// Upstream: emit the refusal notice and complete the turn.
++    Notice,
++}
++
++impl ContentFilterAction {
++    pub fn parse(raw: &str) -> Option<Self> {
++        match raw.trim().to_ascii_lowercase().as_str() {
++            "error" => Some(Self::Error),
++            "retry_then_error" => Some(Self::RetryThenError),
++            "retry" => Some(Self::Retry),
++            "notice" => Some(Self::Notice),
++            _ => None,
++        }
++    }
++
++    pub fn as_str(self) -> &'static str {
++        match self {
++            Self::Error => "error",
++            Self::RetryThenError => "retry_then_error",
++            Self::Retry => "retry",
++            Self::Notice => "notice",
++        }
++    }
++}
++
++/// Env override for `[compat.content_filter] action`.
++pub const GROK_CONTENT_FILTER_ACTION: &str = "GROK_CONTENT_FILTER_ACTION";
++
++/// Resolved content-filter recovery.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct ContentFilterConfig {
++    pub action: ContentFilterAction,
++    pub max_retries: u32,
++}
++
++impl Default for ContentFilterConfig {
++    fn default() -> Self {
++        Self {
++            action: ContentFilterAction::Error,
++            max_retries: 1,
++        }
++    }
++}
++
++impl ContentFilterToml {
++    pub fn resolve(&self) -> ContentFilterConfig {
++        let env_action = std::env::var(GROK_CONTENT_FILTER_ACTION)
++            .ok()
++            .as_deref()
++            .and_then(ContentFilterAction::parse);
++        ContentFilterConfig {
++            action: env_action
++                .or_else(|| self.action.as_deref().and_then(ContentFilterAction::parse))
++                .unwrap_or_default(),
++            max_retries: self.max_retries.filter(|n| *n > 0).unwrap_or(1),
++        }
++    }
++}
++
+ /// The `[compat]` TOML section as parsed.
+ #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+ pub struct CompatConfigToml {
+@@ -257,6 +337,8 @@ pub struct CompatConfigToml {
+     pub claude: VendorCompatToml,
+     #[serde(default)]
+     pub codex: VendorCompatToml,
++    #[serde(default)]
++    pub content_filter: ContentFilterToml,
+ }
+ 
+ impl CompatConfigToml {
+diff --git a/crates/codegen/xai-grok-config/src/compat_tests.rs b/crates/codegen/xai-grok-config/src/compat_tests.rs
+index c7c60c50..ac8e6ae3 100644
+--- a/crates/codegen/xai-grok-config/src/compat_tests.rs
++++ b/crates/codegen/xai-grok-config/src/compat_tests.rs
+@@ -385,6 +385,7 @@ fn registry_and_defaults_cover_every_cell() {
+             ("claude", "mcps", Some(ClaudeMcps)),
+             ("claude", "hooks", Some(ClaudeHooks)),
+             ("claude", "sessions", Some(ClaudeSessions)),
++            ("claude", "permissions", Some(ClaudePermissions)),
+             ("codex", "skills", None),
+             ("codex", "rules", None),
+             ("codex", "agents", None),
+@@ -547,3 +548,19 @@ fn toml_struct_deserializes_partial_cells() {
+     assert_eq!(VendorCompatToml::default(), parsed.cursor);
+     assert_eq!(VendorCompatToml::default(), parsed.codex);
+ }
++
++#[test]
++fn content_filter_toml_defaults_to_error() {
++    let parsed: CompatConfigToml = toml::from_str("").unwrap();
++    let resolved = parsed.content_filter.resolve();
++    assert_eq!(resolved.action, ContentFilterAction::Error);
++    assert_eq!(resolved.max_retries, 1);
++
++    let parsed: CompatConfigToml = toml::from_str(
++        "[content_filter]\naction = \"retry_then_error\"\nmax_retries = 2\n",
++    )
++    .unwrap();
++    let resolved = parsed.content_filter.resolve();
++    assert_eq!(resolved.action, ContentFilterAction::RetryThenError);
++    assert_eq!(resolved.max_retries, 2);
++}
+diff --git a/crates/codegen/xai-grok-config/src/config_override.rs b/crates/codegen/xai-grok-config/src/config_override.rs
+index 31b626a1..62dffeb0 100644
+--- a/crates/codegen/xai-grok-config/src/config_override.rs
++++ b/crates/codegen/xai-grok-config/src/config_override.rs
+@@ -120,6 +120,8 @@ pub const OVERLAY_ALLOW_PATHS: &[&[&str]] = &[
+     &["session", "persist_single"],
+     &["session", "compaction_round_warning_limit"],
+     &["workflows", "builtins", "deep-research"],
++    &["compat", "content_filter", "action"],
++    &["compat", "content_filter", "max_retries"],
+ ];
+ 
+ /// Confine `overlay` to [`OVERLAY_ALLOW_PATHS`], dropping every other key and any table left empty.
+diff --git a/crates/codegen/xai-grok-config/src/lib.rs b/crates/codegen/xai-grok-config/src/lib.rs
+index 42f990f4..9bf9cce0 100644
+--- a/crates/codegen/xai-grok-config/src/lib.rs
++++ b/crates/codegen/xai-grok-config/src/lib.rs
+@@ -62,6 +62,9 @@ pub use global_hook_sources::{
+     unique_ancestors_rootward,
+ };
+ 
++pub use compat::{
++    ContentFilterAction, ContentFilterConfig, ContentFilterToml, GROK_CONTENT_FILTER_ACTION,
++};
+ pub use claude_import::{ClaudeImport, is_claude_import_marked, user_config_file};
+ pub use config_layers::{
+     CampaignsState, ConfigLayers, campaigns_application_disabled, campaigns_state_path,
+diff --git a/crates/codegen/xai-grok-pager/src/app/acp_handler/interactions.rs b/crates/codegen/xai-grok-pager/src/app/acp_handler/interactions.rs
+index 01c82406..58445b04 100644
+--- a/crates/codegen/xai-grok-pager/src/app/acp_handler/interactions.rs
++++ b/crates/codegen/xai-grok-pager/src/app/acp_handler/interactions.rs
+@@ -175,6 +175,7 @@ pub(crate) fn handle_ask_user_question(
+                         LocalQuestionKind::NewSession => "/new",
+                         LocalQuestionKind::CreditLimitUpsell { .. } => "credit-limit upsell",
+                         LocalQuestionKind::FreeUsageUpsell { .. } => "SuperGrok upsell",
++                        LocalQuestionKind::ContentFilterRecovery => "content-filter recovery",
+                         LocalQuestionKind::AgentTypeMismatch { .. } => "model switch",
+                         LocalQuestionKind::DeleteCurrentSession => "/delete",
+                         LocalQuestionKind::DoctorFix { .. } => "/doctor fix",
+diff --git a/crates/codegen/xai-grok-pager/src/app/actions.rs b/crates/codegen/xai-grok-pager/src/app/actions.rs
+index 112c61ee..ff87ab00 100644
+--- a/crates/codegen/xai-grok-pager/src/app/actions.rs
++++ b/crates/codegen/xai-grok-pager/src/app/actions.rs
+@@ -91,6 +91,11 @@ pub enum Action {
+     /// Open the direct `/model` picker and retry the usage-limited prompt only
+     /// after that picker completes a successful live-session model switch.
+     OpenCreditLimitModelPicker,
++    /// Resubmit the prompt that last hit a content-filter refusal.
++    RetryContentFilterPrompt,
++    /// Open the direct `/model` picker and retry the content-filtered prompt
++    /// only after that picker completes a successful live-session model switch.
++    OpenContentFilterModelPicker,
+     /// Open a semantic scrollback link.
+     OpenLink(crate::render::osc8::LinkTarget),
+     /// Open grok.com managed connectors, appending session teamId when set.
+diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
+index b2962c78..a986649f 100644
+--- a/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
++++ b/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
+@@ -874,6 +874,11 @@ pub struct AgentView {
+     /// One-shot intent armed only by a usage-limit dialog's model picker.
+     /// Cleared on picker dismissal or switch failure; consumed on switch success.
+     pub(crate) credit_limit_model_retry_pending: bool,
++    /// Complete prompt stashed from a content-filter turn failure (`action = error`).
++    /// Distinct from the credit-limit stash; billing.rs never consumes it.
++    pub content_filter_stashed_prompt: Option<crate::app::agent::InFlightPrompt>,
++    /// One-shot intent armed only by the content-filter recovery model picker.
++    pub(crate) content_filter_model_retry_pending: bool,
+     /// Complete prompt stashed from a turn that failed because the login expired (401 / re-auth). Used by the `AuthComplete` handler to auto-resubmit the prompt after a successful mid-session re-auth so the user doesn't have to retype it.
+     pub reauth_stashed_prompt: Option<crate::app::agent::InFlightPrompt>,
+     /// Currently active modal dialog (blocks all other input).
+@@ -1680,6 +1685,20 @@ fn translate_local_submit(
+             );
+             InputOutcome::Action(Action::OpenUrl(url.to_string()))
+         }
++        LocalQuestionKind::ContentFilterRecovery => {
++            let id = qv
++                .questions
++                .first()
++                .and_then(|q| q.options.get(*idx))
++                .and_then(|o| o.id.as_deref());
++            if id == Some(super::dispatch::USAGE_LIMIT_SWITCH_MODEL_OPTION_ID) {
++                return InputOutcome::Action(Action::OpenContentFilterModelPicker);
++            }
++            if id == Some(super::dispatch::CONTENT_FILTER_RETRY_OPTION_ID) {
++                return InputOutcome::Action(Action::RetryContentFilterPrompt);
++            }
++            InputOutcome::Changed
++        }
+         LocalQuestionKind::AgentTypeMismatch { model_id, effort } => {
+             let start_new = *idx == 0;
+             InputOutcome::Action(Action::AgentTypeMismatchAnswered {
+diff --git a/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs b/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
+index 05842a78..9107d07b 100644
+--- a/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
++++ b/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
+@@ -196,6 +196,8 @@ impl AgentView {
+             draft_consumed: false,
+             credit_limit_stashed_prompt: None,
+             credit_limit_model_retry_pending: false,
++            content_filter_stashed_prompt: None,
++            content_filter_model_retry_pending: false,
+             reauth_stashed_prompt: None,
+             active_modal: None,
+             modal_buttons: Vec::new(),
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/content_filter.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/content_filter.rs
+new file mode 100644
+index 00000000..24bb120a
+--- /dev/null
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/content_filter.rs
+@@ -0,0 +1,112 @@
++//! Content-filter turn recovery: stash the failed prompt and offer switch/retry.
++
++use super::billing::USAGE_LIMIT_SWITCH_MODEL_OPTION_ID;
++use super::queue::{maybe_drain_queue, note_peek_page_flip};
++use crate::app::actions::Effect;
++use crate::app::agent_view::AgentView;
++use crate::app::app_view::AppView;
++use crate::scrollback::block::RenderBlock;
++
++/// Needle shared with `xai_grok_sampler::CONTENT_FILTER_TURN_MESSAGE`.
++pub(crate) const CONTENT_FILTER_TURN_MESSAGE: &str =
++    "The model provider refused to generate a response for this turn (content filter).";
++
++/// Option id for Try Again on the content-filter recovery card.
++pub(crate) const CONTENT_FILTER_RETRY_OPTION_ID: &str = "content-filter-retry-last-prompt";
++
++pub(crate) fn is_content_filter_turn_error(message: &str) -> bool {
++    message.contains(CONTENT_FILTER_TURN_MESSAGE)
++}
++
++/// Open Switch model & retry / Try Again. Distinct from the credit-limit upsell.
++pub(super) fn open_content_filter_recovery(agent: &mut AgentView) {
++    use crate::views::question_view::{LocalQuestionKind, QuestionViewState};
++    use xai_grok_tools::implementations::grok_build::ask_user_question::{
++        Question, QuestionOption,
++    };
++
++    if agent.question_view.is_some() {
++        return;
++    }
++
++    let question = Question {
++        question: "The model provider refused this turn (content filter).".into(),
++        options: vec![
++            QuestionOption {
++                label: "Switch model & retry".into(),
++                description: "Choose another model, then retry the last prompt automatically"
++                    .into(),
++                preview: None,
++                id: Some(USAGE_LIMIT_SWITCH_MODEL_OPTION_ID.into()),
++            },
++            QuestionOption {
++                label: "Try Again".into(),
++                description: "Resubmit the last prompt on the current model".into(),
++                preview: None,
++                id: Some(CONTENT_FILTER_RETRY_OPTION_ID.into()),
++            },
++        ],
++        multi_select: Some(false),
++        id: None,
++    };
++
++    let stashed = agent.prompt.stash();
++    let state = QuestionViewState::new(
++        format!("content-filter-recovery-{}", uuid::Uuid::new_v4()),
++        vec![question],
++        stashed,
++    )
++    .with_local_kind(LocalQuestionKind::ContentFilterRecovery)
++    .with_no_freeform();
++    agent.install_local_question(state);
++    agent.prompt.set_text("");
++}
++
++pub(super) fn dispatch_retry_content_filter_prompt(app: &mut AppView) -> Vec<Effect> {
++    use crate::app::app_view::ActiveView;
++
++    let ActiveView::Agent(agent_id) = app.active_view else {
++        return vec![];
++    };
++    let Some(agent) = app.agents.get_mut(&agent_id) else {
++        return vec![];
++    };
++    let Some(prompt) = agent.content_filter_stashed_prompt.take() else {
++        agent.show_toast("No prompt to retry.");
++        agent
++            .scrollback
++            .push_block(RenderBlock::system("No prompt to retry."));
++        return vec![];
++    };
++    agent.session.enqueue_in_flight_prompt_front(prompt);
++    let drain = maybe_drain_queue(agent, &mut app.pending_image_notices);
++    if drain.effects.iter().any(|effect| {
++        matches!(
++            effect,
++            Effect::SendPrompt { .. }
++                | Effect::SendPromptBlocks { .. }
++                | Effect::SendBashCommand { .. }
++        )
++    }) {
++        agent
++            .scrollback
++            .push_block(RenderBlock::system("Trying again\u{2026}"));
++    }
++    note_peek_page_flip(app, agent_id, drain.page_flip_entry);
++    drain.effects
++}
++
++pub(super) fn dispatch_open_content_filter_model_picker(app: &mut AppView) -> Vec<Effect> {
++    use crate::app::app_view::ActiveView;
++
++    let ActiveView::Agent(agent_id) = app.active_view else {
++        return vec![];
++    };
++    let Some(agent) = app.agents.get_mut(&agent_id) else {
++        return vec![];
++    };
++    if agent.open_model_arg_picker() {
++        agent.content_filter_model_retry_pending = true;
++    }
++    vec![]
++}
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/interject.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/interject.rs
+index 0aa83e36..c4459024 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/interject.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/interject.rs
+@@ -141,6 +141,7 @@ pub(super) fn dispatch_send_prompt_now(
+     // dispatch_send_prompt_inner. Drop the credit-limit stash so Try Again
+     // cannot resubmit the blocked prompt after the user has moved on.
+     agent.credit_limit_stashed_prompt = None;
++    agent.content_filter_stashed_prompt = None;
+ 
+     // Mid-outage guard (mirrors the plain prompt path): the producers already consumed the payload (composer text / queue row)
+     // Requeue it locally instead of firing into a dead channel and losing the message
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/mod.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/mod.rs
+index d895c82b..bf7f1506 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/mod.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/mod.rs
+@@ -10,6 +10,7 @@
+ //! Imports in this tree use at most one `super::` hop (absolute `crate::` paths otherwise); tests/ shares a fixture prelude via `use super::*;`.
+ mod auth;
+ mod billing;
++mod content_filter;
+ mod cta;
+ mod ctx;
+ mod dashboard;
+@@ -40,6 +41,9 @@ pub(crate) use billing::{
+     CREDIT_LIMIT_RETRY_OPTION_ID, UPSELL_URL_PAYG, UPSELL_URL_UPGRADE,
+     USAGE_LIMIT_SWITCH_MODEL_OPTION_ID, is_credit_limit_error,
+ };
++pub(crate) use content_filter::{
++    CONTENT_FILTER_RETRY_OPTION_ID, CONTENT_FILTER_TURN_MESSAGE, is_content_filter_turn_error,
++};
+ #[cfg(test)]
+ pub(crate) use ctx::{SwitchCause, switch_to_agent};
+ pub(crate) use dashboard::{DashboardStopReadiness, dashboard_stop_readiness};
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
+index d4506715..24a49cc1 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
+@@ -1133,6 +1133,7 @@ pub(super) fn dispatch_send_prompt_submission(
+         // Reaching here means the command queued or passed text through, a real submission
+         // Local-UI commands returned above and must keep the hook-block hold
+         agent.credit_limit_stashed_prompt = None;
++        agent.content_filter_stashed_prompt = None;
+         agent.release_hook_block_hold();
+         let mut untaken = attach_prompt_state_to_last_queued(
+             agent,
+@@ -1247,6 +1248,7 @@ pub(super) fn dispatch_send_prompt_submission(
+             // `clear_follow_ups` keeps `follow_up_seen` (it marks the turn boundary) so a stale re-delivery stays rejected
+             agent.clear_follow_ups();
+             agent.credit_limit_stashed_prompt = None;
++            agent.content_filter_stashed_prompt = None;
+ 
+             // `agent` borrow ends here; push the optimistic echo via `app`.
+             let sid_str = session_id.0.to_string();
+@@ -1276,6 +1278,7 @@ pub(super) fn dispatch_send_prompt_submission(
+             .session
+             .enqueue_prompt_with_skill_tokens(text.clone(), skill_token_ranges);
+         agent.credit_limit_stashed_prompt = None;
++        agent.content_filter_stashed_prompt = None;
+         if consume_input {
+             app.pending_image_notices
+                 .extend(agent.unbound_image_placeholder_notice());
+@@ -1624,10 +1627,15 @@ pub(super) fn handle_prompt_response(
+         // A dedicated prompt/modal/banner replaces the generic TurnFailed marker and error toast
+         // The cases: rate limit, free-usage paywall, model incompatibility, credit 402/403, 401 re-auth, context overflow, and disk-full
+         // A formatted RequestFailed banner from RetryState also counts
++        let content_filter_blocked = result
++            .as_ref()
++            .err()
++            .is_some_and(|e| super::content_filter::is_content_filter_turn_error(e));
+         let dedicated_ux_shown = rate_limited
+             || free_usage_blocked
+             || model_incompatible
+             || credit_limit_blocked
++            || content_filter_blocked
+             || reauth_prompted
+             || context_overflow
+             || disk_full
+@@ -1664,6 +1672,16 @@ pub(super) fn handle_prompt_response(
+         {
+             agent.credit_limit_stashed_prompt = Some(prompt);
+         }
++        if content_filter_blocked
++            && !was_cancelling
++            && let Some(prompt) = agent
++                .session
++                .usage_limit_retry_prompt
++                .take()
++                .or_else(|| agent.session.in_flight_prompt.take())
++        {
++            agent.content_filter_stashed_prompt = Some(prompt);
++        }
+         // Stash for AuthComplete after 401
+         // Prefer in_flight; fall back to compact_held (cleared for cancel-rewind during auto-compact)
+         // Skip if both None
+@@ -1891,6 +1909,14 @@ pub(super) fn handle_prompt_response(
+             return vec![];
+         }
+ 
++        if content_filter_blocked && !was_cancelling {
++            super::content_filter::open_content_filter_recovery(agent);
++            if let Some(p) = pending_adoption {
++                agent.discard_pending_adoption_updates(&p.prompt_id);
++            }
++            return vec![];
++        }
++
+         // FIFO order: a server-authoritative prompt may have drained into the running slot during this turn's teardown
+         // Adopt it now (finish_turn cleared current_prompt_id) and run the turn-start shim
+         // This sets `TurnRunning`, so the `maybe_drain_queue` below no-ops rather than draining a local prompt; the leader owns the drain order
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs
+index 4c46b140..2c90ce17 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/router.rs
+@@ -1222,6 +1222,12 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
+         Action::OpenCreditLimitModelPicker => {
+             super::billing::dispatch_open_credit_limit_model_picker(app)
+         }
++        Action::RetryContentFilterPrompt => {
++            super::content_filter::dispatch_retry_content_filter_prompt(app)
++        }
++        Action::OpenContentFilterModelPicker => {
++            super::content_filter::dispatch_open_content_filter_model_picker(app)
++        }
+         Action::OpenUrl(url) => {
+             if url.starts_with("file://") {
+                 let opened = url::Url::parse(&url)
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
+index ee162568..e1dd3ec9 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
+@@ -1898,6 +1898,7 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
+         && app.cli_model_override.as_ref() == Some(&model_id);
+     let mut consumed_cli_persist = false;
+     let mut retry_credit_limit_prompt = false;
++    let mut retry_content_filter_prompt = false;
+     if let Some(agent) = app.agents.get_mut(&agent_id) {
+         agent.session.model_switch_pending = false;
+         let model_changed_during_switch =
+@@ -1906,6 +1907,8 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
+             Ok(()) => {
+                 retry_credit_limit_prompt = agent.credit_limit_model_retry_pending;
+                 agent.credit_limit_model_retry_pending = false;
++                retry_content_filter_prompt = agent.content_filter_model_retry_pending;
++                agent.content_filter_model_retry_pending = false;
+                 agent.session.user_model_preference = Some(model_id.clone());
+                 let display_name = agent
+                     .session
+@@ -1955,6 +1958,7 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
+             }
+             Err(SwitchModelError::IncompatibleAgent { .. }) => {
+                 agent.credit_limit_model_retry_pending = false;
++                agent.content_filter_model_retry_pending = false;
+                 if let Some(ref prev) = prev_model_id {
+                     agent.session.models.set_current(prev.clone(), None);
+                 }
+@@ -1968,8 +1972,10 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
+                 return open_agent_type_mismatch_question(app, model_id, effort, &display_name);
+             }
+             Err(SwitchModelError::Other(msg)) => {
+-                let suppress_drain = agent.credit_limit_model_retry_pending;
++                let suppress_drain = agent.credit_limit_model_retry_pending
++                    || agent.content_filter_model_retry_pending;
+                 agent.credit_limit_model_retry_pending = false;
++                agent.content_filter_model_retry_pending = false;
+                 let text = match context_window_selection {
+                     Some(selection) => {
+                         format!(
+@@ -1995,6 +2001,15 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
+             ));
+             return effects;
+         }
++        if retry_content_filter_prompt {
++            if consumed_cli_persist {
++                app.cli_model_ephemeral = false;
++            }
++            effects.extend(
++                super::super::content_filter::dispatch_retry_content_filter_prompt(app),
++            );
++            return effects;
++        }
+         let drain = maybe_drain_queue(agent, &mut app.pending_image_notices);
+         effects.extend(drain.effects);
+         note_peek_page_flip(app, agent_id, drain.page_flip_entry);
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
+index 9560addb..ff3bd3dd 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs
+@@ -1800,6 +1800,7 @@ pub(in crate::app::dispatch) fn set_default_model(
+     if !available_has_new {
+         if let Some(agent) = app.agents.get_mut(&aid) {
+             agent.credit_limit_model_retry_pending = false;
++            agent.content_filter_model_retry_pending = false;
+         }
+         tracing::error!(
+             target: "settings",
+@@ -1815,6 +1816,7 @@ pub(in crate::app::dispatch) fn set_default_model(
+     if prev_id.as_ref() == Some(&new_id) {
+         if let Some(agent) = app.agents.get_mut(&aid) {
+             agent.credit_limit_model_retry_pending = false;
++            agent.content_filter_model_retry_pending = false;
+         }
+         return vec![];
+     }
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/content_filter.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/content_filter.rs
+new file mode 100644
+index 00000000..8b594b73
+--- /dev/null
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/content_filter.rs
+@@ -0,0 +1,220 @@
++//! Tests for content-filter stash, recovery modal, and switch/retry.
++
++use super::*;
++use crate::app::dispatch::{
++    CONTENT_FILTER_RETRY_OPTION_ID, CONTENT_FILTER_TURN_MESSAGE, USAGE_LIMIT_SWITCH_MODEL_OPTION_ID,
++};
++
++fn test_stashed_prompt(text: &str) -> crate::app::agent::InFlightPrompt {
++    crate::app::agent::InFlightPrompt {
++        text: text.into(),
++        images: Vec::new(),
++        scrollback_entry: crate::scrollback::EntryId::new(0),
++        combined_scrollback_entries: Vec::new(),
++        chip_elements: Vec::new(),
++    }
++}
++
++fn set_first_selection(
++    qv: &mut crate::views::question_view::QuestionViewState,
++    sel: crate::views::question_view::QuestionSelection,
++) {
++    match qv.selections.first_mut() {
++        Some(slot) => *slot = sel,
++        None => panic!("expected a selection slot"),
++    }
++}
++
++fn complete_content_filter_turn(app: &mut AppView, id: AgentId, prompt_id: Option<String>) {
++    let _ = dispatch(
++        Action::TaskComplete(TaskResult::PromptResponse {
++            agent_id: id,
++            result: Err(CONTENT_FILTER_TURN_MESSAGE.into()),
++            http_status: Some(400),
++            prompt_id,
++        }),
++        app,
++    );
++}
++
++#[test]
++fn content_filter_error_stashes_prompt_and_opens_recovery_modal() {
++    let mut app = test_app_with_agent();
++    let id = AgentId(0);
++    let effects = dispatch(Action::SendPrompt("draw me a cat".into()), &mut app);
++    assert!(
++        matches!(effects.first(), Some(Effect::SendPrompt { text, .. }) if text == "draw me a cat")
++    );
++    let prompt_id = test_agent(&app, id).session.current_prompt_id.clone();
++    complete_content_filter_turn(&mut app, id, prompt_id);
++
++    let agent = test_agent(&app, id);
++    assert!(agent.question_view.is_some(), "recovery modal must open");
++    assert!(agent.credit_limit_stashed_prompt.is_none());
++    let stashed = agent
++        .content_filter_stashed_prompt
++        .as_ref()
++        .expect("content-filter prompt must survive finish_turn");
++    assert_eq!(stashed.text, "draw me a cat");
++    let qv = agent.question_view.as_ref().unwrap();
++    assert!(matches!(
++        qv.local_kind,
++        Some(crate::views::question_view::LocalQuestionKind::ContentFilterRecovery)
++    ));
++    let q = qv.questions.first().expect("question");
++    assert_eq!(
++        q.question,
++        "The model provider refused this turn (content filter)."
++    );
++    assert_eq!(q.options.len(), 2);
++    assert_eq!(q.options[0].label, "Switch model & retry");
++    assert_eq!(
++        q.options[0].id.as_deref(),
++        Some(USAGE_LIMIT_SWITCH_MODEL_OPTION_ID)
++    );
++    assert_eq!(q.options[1].label, "Try Again");
++    assert_eq!(
++        q.options[1].id.as_deref(),
++        Some(CONTENT_FILTER_RETRY_OPTION_ID)
++    );
++}
++
++#[test]
++fn generic_turn_error_does_not_stash_content_filter_prompt() {
++    let mut app = test_app_with_agent();
++    let id = AgentId(0);
++    let _ = dispatch(Action::SendPrompt("hello".into()), &mut app);
++    let prompt_id = test_agent(&app, id).session.current_prompt_id.clone();
++    let _ = dispatch(
++        Action::TaskComplete(TaskResult::PromptResponse {
++            agent_id: id,
++            result: Err("API error (status 500): boom".into()),
++            http_status: Some(500),
++            prompt_id,
++        }),
++        &mut app,
++    );
++    let agent = test_agent(&app, id);
++    assert!(agent.content_filter_stashed_prompt.is_none());
++    assert!(agent.question_view.is_none());
++}
++
++#[test]
++fn content_filter_try_again_resends_exact_prompt_once() {
++    let mut app = test_app_with_agent();
++    let id = AgentId(0);
++    let _ = dispatch(Action::SendPrompt("draw me a cat".into()), &mut app);
++    let prompt_id = test_agent(&app, id).session.current_prompt_id.clone();
++    complete_content_filter_turn(&mut app, id, prompt_id);
++
++    let retry = dispatch(Action::RetryContentFilterPrompt, &mut app);
++    let sends = retry
++        .iter()
++        .filter(|effect| {
++            matches!(
++                effect,
++                Effect::SendPrompt { .. } | Effect::SendPromptBlocks { .. }
++            )
++        })
++        .count();
++    assert_eq!(sends, 1);
++    assert!(retry.iter().any(
++        |effect| matches!(effect, Effect::SendPrompt { text, .. } if text == "draw me a cat")
++    ));
++    let agent = test_agent(&app, id);
++    assert!(agent.content_filter_stashed_prompt.is_none());
++    assert!(agent.credit_limit_stashed_prompt.is_none());
++}
++
++#[test]
++fn content_filter_switch_model_resends_exact_prompt_once() {
++    use crate::app::agent_view::translate_local_submit_for_test;
++    use crate::app::app_view::InputOutcome;
++    use crate::views::question_view::QuestionSelection;
++
++    let mut app = test_app_with_agent();
++    let id = AgentId(0);
++    let model_id = acp::ModelId::new(std::sync::Arc::from("content-filter-alternate"));
++    app.agents
++        .get_mut(&id)
++        .unwrap()
++        .session
++        .models
++        .available
++        .insert(
++            model_id.clone(),
++            acp::ModelInfo::new(model_id.clone(), "Content Filter Alternate".to_string()),
++        );
++
++    let _ = dispatch(Action::SendPrompt("draw me a cat".into()), &mut app);
++    let prompt_id = test_agent(&app, id).session.current_prompt_id.clone();
++    complete_content_filter_turn(&mut app, id, prompt_id);
++
++    let mut qv = app
++        .agents
++        .get_mut(&id)
++        .unwrap()
++        .question_view
++        .take()
++        .expect("expected content-filter recovery");
++    set_first_selection(&mut qv, QuestionSelection::Single(Some(0)));
++    let kind = qv.local_kind.take().expect("content-filter local kind");
++    let InputOutcome::Action(open_picker) = translate_local_submit_for_test(&qv, kind, false)
++    else {
++        panic!("expected model-picker action");
++    };
++    assert!(matches!(open_picker, Action::OpenContentFilterModelPicker));
++    assert!(dispatch(open_picker, &mut app).is_empty());
++    assert!(test_agent(&app, id).content_filter_model_retry_pending);
++    assert!(!test_agent(&app, id).credit_limit_model_retry_pending);
++
++    let retry_effects = dispatch(
++        Action::TaskComplete(TaskResult::SwitchModelComplete {
++            agent_id: id,
++            choice: ModelChoice::new(model_id.clone()),
++            result: Ok(()),
++            prev_model_id: None,
++        }),
++        &mut app,
++    );
++    let retry_sends = retry_effects
++        .iter()
++        .filter(|effect| {
++            matches!(
++                effect,
++                Effect::SendPrompt { .. } | Effect::SendPromptBlocks { .. }
++            )
++        })
++        .count();
++    assert_eq!(retry_sends, 1, "switch success must resend exactly once");
++    assert!(retry_effects.iter().any(
++        |effect| matches!(effect, Effect::SendPrompt { text, .. } if text == "draw me a cat")
++    ));
++    let agent = test_agent(&app, id);
++    assert_eq!(agent.session.models.current, Some(model_id));
++    assert!(!agent.content_filter_model_retry_pending);
++    assert!(agent.content_filter_stashed_prompt.is_none());
++}
++
++#[test]
++fn content_filter_retry_does_not_consume_credit_limit_stash() {
++    let mut app = test_app_with_agent();
++    let id = AgentId(0);
++    let agent = app.agents.get_mut(&id).unwrap();
++    agent.content_filter_stashed_prompt = Some(test_stashed_prompt("filter me"));
++    agent.credit_limit_stashed_prompt = Some(test_stashed_prompt("billing me"));
++
++    let effects = dispatch(Action::RetryContentFilterPrompt, &mut app);
++    assert!(effects.iter().any(
++        |effect| matches!(effect, Effect::SendPrompt { text, .. } if text == "filter me")
++    ));
++    let agent = test_agent(&app, id);
++    assert!(agent.content_filter_stashed_prompt.is_none());
++    assert_eq!(
++        agent
++            .credit_limit_stashed_prompt
++            .as_ref()
++            .map(|p| p.text.as_str()),
++        Some("billing me")
++    );
++}
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
+index cc994944..69759e2d 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
+@@ -1,6 +1,7 @@
+ //! Tests for the dispatch module tree: shared fixtures and per-domain test modules.
+ mod auth;
+ mod billing;
++mod content_filter;
+ mod cta_e2e;
+ mod dashboard;
+ mod jump;
+diff --git a/crates/codegen/xai-grok-pager/src/app/modals.rs b/crates/codegen/xai-grok-pager/src/app/modals.rs
+index 984a28db..70cf28a6 100644
+--- a/crates/codegen/xai-grok-pager/src/app/modals.rs
++++ b/crates/codegen/xai-grok-pager/src/app/modals.rs
+@@ -547,6 +547,7 @@ impl AgentView {
+         );
+         if is_model_picker {
+             self.credit_limit_model_retry_pending = false;
++            self.content_filter_model_retry_pending = false;
+         }
+     }
+ 
+diff --git a/crates/codegen/xai-grok-pager/src/views/question_view.rs b/crates/codegen/xai-grok-pager/src/views/question_view.rs
+index a5d4bc40..058e79ca 100644
+--- a/crates/codegen/xai-grok-pager/src/views/question_view.rs
++++ b/crates/codegen/xai-grok-pager/src/views/question_view.rs
+@@ -110,6 +110,9 @@ pub enum LocalQuestionKind {
+         /// Telemetry source for `SuperGrokUpsellClicked`; distinguishes the paywall from the restricted-command upsell.
+         source: xai_grok_telemetry::events::SuperGrokUpsell,
+     },
++    /// Modal shown when a turn failed because the provider returned ContentFilter.
++    /// Options: Switch model & retry, Try Again. Distinct from credit-limit upsell.
++    ContentFilterRecovery,
+     /// Modal shown when the shell rejects a model switch due to agent type incompatibility.
+     /// Carries the target model and effort so the answer handler can create a new session with it.
+     AgentTypeMismatch {
+diff --git a/crates/codegen/xai-grok-sampler/src/actor/request_task.rs b/crates/codegen/xai-grok-sampler/src/actor/request_task.rs
+index 5fe7aca3..43f297e0 100644
+--- a/crates/codegen/xai-grok-sampler/src/actor/request_task.rs
++++ b/crates/codegen/xai-grok-sampler/src/actor/request_task.rs
+@@ -171,6 +171,56 @@ pub(crate) async fn run_request_task(
+                         .map(|signal| signal.raw.clone()),
+                 );
+                 metrics.attempts = retry_count + doom_retry_count + 1;
++                let empty_content_filter = response.stop_reason
++                    == Some(xai_grok_sampling_types::StopReason::ContentFilter)
++                    && response.is_empty();
++                if empty_content_filter {
++                    use crate::config::ContentFilterAction;
++                    let action = config.content_filter_action;
++                    let cf_max = config.content_filter_max_retries.unwrap_or(1).max(1);
++                    let resample = matches!(
++                        action,
++                        ContentFilterAction::Retry | ContentFilterAction::RetryThenError
++                    ) && retry_count < cf_max;
++                    if resample {
++                        if let Some(reason) = response.empty_reason() {
++                            let context = build_empty_context(reason, &response);
++                            let err = SamplingError::EmptyResponse { context };
++                            if !apply_retry_decision(
++                                &err,
++                                &mut retry_count,
++                                effective_max_retries,
++                                &retry_policy,
++                                &event_tx,
++                                &request_id,
++                                &mut request,
++                                &mut client,
++                                &config,
++                                &cancel_token,
++                                &mut completion,
++                                &sampling_span,
++                            )
++                            .await
++                            {
++                                return request_id;
++                            }
++                            continue;
++                        }
++                    }
++                    if action != ContentFilterAction::Notice {
++                        let error = SamplingError::Api {
++                            status: reqwest::StatusCode::BAD_REQUEST,
++                            message: crate::CONTENT_FILTER_TURN_MESSAGE.to_string(),
++                            model_metadata: None,
++                            retry_after_secs: None,
++                            should_retry: Some(false),
++                            error_code: None,
++                        };
++                        let terminal_event_queued = emit_failed(&event_tx, &request_id, &error);
++                        send_completion(&mut completion, Err(error), terminal_event_queued);
++                        return request_id;
++                    }
++                }
+                 if let Some(policy) = doom_policy {
+                     let confident = policy.confident_triggers(&response.doom_loop_signals);
+                     if !confident.is_empty() {
+diff --git a/crates/codegen/xai-grok-sampler/src/config.rs b/crates/codegen/xai-grok-sampler/src/config.rs
+index 5d457d38..484ae9c9 100644
+--- a/crates/codegen/xai-grok-sampler/src/config.rs
++++ b/crates/codegen/xai-grok-sampler/src/config.rs
+@@ -76,6 +76,12 @@ pub struct SamplerConfig {
+     pub rate_limit_retry_threshold: Option<u32>,
+     pub stream_tool_calls: bool,
+     pub idle_timeout_secs: Option<u64>,
++    /// Empty ContentFilter recovery. Default `error`.
++    #[serde(default)]
++    pub content_filter_action: ContentFilterAction,
++    /// Resample cap for `retry` / `retry_then_error`. `None` → 1.
++    #[serde(default)]
++    pub content_filter_max_retries: Option<u32>,
+ 
+     // Reasoning effort
+     pub reasoning_effort: Option<ReasoningEffort>,
+@@ -149,6 +155,8 @@ impl Default for SamplerConfig {
+             rate_limit_retry_threshold: None,
+             stream_tool_calls: false,
+             idle_timeout_secs: None,
++            content_filter_action: ContentFilterAction::Error,
++            content_filter_max_retries: None,
+             reasoning_effort: None,
+             reasoning_summary: None,
+             origin_client: None,
+@@ -195,6 +203,38 @@ pub trait HeaderInjector: Send + Sync + std::fmt::Debug {
+ 
+ pub type SharedHeaderInjector = std::sync::Arc<dyn HeaderInjector>;
+ 
++/// Empty ContentFilter recovery. Default `error` fails the turn instead of completing a refusal.
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum ContentFilterAction {
++    #[default]
++    Error,
++    RetryThenError,
++    Retry,
++    Notice,
++}
++
++impl ContentFilterAction {
++    pub fn parse(raw: &str) -> Option<Self> {
++        match raw.trim().to_ascii_lowercase().as_str() {
++            "error" => Some(Self::Error),
++            "retry_then_error" => Some(Self::RetryThenError),
++            "retry" => Some(Self::Retry),
++            "notice" => Some(Self::Notice),
++            _ => None,
++        }
++    }
++
++    pub fn as_str(self) -> &'static str {
++        match self {
++            Self::Error => "error",
++            Self::RetryThenError => "retry_then_error",
++            Self::Retry => "retry",
++            Self::Notice => "notice",
++        }
++    }
++}
++
+ /// Retry knobs for the sampler's internal transport-error retry loop.
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ pub struct RetryPolicy {
+diff --git a/crates/codegen/xai-grok-sampler/src/lib.rs b/crates/codegen/xai-grok-sampler/src/lib.rs
+index 037bf6a0..948e305a 100644
+--- a/crates/codegen/xai-grok-sampler/src/lib.rs
++++ b/crates/codegen/xai-grok-sampler/src/lib.rs
+@@ -39,13 +39,17 @@ pub use attribution::{
+ };
+ pub use client::{ApiBackend, SamplingClient, user_agent_string_for};
+ pub use config::{
+-    AuthScheme, BearerResolver, HeaderInjector, OriginClientInfo, RequestCompression, RetryPolicy,
+-    SamplerConfig, SharedBearerResolver, SharedHeaderInjector,
++    AuthScheme, BearerResolver, ContentFilterAction, HeaderInjector, OriginClientInfo,
++    RequestCompression, RetryPolicy, SamplerConfig, SharedBearerResolver, SharedHeaderInjector,
+ };
+ pub use doom_loop::DoomLoopSignalCollector;
+ pub use events::{
+     SamplingChannel, SamplingErrorInfo, SamplingErrorKind, SamplingEvent, StripReason,
+ };
++/// Turn-fail copy when `[compat.content_filter] action = "error"` (also the pager needle).
++pub const CONTENT_FILTER_TURN_MESSAGE: &str =
++    "The model provider refused to generate a response for this turn (content filter).";
++
+ pub use handle::{CollectedSamplingResult, DoomLoopRecoveryAttempt, SamplerHandle};
+ pub use metrics::{InferenceLatencyStats, compute_percentiles};
+ pub use prewarm::{PrewarmOutcome, PrewarmReport, prewarm_transport};
+diff --git a/crates/codegen/xai-grok-sampling-types/src/types.rs b/crates/codegen/xai-grok-sampling-types/src/types.rs
+index bc5e4546..bb471b9e 100644
+--- a/crates/codegen/xai-grok-sampling-types/src/types.rs
++++ b/crates/codegen/xai-grok-sampling-types/src/types.rs
+@@ -1213,6 +1213,12 @@ pub struct SamplingConfig {
+     /// When true, inject `stream_tool_calls: true` into the Responses API request body so the upstream emits per-chunk argument deltas.
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub stream_tool_calls: Option<bool>,
++    /// Empty ContentFilter recovery: `error` | `retry_then_error` | `retry` | `notice`.
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub content_filter_action: Option<String>,
++    /// Resample cap for `retry` / `retry_then_error`.
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub content_filter_max_retries: Option<u32>,
+     /// Input modalities supported by the model (e.g. `["text"]`, `["text", "image"]`).
+     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+     pub input_modalities: Vec<String>,
+@@ -1241,6 +1247,8 @@ impl Default for SamplingConfig {
+             reasoning_effort: None,
+             reasoning_summary: None,
+             stream_tool_calls: None,
++            content_filter_action: None,
++            content_filter_max_retries: None,
+             input_modalities: Vec::new(),
+         }
+     }
+diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
+index 0d69a5c1..92a8e8d7 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/config.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
+@@ -4805,6 +4805,15 @@ pub(crate) fn sampling_config_for_model(
+         rate_limit_retry_threshold: info.rate_limit_retry_threshold,
+         stream_tool_calls: info.stream_tool_calls.unwrap_or(false),
+         idle_timeout_secs: None,
++        content_filter_action: {
++            let resolved = xai_grok_config::ContentFilterToml::default().resolve();
++            xai_grok_sampler::ContentFilterAction::parse(resolved.action.as_str())
++                .unwrap_or(xai_grok_sampler::ContentFilterAction::Error)
++        },
++        content_filter_max_retries: {
++            let resolved = xai_grok_config::ContentFilterToml::default().resolve();
++            Some(resolved.max_retries)
++        },
+         client_identifier: None,
+         deployment_id,
+         user_id,
+diff --git a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs
+index fc8e08ee..7c511523 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs
+@@ -2164,6 +2164,10 @@ impl MvpAgent {
+             user_id,
+         );
+         config.origin_client = origin_client;
++        let cf = self.cfg.borrow().compat.content_filter.resolve();
++        config.content_filter_action = xai_grok_sampler::ContentFilterAction::parse(cf.action.as_str())
++            .unwrap_or(xai_grok_sampler::ContentFilterAction::Error);
++        config.content_filter_max_retries = Some(cf.max_retries);
+         config
+     }
+     /// Resolve sampling config for a model by ID, falling back to the global default on resolution failure.
+diff --git a/crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs b/crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs
+index 4a80e432..a95fa7e8 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs
+@@ -816,6 +816,13 @@ async fn read_parent_sampling_config(
+                 rate_limit_retry_threshold: cfg.rate_limit_retry_threshold,
+                 stream_tool_calls: cfg.stream_tool_calls.unwrap_or(false),
+                 idle_timeout_secs: None,
++                content_filter_action: xai_grok_sampler::ContentFilterAction::parse(
++                    cfg.content_filter_action.as_deref().unwrap_or("error"),
++                )
++                .unwrap_or(ctx.sampling_config.content_filter_action),
++                content_filter_max_retries: cfg
++                    .content_filter_max_retries
++                    .or(ctx.sampling_config.content_filter_max_retries),
+                 client_identifier: ctx.sampling_config.client_identifier.clone(),
+                 deployment_id: ctx.sampling_config.deployment_id.clone(),
+                 user_id: ctx.sampling_config.user_id.clone(),
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
+index 14edfab5..8cbead25 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/model_switch.rs
+@@ -98,6 +98,10 @@ impl SessionActor {
+                 reasoning_effort: sampling_config.reasoning_effort,
+                 reasoning_summary: sampling_config.reasoning_summary,
+                 stream_tool_calls: Some(sampling_config.stream_tool_calls),
++                content_filter_action: Some(
++                    sampling_config.content_filter_action.as_str().to_string(),
++                ),
++                content_filter_max_retries: sampling_config.content_filter_max_retries,
+                 input_modalities: self.models_manager.input_modalities_for(&sampling_config.model),
+             });
+         let existing = self.chat_state_handle.get_credentials().await;
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs
+index fd5edd39..f99abf47 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs
+@@ -677,6 +677,8 @@ impl SessionActor {
+                 reasoning_effort: None,
+                 reasoning_summary: None,
+                 stream_tool_calls: None,
++                content_filter_action: None,
++                content_filter_max_retries: None,
+                 input_modalities: Vec::new(),
+             });
+         let creds = self.chat_state_handle.get_credentials().await;
+@@ -769,6 +771,11 @@ impl SessionActor {
+             rate_limit_retry_threshold: cfg.rate_limit_retry_threshold,
+             stream_tool_calls: cfg.stream_tool_calls.unwrap_or(false),
+             idle_timeout_secs: None,
++            content_filter_action: xai_grok_sampler::ContentFilterAction::parse(
++                cfg.content_filter_action.as_deref().unwrap_or("error"),
++            )
++            .unwrap_or(xai_grok_sampler::ContentFilterAction::Error),
++            content_filter_max_retries: cfg.content_filter_max_retries,
+             client_identifier: self.client_identifier.clone(),
+             deployment_id: xai_grok_cloud_config::managed_config::resolve_deployment_id(
+                 xai_grok_cloud_config::managed_config::resolve_deployment_key().as_deref(),
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
+index 179d2109..05f64af1 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
+@@ -618,6 +618,8 @@ pub(crate) async fn spawn_session_actor(
+         reasoning_effort: sampling_config.reasoning_effort,
+         reasoning_summary: sampling_config.reasoning_summary,
+         stream_tool_calls: Some(sampling_config.stream_tool_calls),
++        content_filter_action: Some(sampling_config.content_filter_action.as_str().to_string()),
++        content_filter_max_retries: sampling_config.content_filter_max_retries,
+         input_modalities: models_manager.input_modalities_for(&sampling_config.model),
+     };
+     let actor_pruning_config = xai_chat_state::PruningConfig {
+diff --git a/crates/codegen/xai-grok-shell/src/tools/config.rs b/crates/codegen/xai-grok-shell/src/tools/config.rs
+index 1c44a31d..8b1a2b0f 100644
+--- a/crates/codegen/xai-grok-shell/src/tools/config.rs
++++ b/crates/codegen/xai-grok-shell/src/tools/config.rs
+@@ -229,6 +229,8 @@ impl ShellToolsetConfig {
+             rate_limit_retry_threshold: None,
+             stream_tool_calls: false,
+             idle_timeout_secs: None,
++            content_filter_action: xai_grok_sampler::ContentFilterAction::Error,
++            content_filter_max_retries: None,
+             client_identifier: None,
+             deployment_id: None,
+             user_id: None,

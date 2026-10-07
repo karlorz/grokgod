@@ -37,3 +37,4 @@ base-sha	2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8
 0021	0021-idle-resume-ignore-context-window-downgrade	patches/0021-idle-resume-ignore-context-window-downgrade.patch
 0022	0022-background-task-process-group-cleanup	patches/0022-background-task-process-group-cleanup.patch
 0023	0023-usage-limit-retry-prompt-lifetime	patches/0023-usage-limit-retry-prompt-lifetime.patch
+0024	0024-content-filter-turn-recovery	patches/0024-content-filter-turn-recovery.patch

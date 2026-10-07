@@ -18,7 +18,7 @@ grok binary, still converges:
 2. PATH launchers (`grok` / `grokgod`)
 3. Suggested config profile (keys below)
 
-Engine patches `0001`–`0023` stay in the binary. Absent key in config is not
+Engine patches `0001`–`0024` stay in the binary. Absent key in config is not
 a patch toggle.
 
 ## Suggested profile
@@ -114,6 +114,7 @@ Grouped; patch ids in the last column. Full numbered inventory stays in
 | BYOK / Chat Completions | Tool deny/allow, hosted search splice, DeepSeek null/index/image, Gemini enum | 0005–0007, 0009, 0010, 0014, 0018 |
 | Sessions | Single-turn persist toggle; compaction warning + `compacts` status item | 0003, 0013 |
 | Usage limits | Switch-model retry; prompt lifetime across compact | 0016, 0020, 0023 |
+| Content filter | Fail empty ContentFilter, stash, switch/retry | 0024 |
 | Platform | Windows protoc; process-group cleanup; idle-resume context window | 0012, 0021, 0022 |
 | UX | Ask-question timeout action; `-m` does not stick; welcome accent | 0011, 0015, 0017 |
 | Compat | Claude permissions import gate | 0008 |

@@ -2273,6 +2273,54 @@ maybe_merge_ask_user_question_config() {
 }
 
 maybe_merge_ask_user_question_config
+
+# Merge [compat.content_filter] action = "error" when the key is missing so
+# empty ContentFilter turns fail closed with pager switch/retry (patch 0024).
+maybe_merge_content_filter_config() {
+  cfg="$GROK_HOME/config.toml"
+  if [ -f "$cfg" ] && awk '
+    /^[[:space:]]*\[compat\.content_filter\]/ { insec=1; next }
+    /^[[:space:]]*\[/ { insec=0 }
+    insec && /^[[:space:]]*action[[:space:]]*=/ { found=1 }
+    END { exit found ? 0 : 1 }
+  ' "$cfg"; then
+    log_info "compat.content_filter action already set in $cfg"
+    return 0
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log_dry "Would merge [compat.content_filter] action = \"error\" into $cfg"
+    return 0
+  fi
+  mkdir -p "$GROK_HOME"
+  if [ -f "$cfg" ] && grep -q '^[[:space:]]*\[compat\.content_filter\]' "$cfg"; then
+    tmp="$(rewrite_stage "$cfg")"
+    awk '
+      BEGIN { added=0 }
+      /^[[:space:]]*\[compat\.content_filter\]/ && added==0 {
+        print
+        print "action = \"error\""
+        added=1
+        next
+      }
+      { print }
+    ' "$cfg" > "$tmp"
+    rewrite_commit "$tmp" "$cfg"
+    log_info "Merged action = \"error\" into existing [compat.content_filter] in $cfg"
+    return 0
+  fi
+  tmp="$(rewrite_stage "$cfg")"
+  {
+    if [ -f "$cfg" ] && [ -s "$cfg" ]; then
+      cat "$cfg"
+      printf '\n'
+    fi
+    printf '[compat.content_filter]\naction = "error"\n'
+  } > "$tmp"
+  rewrite_commit "$tmp" "$cfg"
+  log_info "Wrote [compat.content_filter] action = \"error\" to $cfg"
+}
+
+maybe_merge_content_filter_config
 fail_after config
 
 # ─────────────────────────────────────────────────────────

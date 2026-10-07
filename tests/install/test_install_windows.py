@@ -336,6 +336,7 @@ def main():
     check("Merge-WorkflowsBuiltinsConfig" in src, "Defines Merge-WorkflowsBuiltinsConfig")
     check("Merge-StatusLineConfig" in src, "Defines Merge-StatusLineConfig")
     check("Merge-AskUserQuestionConfig" in src, "Defines Merge-AskUserQuestionConfig")
+    check("Merge-ContentFilterConfig" in src, "Defines Merge-ContentFilterConfig")
     check("Merge-SuggestedConfigProfile" in src, "Defines Merge-SuggestedConfigProfile")
     check('`"compacts`"' in src and '`"session-name`"' in src, "Status-line seed contains compacts and session-name")
     check('timeout_secs = 120' in src and 'timeout_action = `"recommended`"' in src, "Ask user question defaults to 120s and recommended")

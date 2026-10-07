@@ -37,10 +37,11 @@ files, from the order below, or from `PINNED_BASE_SHA`.
 - `0021-idle-resume-ignore-context-window-downgrade.patch`: Prevents idle-resume `/models-v2` refreshes from overwriting a larger live sampling context window with a smaller value (such as cli-chat-proxy 256k). Retains upgrades and matches response-header downgrade protection.
 - `0022-background-task-process-group-cleanup.patch`: Terminates the full process group on background task kill and actor cleanup so leaked child processes spawned by background tasks do not survive actor teardown.
 - `0023-usage-limit-retry-prompt-lifetime.patch`: Retains an independent exact-payload retry snapshot after assistant/tool activity and auto-compaction clear the cancellation rewind buffer. Transfers it to the usage-limit stash before terminal cleanup for paid/free failures, preserving combined text, images, and chips; completion, ordinary failure, cancellation, and session resets clear it. Explicit retry consumes the stash once without creating or replacing the session.
+- `0024-content-filter-turn-recovery.patch`: Empty `StopReason::ContentFilter` recovery via `[compat.content_filter] action` (`error` default, `retry_then_error`, `retry`, `notice`) and env `GROK_CONTENT_FILTER_ACTION`. Default `error` fails the turn, stashes the exact prompt, and offers Switch model & retry / Try Again on a dedicated pager card (not the credit-limit upsell). Overlay allowlist `compat.content_filter.action` / `max_retries`.
 
 ## Target Commit
 
-- Base commit: `grok-build` commit `2bdd1d6a` (`2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8`) — origin/main after the 1.0.45 pin; patches 0001–0023 are authored/rebased against this base. Source mode still tracks the moving `origin/main`; this is the patch-authorship/release pin.
+- Base commit: `grok-build` commit `2bdd1d6a` (`2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8`) — origin/main after the 1.0.45 pin; patches 0001–0024 are authored/rebased against this base. Source mode still tracks the moving `origin/main`; this is the patch-authorship/release pin.
 
 ## Verification
 

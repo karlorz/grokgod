@@ -388,6 +388,10 @@ function Merge-PlanModeConfig {
     Merge-TomlScalarKey -Section "plan_mode" -Key "implement_via_subagents" -Value "true"
 }
 
+function Merge-ContentFilterConfig {
+    Merge-TomlScalarKey -Section "compat.content_filter" -Key "action" -Value '"error"'
+}
+
 function Merge-WorkflowsBuiltinsConfig {
     Merge-TomlScalarKey -Section "workflows.builtins" -Key "deep-research" -Value "false"
 }
@@ -628,6 +632,7 @@ function Merge-SuggestedConfigProfile {
     Merge-WorkflowsBuiltinsConfig
     Merge-StatusLineConfig
     Merge-AskUserQuestionConfig
+    Merge-ContentFilterConfig
 }
 
 function Install-DailyMinimalAgent([string]$DownloadedPath = "") {
