@@ -47,10 +47,32 @@ else
   echo "Building fixture git repository for CI..."
   RAW_BASE="https://raw.githubusercontent.com/xai-org/grok-build/${PIN_SHA}"
   PATCH_PATHS="$(
-    grep -h '^diff --git ' "$REPO_ROOT"/patches/*.patch 2>/dev/null \
-      | awk '{print $3}' \
-      | sed 's#^a/##' \
-      | sort -u
+    python3 -c '
+import glob, os, sys
+repo_root = sys.argv[1]
+patches = sorted(glob.glob(os.path.join(repo_root, "patches", "*.patch")))
+created = set()
+base_paths = set()
+for p in patches:
+    with open(p, "r", encoding="utf-8", errors="replace") as f:
+        lines = f.readlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("--- /dev/null"):
+            if i + 1 < len(lines) and lines[i + 1].startswith("+++ b/"):
+                target = lines[i + 1][6:].split("\t")[0].strip()
+                created.add(target)
+                i += 2
+                continue
+        elif line.startswith("--- a/"):
+            target = line[6:].split("\t")[0].strip()
+            if target not in created:
+                base_paths.add(target)
+        i += 1
+for path in sorted(base_paths):
+    print(path)
+' "$REPO_ROOT"
   )"
   if [ -z "$PATCH_PATHS" ]; then
     PATCH_PATHS="crates/codegen/xai-grok-agent/src/plugins/manifest.rs"
@@ -58,8 +80,8 @@ else
   for rel in $PATCH_PATHS; do
     mkdir -p "$GB_WORKTREE/$(dirname "$rel")"
     if ! curl -fsSL "$RAW_BASE/$rel" -o "$GB_WORKTREE/$rel"; then
-      echo "Warning: curl failed for $rel, creating empty fallback"
-      : > "$GB_WORKTREE/$rel"
+      echo "FAIL: curl failed to fetch $rel from $RAW_BASE" >&2
+      exit 1
     fi
   done
   git -C "$GB_WORKTREE" init -b main >/dev/null 2>&1
