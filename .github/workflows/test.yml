@@ -49,6 +49,7 @@ jobs:
           sh tests/patches/test_0019_apply.sh
           sh tests/patches/test_0020_apply.sh
           sh tests/patches/test_0023_apply.sh
+          sh tests/patches/test_0024_apply.sh
           sh tests/release/test_release_workflow.sh
           sh tests/release/test_rust_patch_validation_workflow.sh
 
@@ -57,6 +58,7 @@ jobs:
           CI: "1"
         run: |
           sh tests/install/test_checksum_matcher.sh
+          sh tests/install/test_content_filter_merge.sh
           sh tests/install/test_install.sh
 
   test-windows:

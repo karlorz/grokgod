@@ -2415,38 +2415,61 @@ maybe_merge_ask_user_question_config() {
 
 maybe_merge_ask_user_question_config
 
-# Merge [compat.content_filter] action = "error" when the key is missing so
-# empty ContentFilter turns fail closed with pager switch/retry (patch 0024).
+# Merge [compat.content_filter] action = "retry_then_error" and max_retries = 3
+# when missing so empty ContentFilter turns resample up to 3 times before failing
+# closed with pager switch/retry (patch 0024).
 maybe_merge_content_filter_config() {
   cfg="$GROK_HOME/config.toml"
-  if [ -f "$cfg" ] && awk '
-    /^[[:space:]]*\[compat\.content_filter\]/ { insec=1; next }
-    /^[[:space:]]*\[/ { insec=0 }
-    insec && /^[[:space:]]*action[[:space:]]*=/ { found=1 }
-    END { exit found ? 0 : 1 }
-  ' "$cfg"; then
-    log_info "compat.content_filter action already set in $cfg"
+  has_section=0
+  has_action=0
+  has_max=0
+  if [ -f "$cfg" ]; then
+    read -r has_section has_action has_max <<EOF
+$(awk '
+      /^[[:space:]]*\[compat\.content_filter\]/ { insec=1; sec=1; next }
+      /^[[:space:]]*\[/ { insec=0 }
+      insec && /^[[:space:]]*action[[:space:]]*=/ { a=1 }
+      insec && /^[[:space:]]*max_retries[[:space:]]*=/ { m=1 }
+      END {
+        printf "%d %d %d\n", sec ? 1 : 0, a ? 1 : 0, m ? 1 : 0
+      }
+    ' "$cfg")
+EOF
+  fi
+  if [ "$has_action" -eq 1 ] && [ "$has_max" -eq 1 ]; then
+    log_info "compat.content_filter action and max_retries already set in $cfg"
     return 0
   fi
   if [ "$DRY_RUN" -eq 1 ]; then
-    log_dry "Would merge [compat.content_filter] action = \"error\" into $cfg"
+    log_dry "Would merge [compat.content_filter] defaults into $cfg"
     return 0
   fi
   mkdir -p "$GROK_HOME"
-  if [ -f "$cfg" ] && grep -q '^[[:space:]]*\[compat\.content_filter\]' "$cfg"; then
+  if [ -f "$cfg" ] && [ "$has_section" -eq 1 ]; then
     tmp="$(rewrite_stage "$cfg")"
-    awk '
-      BEGIN { added=0 }
-      /^[[:space:]]*\[compat\.content_filter\]/ && added==0 {
-        print
-        print "action = \"error\""
-        added=1
-        next
+    add_act=$((1 - has_action))
+    add_max=$((1 - has_max))
+    awk -v add_act="$add_act" -v add_max="$add_max" '
+      BEGIN { insec=0; done=0 }
+      /^[[:space:]]*\[compat\.content_filter\]/ { insec=1; print; next }
+      /^[[:space:]]*\[/ {
+        if (insec && !done) {
+          if (add_act == 1) print "action = \"retry_then_error\""
+          if (add_max == 1) print "max_retries = 3"
+          done=1
+        }
+        insec=0
       }
       { print }
+      END {
+        if (insec && !done) {
+          if (add_act == 1) print "action = \"retry_then_error\""
+          if (add_max == 1) print "max_retries = 3"
+        }
+      }
     ' "$cfg" > "$tmp"
     rewrite_commit "$tmp" "$cfg"
-    log_info "Merged action = \"error\" into existing [compat.content_filter] in $cfg"
+    log_info "Merged missing defaults into existing [compat.content_filter] in $cfg"
     return 0
   fi
   tmp="$(rewrite_stage "$cfg")"
@@ -2455,10 +2478,10 @@ maybe_merge_content_filter_config() {
       cat "$cfg"
       printf '\n'
     fi
-    printf '[compat.content_filter]\naction = "error"\n'
+    printf '[compat.content_filter]\naction = "retry_then_error"\nmax_retries = 3\n'
   } > "$tmp"
   rewrite_commit "$tmp" "$cfg"
-  log_info "Wrote [compat.content_filter] action = \"error\" to $cfg"
+  log_info "Wrote [compat.content_filter] retry_then_error + max_retries = 3 to $cfg"
 }
 
 maybe_merge_content_filter_config

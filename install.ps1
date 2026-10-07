@@ -356,25 +356,52 @@ function Merge-TomlScalarKey {
     $keyRe = '^\s*' + [regex]::Escape($Key) + '\s*='
     if (Test-Path -LiteralPath $cfg) {
         $lines = Get-Content -LiteralPath $cfg -ErrorAction SilentlyContinue
-        foreach ($line in $lines) {
-            if ($line -match $keyRe) {
-                return
+        $secStart = -1
+        $secEnd = $lines.Count - 1
+        $keyFound = $false
+
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            $raw = $lines[$i]
+            if ($raw -match '^\s*\[([^\]]+)\]\s*$') {
+                if ($raw -match $headerRe) {
+                    $secStart = $i
+                    continue
+                }
+                if ($secStart -ge 0) {
+                    $secEnd = $i - 1
+                    break
+                }
+            }
+            if ($secStart -ge 0 -and ($raw -match $keyRe)) {
+                $keyFound = $true
+                break
             }
         }
-        $merged = @()
-        $added = $false
-        foreach ($line in $lines) {
-            $merged += $line
-            if ((-not $added) -and ($line -match $headerRe)) {
-                $merged += $assignment
-                $added = $true
-            }
+
+        if ($keyFound) {
+            return
         }
-        if ($added) {
+
+        if ($secStart -ge 0) {
+            $merged = @()
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($i -eq $secEnd) {
+                    if (-not $lines[$i].Trim()) {
+                        $merged += $assignment
+                        $merged += $lines[$i]
+                    } else {
+                        $merged += $lines[$i]
+                        $merged += $assignment
+                    }
+                } else {
+                    $merged += $lines[$i]
+                }
+            }
             Write-AtomicFile -targetPath $cfg -content ($merged -join "`r`n")
             Write-OK "Merged $assignment into $header in $cfg"
             return
         }
+
         $newContent = ($lines -join "`r`n").TrimEnd() + "`r`n`r`n$header`r`n$assignment`r`n"
         Write-AtomicFile -targetPath $cfg -content $newContent
         Write-OK "Wrote $header $assignment to $cfg"
@@ -389,7 +416,8 @@ function Merge-PlanModeConfig {
 }
 
 function Merge-ContentFilterConfig {
-    Merge-TomlScalarKey -Section "compat.content_filter" -Key "action" -Value '"error"'
+    Merge-TomlScalarKey -Section "compat.content_filter" -Key "action" -Value '"retry_then_error"'
+    Merge-TomlScalarKey -Section "compat.content_filter" -Key "max_retries" -Value "3"
 }
 
 function Merge-WorkflowsBuiltinsConfig {

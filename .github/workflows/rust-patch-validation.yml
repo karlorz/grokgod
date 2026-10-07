@@ -111,6 +111,18 @@ jobs:
         working-directory: grok-build
         run: cargo test -p xai-grok-pager --lib credit_limit
 
+      - name: Run focused content-filter pager tests
+        working-directory: grok-build
+        run: cargo test -p xai-grok-pager --lib content_filter
+
+      - name: Run focused content-filter config tests
+        working-directory: grok-build
+        run: cargo test -p xai-grok-config --lib content_filter
+
+      - name: Run focused content-filter sampler tests
+        working-directory: grok-build
+        run: cargo test -p xai-grok-sampler --lib content_filter
+
       - name: Run exact idempotent model-selection regression test
         working-directory: grok-build
         run: cargo test -p xai-grok-pager --lib app::dispatch::tests::settings::set_default_model_idempotent_when_already_current -- --exact

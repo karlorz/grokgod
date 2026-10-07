@@ -26,6 +26,7 @@
      14. Active and stale lock mutual exclusion policy
      15. Server health and readiness probe: fails closed with clear diagnostic if mock server cannot start
      16. Post-update convergence: one-visible-command invocation of changed updater in finalize mode
+     17. Table-scoped TOML scalar key merging: unrelated keys in other sections do not prevent defaults; targets preserved and idempotent
 #>
 param(
     [string]$InstallScript = "$PSScriptRoot\..\..\install.ps1"
@@ -785,6 +786,86 @@ try {
     $resNoChange = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile } -ScriptArgs @("-Prefix", $targetPrefix, "-Force") -ScriptPath $installedUpdaterPath
     Assert-Test ($resNoChange.ExitCode -eq 0) "Second -Force install with unchanged installer succeeds"
     Assert-Test ($resNoChange.Combined -notmatch "Installer updated; invoking post-update convergence finalize") "Unchanged installer does NOT spawn finalize"
+
+    # -------------------------------------------------------------------------
+    # Test 13: Suggested Config Profile Content-Filter Table-Scoped Merge
+    # -------------------------------------------------------------------------
+    Write-Host "Test 13: Suggested config profile content-filter table-scoped merge"
+    $testConfigToml = Join-Path $testUserProfile ".grok\config.toml"
+
+    function Get-TomlSectionBody {
+        param([string]$TomlContent, [string]$SectionName)
+        $pattern = '(?ms)^\s*\[' + [regex]::Escape($SectionName) + '\]\s*(?:\r?\n(?<body>.*?))?(?=^\s*\[|\z)'
+        if ($TomlContent -match $pattern) {
+            return $Matches['body']
+        }
+        return ""
+    }
+
+    # 1. Missing target section with unrelated section containing identical key names
+    $unrelatedOnlyConfig = @(
+        '[some_other_section]'
+        'action = "custom_action"'
+        'max_retries = 99'
+    ) -join "`r`n"
+    Set-Content -LiteralPath $testConfigToml -Value $unrelatedOnlyConfig -Encoding UTF8
+
+    $resMissingFilter = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile } -ScriptArgs @("-Prefix", $targetPrefix, "-Force") -ScriptPath $installedUpdaterPath
+    Assert-Test ($resMissingFilter.ExitCode -eq 0) "Installer run with missing content-filter section succeeds"
+
+    $missingConfigContent = Get-Content -LiteralPath $testConfigToml -Raw
+    $sectionMatches = [regex]::Matches($missingConfigContent, '(?m)^\s*\[compat\.content_filter\]\s*$')
+    Assert-Test ($sectionMatches.Count -eq 1) "Config contains exactly one [compat.content_filter] section"
+
+    $missingFilterBody = Get-TomlSectionBody -TomlContent $missingConfigContent -SectionName "compat.content_filter"
+    Assert-Test ($missingFilterBody -match '(?m)^\s*action\s*=\s*"retry_then_error"\s*$') "Missing content-filter defaults action to retry_then_error"
+    Assert-Test ($missingFilterBody -match '(?m)^\s*max_retries\s*=\s*3\s*$') "Missing content-filter defaults max_retries to 3"
+
+    # 2. Existing custom action preservation and missing max_retries merge
+    $initialConfigContent = @(
+        '[some_other_section]'
+        'action = "custom_action"'
+        'max_retries = 99'
+        ''
+        '[compat.content_filter]'
+        'action = "my_custom_filter"'
+    ) -join "`r`n"
+    Set-Content -LiteralPath $testConfigToml -Value $initialConfigContent -Encoding UTF8
+
+    # Run installer to trigger Merge-SuggestedConfigProfile
+    $resCfgMerge = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile } -ScriptArgs @("-Prefix", $targetPrefix, "-Force") -ScriptPath $installedUpdaterPath
+    Assert-Test ($resCfgMerge.ExitCode -eq 0) "Profile merge installer run succeeds"
+
+    $mergedConfigContent = Get-Content -LiteralPath $testConfigToml -Raw
+    Assert-Test ($mergedConfigContent -match '\[compat\.content_filter\]') "Config retains [compat.content_filter] section"
+    $mergedFilterBody = Get-TomlSectionBody -TomlContent $mergedConfigContent -SectionName "compat.content_filter"
+    Assert-Test ($mergedFilterBody -match '(?m)^\s*action\s*=\s*"my_custom_filter"\s*$') "Existing target action in [compat.content_filter] is preserved"
+    Assert-Test ($mergedFilterBody -match '(?m)^\s*max_retries\s*=\s*3\s*$') "Missing max_retries = 3 merged into [compat.content_filter] despite unrelated max_retries in other section"
+    $otherSectionBody = Get-TomlSectionBody -TomlContent $mergedConfigContent -SectionName "some_other_section"
+    Assert-Test ($otherSectionBody -match '(?m)^\s*action\s*=\s*"custom_action"\s*$') "Unrelated section action is preserved"
+    Assert-Test ($otherSectionBody -match '(?m)^\s*max_retries\s*=\s*99\s*$') "Unrelated section max_retries is preserved"
+
+    # Idempotence check: running installer again produces identical config content
+    $resCfgIdempotent = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile } -ScriptArgs @("-Prefix", $targetPrefix, "-Force") -ScriptPath $installedUpdaterPath
+    Assert-Test ($resCfgIdempotent.ExitCode -eq 0) "Idempotent installer run succeeds"
+    $idempotentConfigContent = Get-Content -LiteralPath $testConfigToml -Raw
+    Assert-Test ($idempotentConfigContent -eq $mergedConfigContent) "Config content is strictly idempotent across repeated installer runs"
+
+    # 3. Explicit content-filter action error and max_retries 1 preservation
+    $explicitConfigContent = @(
+        '[compat.content_filter]'
+        'action = "error"'
+        'max_retries = 1'
+    ) -join "`r`n"
+    Set-Content -LiteralPath $testConfigToml -Value $explicitConfigContent -Encoding UTF8
+
+    $resExplicit = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile } -ScriptArgs @("-Prefix", $targetPrefix, "-Force") -ScriptPath $installedUpdaterPath
+    Assert-Test ($resExplicit.ExitCode -eq 0) "Explicit content-filter installer run succeeds"
+
+    $explicitResultContent = Get-Content -LiteralPath $testConfigToml -Raw
+    $explicitFilterBody = Get-TomlSectionBody -TomlContent $explicitResultContent -SectionName "compat.content_filter"
+    Assert-Test ($explicitFilterBody -match '(?m)^\s*action\s*=\s*"error"\s*$') "Explicit content-filter action error is preserved"
+    Assert-Test ($explicitFilterBody -match '(?m)^\s*max_retries\s*=\s*1\s*$') "Explicit content-filter max_retries 1 is preserved"
 } finally {
     if ($serverProc -and -not $serverProc.HasExited) {
         $serverProc.Kill()

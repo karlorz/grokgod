@@ -84,14 +84,26 @@ require(
 )
 
 broad = "cargo test -p xai-grok-pager --lib credit_limit"
+cf_pager = "cargo test -p xai-grok-pager --lib content_filter"
+cf_config = "cargo test -p xai-grok-config --lib content_filter"
+cf_sampler = "cargo test -p xai-grok-sampler --lib content_filter"
 exact = (
     "cargo test -p xai-grok-pager --lib "
     "app::dispatch::tests::settings::set_default_model_idempotent_when_already_current -- --exact"
 )
 require(broad, "focused credit_limit library test missing")
+require(cf_pager, "focused content_filter pager library test missing")
+require(cf_config, "focused content_filter config library test missing")
+require(cf_sampler, "focused content_filter sampler library test missing")
 require(exact, "exact idempotent model-selection regression test missing")
-assert content.count("cargo test -p xai-grok-pager --lib") == 2, (
-    "workflow must contain exactly the two focused pager library test commands"
+assert content.count("cargo test -p xai-grok-pager --lib") == 3, (
+    "workflow must contain exactly the three focused pager library test commands"
+)
+assert content.count("cargo test -p xai-grok-config --lib") == 1, (
+    "workflow must contain exactly the one focused config library test command"
+)
+assert content.count("cargo test -p xai-grok-sampler --lib") == 1, (
+    "workflow must contain exactly the one focused sampler library test command"
 )
 
 registry_tests = (

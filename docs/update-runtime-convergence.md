@@ -41,6 +41,8 @@ overlay allowlist); merge target is always `~/.grok/config.toml`.
 | `[toolset.ask_user_question] timeout_secs` | `1800` (30 min) | `120` | Any positive integer, or omit for 1800 |
 | `[toolset.ask_user_question] timeout_action` | `decline` (Shift+X) | `recommended` | `decline` |
 | `[toolset.ask_user_question] timeout_reset_on_activity` | `true` | `true` | `false` — timer keeps running while you read |
+| `[compat.content_filter] action` | `retry_then_error` (0024) | `retry_then_error` | `error` / `retry` / `notice` |
+| `[compat.content_filter] max_retries` | `3` (0024) | `3` | Any positive integer, or omit for 3 |
 
 ### Status-line items
 

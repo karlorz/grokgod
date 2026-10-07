@@ -1,5 +1,5 @@
 diff --git a/crates/codegen/xai-grok-config/src/compat.rs b/crates/codegen/xai-grok-config/src/compat.rs
-index 69afb21c..3d62fc5d 100644
+index 69afb21c..66c7e315 100644
 --- a/crates/codegen/xai-grok-config/src/compat.rs
 +++ b/crates/codegen/xai-grok-config/src/compat.rs
 @@ -248,6 +248,86 @@ impl VendorCompatToml {
@@ -9,10 +9,10 @@ index 69afb21c..3d62fc5d 100644
 +/// `[compat.content_filter]` TOML table. Empty ContentFilter recovery.
 +#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 +pub struct ContentFilterToml {
-+    /// `error` | `retry_then_error` | `retry` | `notice`. Absent → `error`.
++    /// `error` | `retry_then_error` | `retry` | `notice`. Absent → `retry_then_error`.
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
 +    pub action: Option<String>,
-+    /// Resample cap for `retry` / `retry_then_error`. Absent → 1.
++    /// Resample cap for `retry` / `retry_then_error`. Absent → 3.
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
 +    pub max_retries: Option<u32>,
 +}
@@ -20,10 +20,10 @@ index 69afb21c..3d62fc5d 100644
 +/// Resolved `[compat.content_filter]` action.
 +#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 +pub enum ContentFilterAction {
-+    /// Fail the turn (default). Session stays recoverable.
-+    #[default]
++    /// Fail the turn. Session stays recoverable.
 +    Error,
-+    /// One or more Empty-style resamples, then fail.
++    /// One or more Empty-style resamples, then fail (default).
++    #[default]
 +    RetryThenError,
 +    /// Resample like EmptyResponse up to max_retries.
 +    Retry,
@@ -65,8 +65,8 @@ index 69afb21c..3d62fc5d 100644
 +impl Default for ContentFilterConfig {
 +    fn default() -> Self {
 +        Self {
-+            action: ContentFilterAction::Error,
-+            max_retries: 1,
++            action: ContentFilterAction::RetryThenError,
++            max_retries: 3,
 +        }
 +    }
 +}
@@ -81,7 +81,7 @@ index 69afb21c..3d62fc5d 100644
 +            action: env_action
 +                .or_else(|| self.action.as_deref().and_then(ContentFilterAction::parse))
 +                .unwrap_or_default(),
-+            max_retries: self.max_retries.filter(|n| *n > 0).unwrap_or(1),
++            max_retries: self.max_retries.filter(|n| *n > 0).unwrap_or(3),
 +        }
 +    }
 +}
@@ -99,7 +99,7 @@ index 69afb21c..3d62fc5d 100644
  
  impl CompatConfigToml {
 diff --git a/crates/codegen/xai-grok-config/src/compat_tests.rs b/crates/codegen/xai-grok-config/src/compat_tests.rs
-index c7c60c50..ac8e6ae3 100644
+index c7c60c50..1ecb2fb0 100644
 --- a/crates/codegen/xai-grok-config/src/compat_tests.rs
 +++ b/crates/codegen/xai-grok-config/src/compat_tests.rs
 @@ -385,6 +385,7 @@ fn registry_and_defaults_cover_every_cell() {
@@ -116,11 +116,11 @@ index c7c60c50..ac8e6ae3 100644
  }
 +
 +#[test]
-+fn content_filter_toml_defaults_to_error() {
++fn content_filter_toml_defaults_to_retry_then_error() {
 +    let parsed: CompatConfigToml = toml::from_str("").unwrap();
 +    let resolved = parsed.content_filter.resolve();
-+    assert_eq!(resolved.action, ContentFilterAction::Error);
-+    assert_eq!(resolved.max_retries, 1);
++    assert_eq!(resolved.action, ContentFilterAction::RetryThenError);
++    assert_eq!(resolved.max_retries, 3);
 +
 +    let parsed: CompatConfigToml = toml::from_str(
 +        "[content_filter]\naction = \"retry_then_error\"\nmax_retries = 2\n",
@@ -822,10 +822,10 @@ index a5d4bc40..058e79ca 100644
      /// Carries the target model and effort so the answer handler can create a new session with it.
      AgentTypeMismatch {
 diff --git a/crates/codegen/xai-grok-sampler/src/actor/request_task.rs b/crates/codegen/xai-grok-sampler/src/actor/request_task.rs
-index 5fe7aca3..43f297e0 100644
+index 5fe7aca3..de610126 100644
 --- a/crates/codegen/xai-grok-sampler/src/actor/request_task.rs
 +++ b/crates/codegen/xai-grok-sampler/src/actor/request_task.rs
-@@ -171,6 +171,56 @@ pub(crate) async fn run_request_task(
+@@ -171,6 +171,58 @@ pub(crate) async fn run_request_task(
                          .map(|signal| signal.raw.clone()),
                  );
                  metrics.attempts = retry_count + doom_retry_count + 1;
@@ -835,11 +835,13 @@ index 5fe7aca3..43f297e0 100644
 +                if empty_content_filter {
 +                    use crate::config::ContentFilterAction;
 +                    let action = config.content_filter_action;
-+                    let cf_max = config.content_filter_max_retries.unwrap_or(1).max(1);
-+                    let resample = matches!(
++                    let cf_max = config.content_filter_max_retries.unwrap_or(3).max(1);
++                    let resample = content_filter_can_resample(
 +                        action,
-+                        ContentFilterAction::Retry | ContentFilterAction::RetryThenError
-+                    ) && retry_count < cf_max;
++                        retry_count,
++                        cf_max,
++                        effective_max_retries,
++                    );
 +                    if resample {
 +                        if let Some(reason) = response.empty_reason() {
 +                            let context = build_empty_context(reason, &response);
@@ -882,18 +884,65 @@ index 5fe7aca3..43f297e0 100644
                  if let Some(policy) = doom_policy {
                      let confident = policy.confident_triggers(&response.doom_loop_signals);
                      if !confident.is_empty() {
+@@ -346,6 +398,21 @@ pub(crate) async fn run_request_task(
+     }
+ }
+
++/// Keep generic retry exhaustion on the content-filter recovery path.
++pub(crate) fn content_filter_can_resample(
++    action: crate::config::ContentFilterAction,
++    retry_count: u32,
++    cf_max: u32,
++    effective_max_retries: u32,
++) -> bool {
++    matches!(
++        action,
++        crate::config::ContentFilterAction::Retry
++            | crate::config::ContentFilterAction::RetryThenError
++    ) && retry_count < cf_max
++        && retry_count.saturating_add(1) < effective_max_retries
++}
++
+ /// Apply a [`RetryDecision`]. Returns `true` if the loop should continue, `false` if the request is finished (either fatal or emit-to-session).
+ /// Performs the side-effects of the decision: sleeping, rebuilding the client, stripping images, emitting the `Retrying` event.
+ #[allow(clippy::too_many_arguments)]
+@@ -1545,4 +1612,24 @@ mod tests {
+             other => panic!("expected EventStreamError, got {other:?}"),
+         }
+     }
++
++    #[test]
++    fn content_filter_can_resample_action_cap_and_effective() {
++        use crate::config::ContentFilterAction;
++
++        assert!(!content_filter_can_resample(ContentFilterAction::Notice, 0, 3, 5));
++        assert!(!content_filter_can_resample(ContentFilterAction::Error, 0, 3, 5));
++        assert!(content_filter_can_resample(ContentFilterAction::Retry, 0, 3, 5));
++        assert!(content_filter_can_resample(ContentFilterAction::RetryThenError, 0, 3, 5));
++
++        assert!(content_filter_can_resample(ContentFilterAction::RetryThenError, 0, 3, 5));
++        assert!(content_filter_can_resample(ContentFilterAction::RetryThenError, 2, 3, 5));
++        assert!(!content_filter_can_resample(ContentFilterAction::RetryThenError, 3, 3, 5));
++        assert!(!content_filter_can_resample(ContentFilterAction::RetryThenError, 4, 3, 5));
++
++        assert!(!content_filter_can_resample(ContentFilterAction::RetryThenError, 0, 3, 0));
++        assert!(!content_filter_can_resample(ContentFilterAction::RetryThenError, 0, 3, 1));
++        assert!(content_filter_can_resample(ContentFilterAction::RetryThenError, 0, 3, 2));
++        assert!(!content_filter_can_resample(ContentFilterAction::RetryThenError, 1, 3, 2));
++    }
+ }
 diff --git a/crates/codegen/xai-grok-sampler/src/config.rs b/crates/codegen/xai-grok-sampler/src/config.rs
-index 5d457d38..484ae9c9 100644
+index 5d457d38..d3cb4a3e 100644
 --- a/crates/codegen/xai-grok-sampler/src/config.rs
 +++ b/crates/codegen/xai-grok-sampler/src/config.rs
 @@ -76,6 +76,12 @@ pub struct SamplerConfig {
      pub rate_limit_retry_threshold: Option<u32>,
      pub stream_tool_calls: bool,
      pub idle_timeout_secs: Option<u64>,
-+    /// Empty ContentFilter recovery. Default `error`.
++    /// Empty ContentFilter recovery. Default `retry_then_error`.
 +    #[serde(default)]
 +    pub content_filter_action: ContentFilterAction,
-+    /// Resample cap for `retry` / `retry_then_error`. `None` → 1.
++    /// Resample cap for `retry` / `retry_then_error`. `None` → 3.
 +    #[serde(default)]
 +    pub content_filter_max_retries: Option<u32>,
  
@@ -903,8 +952,8 @@ index 5d457d38..484ae9c9 100644
              rate_limit_retry_threshold: None,
              stream_tool_calls: false,
              idle_timeout_secs: None,
-+            content_filter_action: ContentFilterAction::Error,
-+            content_filter_max_retries: None,
++            content_filter_action: ContentFilterAction::RetryThenError,
++            content_filter_max_retries: Some(3),
              reasoning_effort: None,
              reasoning_summary: None,
              origin_client: None,
@@ -912,12 +961,12 @@ index 5d457d38..484ae9c9 100644
  
  pub type SharedHeaderInjector = std::sync::Arc<dyn HeaderInjector>;
  
-+/// Empty ContentFilter recovery. Default `error` fails the turn instead of completing a refusal.
++/// Empty ContentFilter recovery. Default `retry_then_error` auto-resamples up to `max_retries` before failing.
 +#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 +#[serde(rename_all = "snake_case")]
 +pub enum ContentFilterAction {
-+    #[default]
 +    Error,
++    #[default]
 +    RetryThenError,
 +    Retry,
 +    Notice,
@@ -948,7 +997,7 @@ index 5d457d38..484ae9c9 100644
  #[derive(Debug, Clone, Serialize, Deserialize)]
  pub struct RetryPolicy {
 diff --git a/crates/codegen/xai-grok-sampler/src/lib.rs b/crates/codegen/xai-grok-sampler/src/lib.rs
-index 037bf6a0..948e305a 100644
+index 037bf6a0..07443681 100644
 --- a/crates/codegen/xai-grok-sampler/src/lib.rs
 +++ b/crates/codegen/xai-grok-sampler/src/lib.rs
 @@ -39,13 +39,17 @@ pub use attribution::{
@@ -964,7 +1013,7 @@ index 037bf6a0..948e305a 100644
  pub use events::{
      SamplingChannel, SamplingErrorInfo, SamplingErrorKind, SamplingEvent, StripReason,
  };
-+/// Turn-fail copy when `[compat.content_filter] action = "error"` (also the pager needle).
++/// Turn-fail copy when `[compat.content_filter] action = "error"` or when `retry_then_error` exhausts retries (also the pager needle).
 +pub const CONTENT_FILTER_TURN_MESSAGE: &str =
 +    "The model provider refused to generate a response for this turn (content filter).";
 +
@@ -998,27 +1047,31 @@ index bc5e4546..bb471b9e 100644
          }
      }
 diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
-index 0d69a5c1..92a8e8d7 100644
+index 0d69a5c1..b81b2356 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/config.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
-@@ -4805,6 +4805,15 @@ pub(crate) fn sampling_config_for_model(
+@@ -4777,6 +4777,7 @@ pub(crate) fn sampling_config_for_model(
+     );
+     let request_compression =
+         crate::util::config::request_compression_for_url(&credentials.base_url);
++    let content_filter = xai_grok_config::ContentFilterToml::default().resolve();
+     SamplerConfig {
+         api_key: credentials.api_key,
+         model: model_name,
+@@ -4805,6 +4806,11 @@ pub(crate) fn sampling_config_for_model(
          rate_limit_retry_threshold: info.rate_limit_retry_threshold,
          stream_tool_calls: info.stream_tool_calls.unwrap_or(false),
          idle_timeout_secs: None,
-+        content_filter_action: {
-+            let resolved = xai_grok_config::ContentFilterToml::default().resolve();
-+            xai_grok_sampler::ContentFilterAction::parse(resolved.action.as_str())
-+                .unwrap_or(xai_grok_sampler::ContentFilterAction::Error)
-+        },
-+        content_filter_max_retries: {
-+            let resolved = xai_grok_config::ContentFilterToml::default().resolve();
-+            Some(resolved.max_retries)
-+        },
++        content_filter_action: xai_grok_sampler::ContentFilterAction::parse(
++            content_filter.action.as_str(),
++        )
++        .unwrap_or(xai_grok_sampler::ContentFilterAction::RetryThenError),
++        content_filter_max_retries: Some(content_filter.max_retries),
          client_identifier: None,
          deployment_id,
          user_id,
 diff --git a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs
-index fc8e08ee..7c511523 100644
+index fc8e08ee..2f720de7 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/agent_ops.rs
 @@ -2164,6 +2164,10 @@ impl MvpAgent {
@@ -1027,23 +1080,24 @@ index fc8e08ee..7c511523 100644
          config.origin_client = origin_client;
 +        let cf = self.cfg.borrow().compat.content_filter.resolve();
 +        config.content_filter_action = xai_grok_sampler::ContentFilterAction::parse(cf.action.as_str())
-+            .unwrap_or(xai_grok_sampler::ContentFilterAction::Error);
++            .unwrap_or(xai_grok_sampler::ContentFilterAction::RetryThenError);
 +        config.content_filter_max_retries = Some(cf.max_retries);
          config
      }
      /// Resolve sampling config for a model by ID, falling back to the global default on resolution failure.
 diff --git a/crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs b/crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs
-index 4a80e432..a95fa7e8 100644
+index 4a80e432..9afd2d59 100644
 --- a/crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs
 +++ b/crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs
-@@ -816,6 +816,13 @@ async fn read_parent_sampling_config(
+@@ -816,6 +816,14 @@ async fn read_parent_sampling_config(
                  rate_limit_retry_threshold: cfg.rate_limit_retry_threshold,
                  stream_tool_calls: cfg.stream_tool_calls.unwrap_or(false),
                  idle_timeout_secs: None,
-+                content_filter_action: xai_grok_sampler::ContentFilterAction::parse(
-+                    cfg.content_filter_action.as_deref().unwrap_or("error"),
-+                )
-+                .unwrap_or(ctx.sampling_config.content_filter_action),
++                content_filter_action: cfg
++                    .content_filter_action
++                    .as_deref()
++                    .and_then(xai_grok_sampler::ContentFilterAction::parse)
++                    .unwrap_or(ctx.sampling_config.content_filter_action),
 +                content_filter_max_retries: cfg
 +                    .content_filter_max_retries
 +                    .or(ctx.sampling_config.content_filter_max_retries),
@@ -1066,7 +1120,7 @@ index 14edfab5..8cbead25 100644
              });
          let existing = self.chat_state_handle.get_credentials().await;
 diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs
-index fd5edd39..f99abf47 100644
+index fd5edd39..fb7efe77 100644
 --- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs
 +++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs
 @@ -677,6 +677,8 @@ impl SessionActor {
@@ -1078,14 +1132,15 @@ index fd5edd39..f99abf47 100644
                  input_modalities: Vec::new(),
              });
          let creds = self.chat_state_handle.get_credentials().await;
-@@ -769,6 +771,11 @@ impl SessionActor {
+@@ -769,6 +771,12 @@ impl SessionActor {
              rate_limit_retry_threshold: cfg.rate_limit_retry_threshold,
              stream_tool_calls: cfg.stream_tool_calls.unwrap_or(false),
              idle_timeout_secs: None,
-+            content_filter_action: xai_grok_sampler::ContentFilterAction::parse(
-+                cfg.content_filter_action.as_deref().unwrap_or("error"),
-+            )
-+            .unwrap_or(xai_grok_sampler::ContentFilterAction::Error),
++            content_filter_action: cfg
++                .content_filter_action
++                .as_deref()
++                .and_then(xai_grok_sampler::ContentFilterAction::parse)
++                .unwrap_or_default(),
 +            content_filter_max_retries: cfg.content_filter_max_retries,
              client_identifier: self.client_identifier.clone(),
              deployment_id: xai_grok_cloud_config::managed_config::resolve_deployment_id(
@@ -1104,14 +1159,14 @@ index 179d2109..05f64af1 100644
      };
      let actor_pruning_config = xai_chat_state::PruningConfig {
 diff --git a/crates/codegen/xai-grok-shell/src/tools/config.rs b/crates/codegen/xai-grok-shell/src/tools/config.rs
-index 1c44a31d..8b1a2b0f 100644
+index 1c44a31d..db026433 100644
 --- a/crates/codegen/xai-grok-shell/src/tools/config.rs
 +++ b/crates/codegen/xai-grok-shell/src/tools/config.rs
 @@ -229,6 +229,8 @@ impl ShellToolsetConfig {
              rate_limit_retry_threshold: None,
              stream_tool_calls: false,
              idle_timeout_secs: None,
-+            content_filter_action: xai_grok_sampler::ContentFilterAction::Error,
++            content_filter_action: xai_grok_sampler::ContentFilterAction::RetryThenError,
 +            content_filter_max_retries: None,
              client_identifier: None,
              deployment_id: None,

@@ -25,9 +25,9 @@ added = "\n".join(line[1:] for line in patch.splitlines() if line.startswith("+"
 for needle in (
     'pub struct ContentFilterToml',
     'GROK_CONTENT_FILTER_ACTION',
-    'action = "error"',
+    'action = \\"retry_then_error\\"',
     'retry_then_error',
-    'ContentFilterAction::Error',
+    'ContentFilterAction::RetryThenError',
     'CONTENT_FILTER_TURN_MESSAGE',
     'content_filter_stashed_prompt',
     'content_filter_model_retry_pending',
@@ -41,6 +41,8 @@ for needle in (
     'content_filter_retry_does_not_consume_credit_limit_stash',
     '["compat", "content_filter", "action"]',
     'should_retry: Some(false)',
+    'unwrap_or(3)',
+    'content_filter_can_resample',
 ):
     assert needle in added, f"missing content-filter contract: {needle}"
 print("PASS: 0024 config, sampler fail-closed, pager stash/switch contracts")
