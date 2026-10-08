@@ -15,3 +15,5 @@ grokgod install merges `false` when the key is absent.
 
 Rejected: `[workflows] enabled = false`; renaming the plugin; upstream PR
 (xai-org issues-off).
+
+The switch also covers deep-research entries from the bundled workflow directory when missing or mismatched manifest checksums leave their source classified as bundled. Space toggles both builtin and bundled entries. Provenance-based execution privileges remain unchanged; user and project workflow sources retain their existing behavior.

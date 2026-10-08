@@ -44,6 +44,7 @@ jobs:
           sh tests/run/test_orca_pin.sh
           sh tests/sessions/test_sessions.sh
           sh tests/patches/test_registry.sh
+          sh tests/patches/test_0004_policy.sh
           sh tests/patches/test_0003_apply.sh
           sh tests/patches/test_0018_apply.sh
           sh tests/patches/test_0019_apply.sh

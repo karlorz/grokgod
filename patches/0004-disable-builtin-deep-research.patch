@@ -865,7 +865,7 @@ index 7e1079f5..580be55b 100644
 +
 +/// Space-toggleable compiled-in workflow (grokgod `[workflows.builtins]`).
 +pub(crate) fn workflow_is_togglable(wf: &WorkflowInfo) -> bool {
-+    wf.source == "builtin" && wf.name == "deep-research"
++    matches!(wf.source.as_str(), "builtin" | "bundled") && wf.name == "deep-research"
  }
  
  /// State for the hooks/plugins modal popup.
@@ -1761,7 +1761,7 @@ index 1364ffb6..2d533be8 100644
 +        self.entries.retain(|entry| {
 +            let is_target = names.iter().any(|&n| n == entry.meta.name);
 +            let is_compiled =
-+                entry.source_label == "builtin" || matches!(entry.source, WorkflowSource::Builtin);
++                matches!(entry.source_label, "builtin" | "bundled") || matches!(entry.source, WorkflowSource::Builtin);
 +            !(is_target && is_compiled)
 +        });
 +        self

@@ -41,6 +41,8 @@ grep -q 'label: "Built-in deep-research workflow"' "$PATCH_0004" && { echo "FAIL
 grep -q "workflows.builtins" "$PATCH_0004" || { echo "FAIL: Missing workflows.builtins in 0004"; exit 1; }
 grep -q "send_available_commands_update(AdvertiseTrigger::WorkflowsChanged)" "$PATCH_0004" || { echo "FAIL: SetBuiltinDeepResearch must advertise with WorkflowsChanged"; exit 1; }
 grep -q 'send_available_commands_update().await' "$PATCH_0004" && { echo "FAIL: 0004 must not call send_available_commands_update with zero args"; exit 1; }
+grep -Fq 'matches!(wf.source.as_str(), "builtin" | "bundled") && wf.name == "deep-research"' "$PATCH_0004" || { echo "FAIL: Missing builtin/bundled deep-research Space toggle predicate in 0004"; exit 1; }
+grep -Fq 'matches!(entry.source_label, "builtin" | "bundled") || matches!(entry.source, WorkflowSource::Builtin);' "$PATCH_0004" || { echo "FAIL: Missing builtin/bundled workflow filtering predicate in 0004"; exit 1; }
 echo "PASS: Patch 0004 touches expected files"
 
 TMP_ROOT="$(mktemp -d)"
@@ -111,4 +113,5 @@ git -C "$GB_WORKTREE" apply -R "$PATCH_0001"
 git -C "$GB_WORKTREE" diff --quiet || { echo "FAIL: Working tree not clean after reverse apply"; exit 1; }
 echo "PASS: Reversals succeed and leave tree clean"
 
+sh "$SCRIPT_DIR/test_0004_policy.sh"
 echo "=== All 0004 patch apply tests passed! ==="
