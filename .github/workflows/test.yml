@@ -60,6 +60,7 @@ jobs:
         run: |
           sh tests/install/test_checksum_matcher.sh
           sh tests/install/test_content_filter_merge.sh
+          sh tests/install/test_memory_merge.sh
           sh tests/install/test_install.sh
 
   test-windows:

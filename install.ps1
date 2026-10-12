@@ -424,6 +424,11 @@ function Merge-WorkflowsBuiltinsConfig {
     Merge-TomlScalarKey -Section "workflows.builtins" -Key "deep-research" -Value "false"
 }
 
+function Merge-MemoryConfig {
+    Merge-TomlScalarKey -Section "memory" -Key "enabled" -Value "false"
+    Merge-TomlScalarKey -Section "memory_v2" -Key "enabled" -Value "false"
+}
+
 function Merge-StatusLineConfig {
     $cfg = Get-GrokConfigFile
     if (-not (Test-Path -LiteralPath $cfg)) {
@@ -661,6 +666,7 @@ function Merge-SuggestedConfigProfile {
     Merge-StatusLineConfig
     Merge-AskUserQuestionConfig
     Merge-ContentFilterConfig
+    Merge-MemoryConfig
 }
 
 function Install-DailyMinimalAgent([string]$DownloadedPath = "") {

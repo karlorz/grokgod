@@ -2344,6 +2344,135 @@ EOF
 }
 
 maybe_merge_content_filter_config
+
+# Merge [memory] enabled = false into ~/.grok/config.toml when the key is
+# absent. An explicit user value beats managed remote enablement, so a fresh
+# install keeps memory off until the user opts back in.
+maybe_merge_memory_config() {
+  cfg="$GROK_HOME/config.toml"
+  has_section=0
+  has_enabled=0
+  if [ -f "$cfg" ]; then
+    read -r has_section has_enabled <<EOF
+$(awk '
+      /^[[:space:]]*\[memory\][[:space:]]*$/ { insec=1; sec=1; next }
+      /^[[:space:]]*\[/ { insec=0 }
+      insec && /^[[:space:]]*enabled[[:space:]]*=/ { e=1 }
+      END {
+        printf "%d %d\n", sec ? 1 : 0, e ? 1 : 0
+      }
+    ' "$cfg")
+EOF
+  fi
+  if [ "$has_enabled" -eq 1 ]; then
+    log_info "memory enabled already set in $cfg"
+    return 0
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log_dry "Would merge [memory] enabled = false into $cfg"
+    return 0
+  fi
+  mkdir -p "$GROK_HOME"
+  if [ -f "$cfg" ] && [ "$has_section" -eq 1 ]; then
+    tmp="$(rewrite_stage "$cfg")"
+    awk '
+      BEGIN { insec=0; done=0 }
+      /^[[:space:]]*\[memory\][[:space:]]*$/ { insec=1; print; next }
+      /^[[:space:]]*\[/ {
+        if (insec && !done) {
+          print "enabled = false"
+          done=1
+        }
+        insec=0
+      }
+      { print }
+      END {
+        if (insec && !done) {
+          print "enabled = false"
+        }
+      }
+    ' "$cfg" > "$tmp"
+    rewrite_commit "$tmp" "$cfg"
+    log_info "Merged enabled = false into existing [memory] in $cfg"
+    return 0
+  fi
+  tmp="$(rewrite_stage "$cfg")"
+  {
+    if [ -f "$cfg" ] && [ -s "$cfg" ]; then
+      cat "$cfg"
+      printf '\n'
+    fi
+    printf '[memory]\nenabled = false\n'
+  } > "$tmp"
+  rewrite_commit "$tmp" "$cfg"
+  log_info "Wrote [memory] enabled = false to $cfg"
+}
+
+maybe_merge_memory_config
+
+# Merge [memory_v2] enabled = false into ~/.grok/config.toml when the key is
+# absent. Same fill-if-missing contract as [memory].
+maybe_merge_memory_v2_config() {
+  cfg="$GROK_HOME/config.toml"
+  has_section=0
+  has_enabled=0
+  if [ -f "$cfg" ]; then
+    read -r has_section has_enabled <<EOF
+$(awk '
+      /^[[:space:]]*\[memory_v2\][[:space:]]*$/ { insec=1; sec=1; next }
+      /^[[:space:]]*\[/ { insec=0 }
+      insec && /^[[:space:]]*enabled[[:space:]]*=/ { e=1 }
+      END {
+        printf "%d %d\n", sec ? 1 : 0, e ? 1 : 0
+      }
+    ' "$cfg")
+EOF
+  fi
+  if [ "$has_enabled" -eq 1 ]; then
+    log_info "memory_v2 enabled already set in $cfg"
+    return 0
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log_dry "Would merge [memory_v2] enabled = false into $cfg"
+    return 0
+  fi
+  mkdir -p "$GROK_HOME"
+  if [ -f "$cfg" ] && [ "$has_section" -eq 1 ]; then
+    tmp="$(rewrite_stage "$cfg")"
+    awk '
+      BEGIN { insec=0; done=0 }
+      /^[[:space:]]*\[memory_v2\][[:space:]]*$/ { insec=1; print; next }
+      /^[[:space:]]*\[/ {
+        if (insec && !done) {
+          print "enabled = false"
+          done=1
+        }
+        insec=0
+      }
+      { print }
+      END {
+        if (insec && !done) {
+          print "enabled = false"
+        }
+      }
+    ' "$cfg" > "$tmp"
+    rewrite_commit "$tmp" "$cfg"
+    log_info "Merged enabled = false into existing [memory_v2] in $cfg"
+    return 0
+  fi
+  tmp="$(rewrite_stage "$cfg")"
+  {
+    if [ -f "$cfg" ] && [ -s "$cfg" ]; then
+      cat "$cfg"
+      printf '\n'
+    fi
+    printf '[memory_v2]\nenabled = false\n'
+  } > "$tmp"
+  rewrite_commit "$tmp" "$cfg"
+  log_info "Wrote [memory_v2] enabled = false to $cfg"
+}
+
+maybe_merge_memory_v2_config
 fail_after config
 
 # ─────────────────────────────────────────────────────────
