@@ -113,6 +113,12 @@ timeout_reset_on_activity = true
 [compat.content_filter]
 action = "retry_then_error"
 max_retries = 3
+
+[memory]
+enabled = false
+
+[memory_v2]
+enabled = false
 ```
 
 | Key | Default (compiled) | On (suggested) | Off (opt-out) |
@@ -127,8 +133,10 @@ max_retries = 3
 | `[toolset.ask_user_question] timeout_reset_on_activity` | `true` | `true` | `false` — timer keeps running while you read |
 | `[compat.content_filter] action` | `retry_then_error` (0024) | `retry_then_error` | `error` / `retry` / `notice` |
 | `[compat.content_filter] max_retries` | `3` (0024) | `3` | Any positive integer, or omit for 3 |
+| `[memory] enabled` | Off, unless the remote managed setting enables it | `false` — stays off | `true` |
+| `[memory_v2] enabled` | Off, unless the remote managed setting enables it | `false` — stays off | `true` |
 
-Set a key yourself to opt out. Existing status-line item lists are not expanded back to `model` / `turn-timer`. Ask-user-question keys are merged per-key when missing (a user who already set `timeout_secs = 120` is left alone). On Windows, skip-download (verified local release) still refreshes runtime from GitHub latest (warn-and-keep on network/checksum failure), always installs the daily minimal agent, merges the suggested profile, and regenerates `grok.cmd` / `grokgod.cmd` when that runtime refresh succeeds — without re-downloading the grok binary.
+Set a key yourself to opt out. Existing status-line item lists are not expanded back to `model` / `turn-timer`. Ask-user-question keys are merged per-key when missing (a user who already set `timeout_secs = 120` is left alone). An explicit `[memory] enabled = false` beats remote managed enablement, so a fresh install keeps memory off until you set the key to `true`; `/memory` then `t` only toggles the current session. On Windows, skip-download (verified local release) still refreshes runtime from GitHub latest (warn-and-keep on network/checksum failure), always installs the daily minimal agent, merges the suggested profile, and regenerates `grok.cmd` / `grokgod.cmd` when that runtime refresh succeeds — without re-downloading the grok binary.
 
 Local headed grokgod real-session tests use `grok -m flash-max` (see
 [AGENTS.md](AGENTS.md)). Orca desktop v1.4.206-1 selects the automation model
