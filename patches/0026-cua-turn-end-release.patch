@@ -1,0 +1,853 @@
+diff --git a/crates/codegen/xai-grok-mcp/src/cua_cleanup.rs b/crates/codegen/xai-grok-mcp/src/cua_cleanup.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/codegen/xai-grok-mcp/src/cua_cleanup.rs
+@@ -0,0 +1,129 @@
++//! Host cleanup for the user-installed Computer Use MCP, on its existing connection.
++
++use super::*;
++
++pub(super) fn configure_mac_sky_release(
++    name: &str,
++    env: &[acp::EnvVariable],
++    cmd: &mut Command,
++) -> Result<bool, McpError> {
++    if !cfg!(target_os = "macos") || name != "cua_repl" {
++        return Ok(false);
++    }
++    let value = |key: &str| {
++        env.iter()
++            .rev()
++            .find(|item| item.name == key)
++            .map(|item| item.value.clone())
++            .or_else(|| std::env::var(key).ok())
++    };
++    let surfaces = value("CUA_REPL_ENABLED_SURFACES").unwrap_or_default();
++    if !surfaces.split(',').any(|s| s.trim() == "computer") {
++        return Ok(false);
++    }
++    let mut defaults = serde_json::json!({"sky": "@oai/sky/service"});
++    if surfaces.split(',').any(|s| s.trim() == "browser") {
++        defaults["browser"] = serde_json::json!("@oai/browser-desktop/service");
++    }
++    let mut services: serde_json::Value = match value("NODE_REPL_TRUSTED_SERVICES") {
++        Some(value) => serde_json::from_str(&value).map_err(|_| {
++            McpError::ClientError("Invalid Computer Use trusted services configuration".into())
++        })?,
++        None => defaults,
++    };
++    if services.get("sky").and_then(serde_json::Value::as_str) != Some("@oai/sky/service") {
++        return Err(McpError::ClientError(
++            "Grok Computer Use turn cleanup requires @oai/sky/service".into(),
++        ));
++    }
++    let dir = xai_grok_config::grok_home().join("computer-use");
++    let write = || -> std::io::Result<std::path::PathBuf> {
++        use std::io::Write;
++        std::fs::create_dir_all(&dir)?;
++        let file = dir.join("sky-release-service.mjs");
++        let source = include_bytes!("cua_sky_service.mjs");
++        if std::fs::read(&file).ok().as_deref() != Some(source.as_slice()) {
++            let mut temp = tempfile::NamedTempFile::new_in(&dir)?;
++            temp.write_all(source)?;
++            temp.persist(&file).map_err(|e| e.error)?;
++        }
++        Ok(file)
++    };
++    let file = write().map_err(|e| {
++        McpError::ClientError(format!("Cannot install Computer Use release bridge: {e}"))
++    })?;
++    services["sky"] = serde_json::Value::String(file.to_string_lossy().into_owned());
++    cmd.env("NODE_REPL_TRUSTED_SERVICES", services.to_string());
++    let mut trusted: Vec<_> = value("NODE_REPL_TRUSTED_CODE_PATHS")
++        .map(|v| std::env::split_paths(&v).collect())
++        .unwrap_or_default();
++    trusted.push(file);
++    cmd.env(
++        "NODE_REPL_TRUSTED_CODE_PATHS",
++        std::env::join_paths(trusted)
++            .map_err(|_| McpError::ClientError("Invalid Computer Use trusted code paths".into()))?,
++    );
++    Ok(true)
++}
++
++impl McpClient {
++    /// Does not initialize an unused server. A failed cleanup makes this connection unusable.
++    pub async fn notify_cua_turn_ended(
++        &self,
++        hook_event_name: &str,
++        session_id: &str,
++        turn_id: &str,
++    ) -> Result<(), McpError> {
++        if self.server_name != "cua_repl" {
++            return Ok(());
++        }
++        let service = {
++            let state = self.state.lock().await;
++            match &*state {
++                ClientState::Ready { service, .. } => Arc::clone(service),
++                _ => return Ok(()),
++            }
++        };
++        let _request = self.begin_outbound_request();
++        let budget = std::time::Duration::from_secs(3);
++        let mut params = CallToolRequestParams::new("turn_ended");
++        params.arguments = serde_json::json!({
++            "hook_event_name": hook_event_name,
++            "session_id": session_id,
++            "turn_id": turn_id,
++        })
++        .as_object()
++        .cloned();
++        let cleanup = async {
++            let result = service.call_tool(params).await?;
++            if result.is_error == Some(true) {
++                return Ok(result);
++            }
++            if self.cua_native_release {
++                let payload = serde_json::json!({"type": "grok_turn_ended", "sessionId": session_id, "turnId": turn_id});
++                let mut native = CallToolRequestParams::new("js");
++                native.arguments = serde_json::json!({
++                    "code": format!("await nodeRepl.rpc(\"sky\", {payload});"),
++                    "title": "Release Computer Use",
++                })
++                .as_object()
++                .cloned();
++                return service.call_tool(native).await;
++            }
++            Ok(result)
++        };
++        let result = match tokio::time::timeout(budget, cleanup).await {
++            Ok(Ok(result)) if result.is_error != Some(true) => Ok(()),
++            Ok(Ok(_)) => Err(McpError::ClientError(
++                "cua_repl turn_ended returned an error".into(),
++            )),
++            Ok(Err(error)) => Err(McpError::from(error)),
++            Err(_) => Err(McpError::timeout("cua_repl", budget)),
++        };
++        if result.is_err() {
++            self.discard();
++            *self.state.lock().await = ClientState::Empty;
++        }
++        result
++    }
++}
+diff --git a/crates/codegen/xai-grok-mcp/src/cua_cleanup_tests.rs b/crates/codegen/xai-grok-mcp/src/cua_cleanup_tests.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/codegen/xai-grok-mcp/src/cua_cleanup_tests.rs
+@@ -0,0 +1,147 @@
++use super::*;
++
++fn cua_client(url: &str) -> Arc<McpClient> {
++    let mut client = fake_http_client(url, 60);
++    Arc::get_mut(&mut client).unwrap().server_name = "cua_repl".into();
++    client
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn cua_cleanup_uses_existing_connection_and_preserves_it() {
++    let (url, handles) = spawn_fake_mcp(CallToolBehavior::HangThenOk { hang_ms: 0 }).await;
++    let client = cua_client(&url);
++    client.ensure_initialized().await.unwrap();
++    for event in ["Stop", "Interrupt", "SubagentStop"] {
++        client
++            .notify_cua_turn_ended(event, "session", "prompt")
++            .await
++            .unwrap();
++        assert!(client.is_ready().await);
++    }
++    assert_eq!(handles.inits.load(Ordering::Relaxed), 1);
++    let bodies = handles.call_bodies.lock();
++    for (body, event) in bodies.iter().zip(["Stop", "Interrupt", "SubagentStop"]) {
++        assert_eq!(body["params"]["name"], "turn_ended");
++        assert_eq!(
++            body["params"]["arguments"],
++            serde_json::json!({
++                "hook_event_name": event, "session_id": "session", "turn_id": "prompt"
++            })
++        );
++    }
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn cua_cleanup_missing_tool_fails_closed_before_admission() {
++    let (url, _) = spawn_fake_mcp(CallToolBehavior::HangThenOk { hang_ms: 0 }).await;
++    let client = cua_client(&url);
++    let state = Arc::new(Mutex::new(McpState::new(vec![])));
++    assert!(client.get_tool_registrations(state).await.is_err());
++    assert_eq!(client.state_kind().await, ClientStateKind::Empty);
++    assert!(client.ensure_initialized().await.is_err());
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn cua_cleanup_protocol_error_disables_connection_without_retry() {
++    let (url, handles) = spawn_fake_mcp(CallToolBehavior::AlwaysError { code: -32601 }).await;
++    let client = cua_client(&url);
++    client.ensure_initialized().await.unwrap();
++    assert!(
++        client
++            .notify_cua_turn_ended("Stop", "s", "t")
++            .await
++            .is_err()
++    );
++    assert_eq!(client.state_kind().await, ClientStateKind::Empty);
++    assert_eq!(handles.calls.load(Ordering::Relaxed), 1);
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn cua_cleanup_timeout_disables_connection() {
++    let (url, handles) = spawn_fake_mcp(CallToolBehavior::HangThenOk { hang_ms: 10_000 }).await;
++    let client = cua_client(&url);
++    client.ensure_initialized().await.unwrap();
++    let started = std::time::Instant::now();
++    assert!(
++        client
++            .notify_cua_turn_ended("Interrupt", "s", "t")
++            .await
++            .unwrap_err()
++            .is_timeout()
++    );
++    assert!(started.elapsed() < std::time::Duration::from_secs(5));
++    assert_eq!(client.state_kind().await, ClientStateKind::Empty);
++    assert_eq!(handles.calls.load(Ordering::Relaxed), 1);
++}
++
++#[tokio::test]
++async fn cua_cleanup_does_not_start_unused_server() {
++    let client = McpClient::stub("cua_repl");
++    client
++        .notify_cua_turn_ended("Stop", "s", "t")
++        .await
++        .unwrap();
++    assert_eq!(client.state_kind().await, ClientStateKind::Empty);
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn cua_cleanup_tool_is_hidden_and_mac_bridge_runs_after_notification() {
++    let (url, handles) = spawn_fake_mcp_with(
++        CallToolBehavior::HangThenOk { hang_ms: 0 },
++        FakeMcpOptions {
++            cua_cleanup_tool: true,
++            ..Default::default()
++        },
++    )
++    .await;
++    let mut client = cua_client(&url);
++    Arc::get_mut(&mut client).unwrap().cua_native_release = true;
++    let state = Arc::new(Mutex::new(McpState::new(vec![])));
++    let tools = client.get_tool_registrations(state).await.unwrap();
++    assert_eq!(tools.len(), 1);
++    assert_eq!(tools[0].name, "cua_repl__echo");
++    let descriptors = tempfile::tempdir().unwrap();
++    assert_eq!(
++        client
++            .materialize_descriptors(descriptors.path())
++            .await
++            .unwrap(),
++        1
++    );
++    assert!(!descriptors.path().join("tools/turn_ended.json").exists());
++    client
++        .notify_cua_turn_ended("Stop", "session", "prompt")
++        .await
++        .unwrap();
++    let calls = handles.call_bodies.lock();
++    assert_eq!(calls.len(), 2);
++    assert_eq!(calls[0]["params"]["name"], "turn_ended");
++    assert_eq!(calls[1]["params"]["name"], "js");
++    let code = calls[1]["params"]["arguments"]["code"].as_str().unwrap();
++    assert!(code.contains("grok_turn_ended"));
++    assert!(code.contains("\"sessionId\":\"session\""));
++    assert!(client.is_ready().await);
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn cua_cleanup_dispatch_carries_matching_turn_metadata() {
++    let (url, handles) = spawn_fake_mcp(CallToolBehavior::HangThenOk { hang_ms: 0 }).await;
++    let client = fake_http_client(&url, 60);
++    let meta = serde_json::json!({"session_id":"session", "turn_id":"prompt", "call_id":"call"});
++    fake_echo_tool()
++        .try_call_tool_with_cua_meta(
++            &client,
++            &serde_json::json!({}),
++            Some(meta.clone()),
++            &mut false,
++            &mut false,
++            &xai_grok_session_events::EventWriter::noop(),
++            &tracing::Span::none(),
++        )
++        .await
++        .unwrap();
++    assert_eq!(
++        handles.call_bodies.lock()[0]["params"]["_meta"]["x-codex-turn-metadata"],
++        meta
++    );
++}
+diff --git a/crates/codegen/xai-grok-mcp/src/cua_sky_service.mjs b/crates/codegen/xai-grok-mcp/src/cua_sky_service.mjs
+new file mode 100644
+--- /dev/null
++++ b/crates/codegen/xai-grok-mcp/src/cua_sky_service.mjs
+@@ -0,0 +1,50 @@
++// Trusted Sky service: preserve the installed API and add native turn cleanup.
++import { createRequire } from "node:module";
++import path from "node:path";
++import { pathToFileURL } from "node:url";
++
++const roots = (process.env.NODE_REPL_NODE_MODULE_DIRS ?? "")
++  .split(path.delimiter)
++  .filter(Boolean);
++let servicePath;
++for (const root of roots) {
++  try {
++    servicePath = createRequire(path.join(root, "grok-cua-loader.cjs")).resolve(
++      "@oai/sky/service",
++    );
++    break;
++  } catch {}
++}
++if (!servicePath)
++  throw new Error("Grok Computer Use requires the installed @oai/sky/service");
++const original = await import(pathToFileURL(servicePath).href);
++const { MacNativePipeTransport } = await import(
++  pathToFileURL(
++    path.join(path.dirname(servicePath), "targets/mac/native-pipe.js"),
++  ).href
++);
++let transport;
++
++export async function handleRpc(request) {
++  if (request.type !== "grok_turn_ended") return original.handleRpc(request);
++  const { sessionId, turnId } = request;
++  if (
++    typeof sessionId !== "string" ||
++    !sessionId ||
++    typeof turnId !== "string" ||
++    !turnId
++  ) {
++    throw new Error("Computer Use cleanup requires a session and turn ID");
++  }
++  if (!transport || transport.isClosed) {
++    transport = await MacNativePipeTransport.create("CodexComputerUseIPC-5");
++  }
++  return transport.request({
++    requestType: "ComputerUseIPCCodexTurnEndedRequest",
++    request: { threadID: sessionId, turnID: turnId },
++    codexMetadata: { session_id: sessionId, turn_id: turnId },
++    timeoutSeconds: 2,
++  });
++}
++
++export const classifyError = original.classifyError;
+diff --git a/crates/codegen/xai-grok-mcp/src/servers.rs b/crates/codegen/xai-grok-mcp/src/servers.rs
+--- a/crates/codegen/xai-grok-mcp/src/servers.rs
++++ b/crates/codegen/xai-grok-mcp/src/servers.rs
+@@ -1587,9 +1587,35 @@
+ 
+     async fn run(
+         &self,
+-        _ctx: xai_tool_runtime::ToolCallContext,
++        ctx: xai_tool_runtime::ToolCallContext,
+         raw: serde_json::Value,
+     ) -> Result<ToolOutput, xai_tool_runtime::ToolError> {
++        let cua_meta = if self.tool.server_name == "cua_repl" {
++            use xai_grok_tools::implementations::grok_build::task::types::{
++                CurrentPromptIdResource, SessionIdResource,
++            };
++            let resources = xai_grok_tools::types::tool_metadata::shared_resources(&ctx)?;
++            let resources = resources.lock().await;
++            let session = resources
++                .get::<SessionIdResource>()
++                .map(|id| id.0.as_str())
++                .filter(|id| !id.is_empty());
++            let prompt = resources
++                .get::<CurrentPromptIdResource>()
++                .map(|id| id.0.as_str())
++                .filter(|id| !id.is_empty());
++            let (Some(session), Some(prompt)) = (session, prompt) else {
++                return Err(xai_tool_runtime::ToolError::custom(
++                    "computer_use",
++                    "Computer Use requires an active Grok turn",
++                ));
++            };
++            Some(
++                serde_json::json!({"session_id": session, "turn_id": prompt, "call_id": ctx.call_id.to_string()}),
++            )
++        } else {
++            None
++        };
+         let call_span = xai_grok_telemetry::region::Region::from_span(tracing::info_span!(
+             "mcp.tool_call",
+             server_name = %self.tool.server_name,
+@@ -1627,9 +1653,10 @@
+         let mut is_timeout = false;
+         let ew = &event_writer;
+         let dispatch_result = match self
+-            .try_call_tool(
++            .try_call_tool_with_cua_meta(
+                 &client,
+                 &raw,
++                cua_meta.clone(),
+                 &mut reconnect_attempted,
+                 &mut is_timeout,
+                 ew,
+@@ -1649,9 +1676,10 @@
+                 if reauth_ok {
+                     // `try_call_tool` only sets the flag; telemetry must describe the retry.
+                     is_timeout = false;
+-                    self.try_call_tool(
++                    self.try_call_tool_with_cua_meta(
+                         &client,
+                         &raw,
++                        cua_meta.clone(),
+                         &mut reconnect_attempted,
+                         &mut is_timeout,
+                         ew,
+@@ -1816,6 +1844,7 @@
+     /// Dispatch one `tools/call`, driving SEP-2322 multi round-trip requests (protocol 2026-07-28).
+     /// The user-facing input gathering between rounds is deliberately not on the clock
+     /// rounds that carry `inputRequests` are interactive re-prompts, capped by count ([`rmcp::model::DEFAULT_MRTR_MAX_ROUNDS`]); rounds carrying only `requestState` mean an out-of-band interaction (URL elicitation) is still pending server-side, so they are polled with capped backoff and bounded by [`MRTR_PENDING_STATE_TIMEOUT`] instead — a browser flow takes minutes, not rounds.
++    #[cfg(test)]
+     async fn try_call_tool(
+         &self,
+         client: &Arc<McpClient>,
+@@ -1825,10 +1854,37 @@
+         ew: &xai_grok_session_events::EventWriter,
+         call_span: &tracing::Span,
+     ) -> Result<rmcp::model::CallToolResult, xai_tool_runtime::ToolError> {
++        self.try_call_tool_with_cua_meta(
++            client,
++            raw,
++            None,
++            reconnect_attempted,
++            is_timeout,
++            ew,
++            call_span,
++        )
++        .await
++    }
++
++    async fn try_call_tool_with_cua_meta(
++        &self,
++        client: &Arc<McpClient>,
++        raw: &serde_json::Value,
++        cua_meta: Option<serde_json::Value>,
++        reconnect_attempted: &mut bool,
++        is_timeout: &mut bool,
++        ew: &xai_grok_session_events::EventWriter,
++        call_span: &tracing::Span,
++    ) -> Result<rmcp::model::CallToolResult, xai_tool_runtime::ToolError> {
+         let tool_timeout = client.tool_timeout_for(&self.tool.name);
+         let timeout_duration = std::time::Duration::from_secs(tool_timeout);
+         let mut params = CallToolRequestParams::new(self.tool.name.clone());
+         params.arguments = raw.as_object().cloned();
++        if let Some(meta) = cua_meta {
++            params.meta = Some(rmcp::model::RequestMetaObject(rmcp::model::MetaObject(
++                serde_json::Map::from_iter([("x-codex-turn-metadata".to_owned(), meta)]),
++            )));
++        }
+ 
+         let call = client.request_tracker.begin_request();
+         let mut input_rounds = 0usize;
+@@ -3131,6 +3187,7 @@
+ }
+ 
+ pub struct McpClient {
++    cua_native_release: bool,
+     /// Unique identity of this client *instance*. See [`Self::client_id`].
+     client_id: u64,
+     server_name: McpServerName,
+@@ -3263,6 +3320,7 @@
+         let expose_image_base64 = Self::load_expose_image_base64(overrides, meta_config);
+         Self {
+             client_id: next_client_id(),
++            cua_native_release: false,
+             server_name,
+             state: Mutex::new(ClientState::Pending(transport)),
+             init_done: Notify::new(),
+@@ -4327,6 +4385,9 @@
+                 ))
+                 .await?;
+             for tool in result.tools {
++                if self.server_name == "cua_repl" && tool.name == "turn_ended" {
++                    continue;
++                }
+                 let descriptor = serde_json::json!({
+                     "name": tool.name.as_ref(),
+                     "description": tool.description.as_deref(),
+@@ -4472,6 +4533,17 @@
+             .record("elapsed_ms", list_tools_start.elapsed().as_millis() as i64);
+         list_tools_span.close();
+ 
++        if self.server_name == "cua_repl" {
++            if !all_tools.iter().any(|tool| tool.name == "turn_ended") {
++                self.discard();
++                *self.state.lock().await = ClientState::Empty;
++                return Err(McpError::ClientError(
++                    "cua_repl requires turn_ended for Computer Use lifecycle cleanup".into(),
++                ));
++            }
++            // Host cleanup is not a model tool, even when the server lists it.
++            all_tools.retain(|tool| tool.name != "turn_ended");
++        }
+         let event_writer = mcp_state.lock().await.event_writer().clone();
+         let listed_count = all_tools.len();
+         let registrations: Vec<_> = all_tools
+@@ -4852,7 +4924,7 @@
+             let spawn_start = std::time::Instant::now();
+             // Scoped to the sync spawn-planning prologue: the timer's
+             // Chrome-mode span guard must not cross the spawn await below.
+-            let cmd = {
++            let mut cmd = {
+                 let mut stdio_spawn_timer =
+                     xai_grok_telemetry::instrumentation::timer("mcp_stdio_spawn");
+                 stdio_spawn_timer.with_server(name.as_str());
+@@ -4874,6 +4946,8 @@
+                 xai_grok_sandbox::child_net::restrict_child_network(&mut cmd);
+                 cmd
+             };
++
++            let cua_native_release = cua_cleanup::configure_mac_sky_release(&name, &env, &mut cmd)?;
+ 
+             let spawn_child_start = std::time::Instant::now();
+             let spawn_child_span =
+@@ -4916,12 +4990,9 @@
+                 drain_mcp_stderr_to_log(&name, stderr);
+             }
+ 
+-            Ok(McpClient::new_stdio(
+-                name.clone(),
+-                transport,
+-                overrides,
+-                meta_config,
+-            ))
++            let mut client = McpClient::new_stdio(name.clone(), transport, overrides, meta_config);
++            client.cua_native_release = cua_native_release;
++            Ok(client)
+         }
+         acp::McpServer::Http(acp::McpServerHttp {
+             name,
+@@ -5265,3 +5336,6 @@
+ #[cfg(test)]
+ #[path = "servers_tests.rs"]
+ mod tests;
++
++#[path = "cua_cleanup.rs"]
++mod cua_cleanup;
+diff --git a/crates/codegen/xai-grok-mcp/src/servers_tests.rs b/crates/codegen/xai-grok-mcp/src/servers_tests.rs
+--- a/crates/codegen/xai-grok-mcp/src/servers_tests.rs
++++ b/crates/codegen/xai-grok-mcp/src/servers_tests.rs
+@@ -1684,6 +1684,7 @@
+ 
+ #[derive(Clone, Default)]
+ struct FakeMcpOptions {
++    cua_cleanup_tool: bool,
+     discover: DiscoverBehavior,
+     /// When set, `initialize` is rejected with an "Unauthorized" JSON-RPC
+     /// error, for asserting that fallback errors keep their auth classification.
+@@ -1825,7 +1826,12 @@
+             axum::Json(serde_json::json!({
+                 "jsonrpc": "2.0",
+                 "id": id.clone(),
+-                "result": {"tools": [{"name": "echo", "inputSchema": {"type": "object"}}]},
++                "result": {"tools": if state.options.cua_cleanup_tool {
++                    serde_json::json!([
++                        {"name": "echo", "inputSchema": {"type": "object"}},
++                        {"name": "turn_ended", "inputSchema": {"type": "object"}}
++                    ])
++                } else { serde_json::json!([{"name": "echo", "inputSchema": {"type": "object"}}]) }},
+             }))
+             .into_response()
+         }
+@@ -5758,3 +5764,6 @@
+     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+     assert!(cancellations(&received).is_empty());
+ }
++
++#[path = "cua_cleanup_tests.rs"]
++mod cua_cleanup_tests;
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session.rs b/crates/codegen/xai-grok-shell/src/session/acp_session.rs
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session.rs
+@@ -144,6 +144,8 @@
+ use tool_calls::BridgeToolSuccess;
+ #[path = "acp_session_impl/mcp.rs"]
+ mod mcp;
++#[path = "acp_session_impl/cua_cleanup.rs"]
++mod cua_cleanup;
+ #[path = "acp_session_impl/mcp_init.rs"]
+ mod mcp_init;
+ #[path = "acp_session_impl/parent_interject.rs"]
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/cancel.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/cancel.rs
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/cancel.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/cancel.rs
+@@ -719,6 +719,9 @@
+                 captures_cancelled_turn,
+             )
+         };
++        if let Some(prompt_id) = cancelled_prompt_id.as_deref() {
++            self.release_computer_use(prompt_id, true).await;
++        }
+         // True iff this cancel aborted a live task: the Keep-with-task rail and
+         // every rewind rail that tore one down. A Keep lease that bound no task
+         // sheds all task authority, so this stays false there.
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/cua_cleanup.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/cua_cleanup.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/cua_cleanup.rs
+@@ -0,0 +1,38 @@
++//! Computer Use cleanup runs behind the actor's turn-finalization lease.
++
++use super::*;
++
++impl SessionActor {
++    pub(super) async fn release_computer_use(&self, prompt_id: &str, interrupted: bool) {
++        let client = self.mcp_state.lock().await.get_client("cua_repl").cloned();
++        let Some(client) = client else { return };
++        let event = if interrupted {
++            "Interrupt"
++        } else if self.startup_hints.is_subagent {
++            "SubagentStop"
++        } else {
++            "Stop"
++        };
++        if let Err(error) = client
++            .notify_cua_turn_ended(event, &self.session_id_string(), prompt_id)
++            .await
++        {
++            tracing::warn!(%error, "Computer Use cleanup failed; cua_repl connection disabled");
++        }
++    }
++
++    pub(super) async fn release_computer_use_on_close(&self) {
++        let prompt_id = {
++            let state = self.state.lock().await;
++            state.running_prompt_id().map(str::to_owned)
++        }
++        .or_else(|| {
++            self.current_prompt_id
++                .lock()
++                .expect("current_prompt_id mutex poisoned")
++                .clone()
++        })
++        .unwrap_or_else(|| "session-close".to_owned());
++        self.release_computer_use(&prompt_id, true).await;
++    }
++}
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs
+@@ -652,6 +652,7 @@
+                 }
+                 maybe_cmd = cmd_rx.recv() => {
+                     let Some(cmd) = maybe_cmd else {
++                        session.release_computer_use_on_close().await;
+                         session
+                             .settle_all_parent_messages(
+                                 xai_message_delivery_core::TerminalCause::ActorDrop,
+@@ -2265,6 +2266,7 @@
+                                     })
+                                     .await;
+                             }
++                            session.release_computer_use_on_close().await;
+                             session
+                                 .settle_all_parent_messages(
+                                     xai_message_delivery_core::TerminalCause::HardTeardown,
+@@ -2315,6 +2317,7 @@
+                                 xai_message_delivery_core::TerminalCause::ActorDrop,
+                             )
+                             .await;
++                        session.release_computer_use_on_close().await;
+                         // Completion channel closed: full feedback teardown so the final signal sync and upload drain still run
+                         // Cancel alone does not force-sync; shutdown owns that
+                         // No session-end hooks here, but the flush still precedes `shutdown_workflows`, which makes a queued report's entry durable
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/turn_end.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/turn_end.rs
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/turn_end.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/turn_end.rs
+@@ -195,6 +195,13 @@
+             );
+             return false;
+         };
++
++        let removed = matches!(&result, Ok(ok) if matches!(ok.completion_kind, PromptCompletionKind::RemovedFromQueue));
++        if !removed {
++            let interrupted =
++                matches!(&result, Ok(ok) if ok.stop_reason == acp::StopReason::Cancelled);
++            self.release_computer_use(&prompt_id, interrupted).await;
++        }
+ 
+         let result = result.map(|mut ok| {
+             ok.tool_overrides = self.effective_tool_overrides();
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/cua_cleanup_lifecycle_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/cua_cleanup_lifecycle_tests.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/cua_cleanup_lifecycle_tests.rs
+@@ -0,0 +1,158 @@
++use super::*;
++
++async fn attach_cua(
++    h: &Harness,
++) -> (
++    Arc<parking_lot::Mutex<Vec<serde_json::Value>>>,
++    Arc<tokio::sync::Notify>,
++) {
++    use axum::response::IntoResponse;
++    use xai_grok_mcp::servers::{HttpConfig, McpClient, McpClientTimeoutOverrides};
++    let calls = Arc::new(parking_lot::Mutex::new(Vec::new()));
++    let release = Arc::new(tokio::sync::Notify::new());
++    let capture = calls.clone();
++    let gate = release.clone();
++    let app = axum::Router::new().route("/mcp", axum::routing::post(move |axum::Json(req): axum::Json<serde_json::Value>| {
++        let capture = capture.clone();
++        let gate = gate.clone();
++        async move {
++            let id = req["id"].clone();
++            match req["method"].as_str() {
++                Some("initialize") => axum::Json(serde_json::json!({"jsonrpc":"2.0","id":id,"result":{
++                    "protocolVersion":req["params"]["protocolVersion"],"capabilities":{},"serverInfo":{"name":"cua-fixture","version":"1"}
++                }})).into_response(),
++                Some("tools/call") => {
++                    capture.lock().push(req["params"].clone());
++                    gate.notified().await;
++                    axum::Json(serde_json::json!({"jsonrpc":"2.0","id":id,"result":{"content":[],"isError":false}})).into_response()
++                }
++                _ => axum::http::StatusCode::ACCEPTED.into_response(),
++            }
++        }
++    }));
++    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
++    tokio::task::spawn_local(async move {
++        axum::serve(listener, app).await.unwrap();
++    });
++    let client = Arc::new(McpClient::new_http(
++        "cua_repl".into(),
++        HttpConfig {
++            url,
++            ..Default::default()
++        },
++        Some(&McpClientTimeoutOverrides {
++            startup_timeout_sec: Some(2),
++            ..Default::default()
++        }),
++        None,
++    ));
++    client.ensure_initialized().await.unwrap();
++    h.actor
++        .mcp_state
++        .lock()
++        .await
++        .owned_clients
++        .insert("cua_repl".into(), client);
++    (calls, release)
++}
++
++async fn wait_for_cleanup(calls: &parking_lot::Mutex<Vec<serde_json::Value>>) {
++    tokio::time::timeout(std::time::Duration::from_secs(2), async {
++        while calls.lock().is_empty() {
++            tokio::task::yield_now().await;
++        }
++    })
++    .await
++    .unwrap();
++}
++
++fn completed() -> PromptTurnResult {
++    Ok(PromptTurnOk {
++        stop_reason: acp::StopReason::EndTurn,
++        total_tokens: 0,
++        turn_snapshot: None,
++        completion_kind: PromptCompletionKind::Completed,
++        structured_output: None,
++        usage: None,
++        tool_overrides: None,
++    })
++}
++
++#[tokio::test(flavor = "current_thread")]
++async fn cua_cleanup_completion_and_failure_precede_prompt_response() {
++    run(async {
++        for failed in [false, true] {
++            let h = Harness::new().await;
++            let (calls, release) = attach_cua(&h).await;
++            let mut response = h.queue_turn("cua-prompt").await;
++            let actor = h.actor.clone();
++            let epoch = actor.turn_report.epoch();
++            let identity = completion_identity(&actor);
++            let task = tokio::task::spawn_local(async move {
++                actor
++                    .handle_completion(
++                        "cua-prompt".into(),
++                        epoch,
++                        &identity,
++                        if failed {
++                            Err(acp::Error::internal_error())
++                        } else {
++                            completed()
++                        },
++                        Some(0),
++                    )
++                    .await
++            });
++            wait_for_cleanup(&calls).await;
++            assert!(matches!(
++                response.try_recv(),
++                Err(tokio::sync::oneshot::error::TryRecvError::Empty)
++            ));
++            assert_eq!(calls.lock()[0]["arguments"]["turn_id"], "cua-prompt");
++            assert_eq!(calls.lock()[0]["arguments"]["hook_event_name"], "Stop");
++            release.notify_one();
++            assert!(task.await.unwrap());
++            assert_eq!(response.await.unwrap().is_err(), failed);
++        }
++    })
++    .await;
++}
++
++#[tokio::test(flavor = "current_thread")]
++async fn cua_cleanup_cancel_and_close_use_interrupt() {
++    run(async {
++        let h = Harness::new().await;
++        let (calls, release) = attach_cua(&h).await;
++        let mut response = h.queue_turn("cancelled-cua").await;
++        let actor = h.actor.clone();
++        let task = tokio::task::spawn_local(async move {
++            actor
++                .cancel_running_task(crate::session::CancelOptions {
++                    cancel_subagents: true,
++                    kill_background_tasks: true,
++                    history: crate::session::CancelHistoryDisposition::Keep,
++                    trigger: Some(CancelTrigger::Esc),
++                    user_initiated: true,
++                })
++                .await
++        });
++        wait_for_cleanup(&calls).await;
++        assert!(matches!(
++            response.try_recv(),
++            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
++        ));
++        assert_eq!(calls.lock()[0]["arguments"]["hook_event_name"], "Interrupt");
++        release.notify_one();
++        task.await.unwrap();
++        assert_eq!(
++            response.await.unwrap().unwrap().stop_reason,
++            acp::StopReason::Cancelled
++        );
++        calls.lock().clear();
++        release.notify_one();
++        h.actor.release_computer_use_on_close().await;
++        assert_eq!(calls.lock()[0]["arguments"]["hook_event_name"], "Interrupt");
++    })
++    .await;
++}
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/turn_end_reporting_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/turn_end_reporting_tests.rs
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/turn_end_reporting_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/turn_end_reporting_tests.rs
+@@ -1136,3 +1136,6 @@
+     })
+     .await;
+ }
++
++#[path = "cua_cleanup_lifecycle_tests.rs"]
++mod cua_cleanup_lifecycle_tests;

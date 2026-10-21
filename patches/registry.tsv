@@ -38,3 +38,5 @@ base-sha	2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8
 0022	0022-background-task-process-group-cleanup	patches/0022-background-task-process-group-cleanup.patch
 0023	0023-usage-limit-retry-prompt-lifetime	patches/0023-usage-limit-retry-prompt-lifetime.patch
 0024	0024-content-filter-turn-recovery	patches/0024-content-filter-turn-recovery.patch
+0025	0025-mcp-elicitation-persist	patches/0025-mcp-elicitation-persist.patch
+0026	0026-cua-turn-end-release	patches/0026-cua-turn-end-release.patch

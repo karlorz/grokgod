@@ -10,6 +10,7 @@ sync. Persist status is exposed via the `grok status` persist block
 
 Patch `0023` additionally exposes `0023-usage-limit-retry-prompt-lifetime: applied|missing`.
 Patch `0024` additionally exposes `0024-content-filter-turn-recovery: applied|missing`.
+Patch `0025` additionally exposes `0025-mcp-elicitation-persist: applied|missing`.
 
 ## Keep — grok-build source patch (re-apply on update)
 
@@ -39,6 +40,9 @@ Patch `0024` additionally exposes `0024-content-filter-turn-recovery: applied|mi
 | `0022` | `patches/0022-background-task-process-group-cleanup.patch` | Terminate the full process group on background task kill and actor cleanup | Killing a background task or shutting down the actor must terminate descendant processes in the spawned process group rather than only the top-level shell, preventing leaked child processes. |
 | `0023` | `patches/0023-usage-limit-retry-prompt-lifetime.patch` | Retain an independent exact-payload retry snapshot after assistant/tool activity and auto-compaction clear the cancellation rewind buffer | Paid/free usage-limit failures must retain the original text, images, and chips for the existing explicit one-shot retry in the same session; completion, ordinary failure, cancellation, and session resets clear the snapshot. |
 | `0024` | `patches/0024-content-filter-turn-recovery.patch` | `[compat.content_filter] action=retry_then_error` with `max_retries=3` (default) resamples empty ContentFilter turns up to 3 times before failing, stashes the prompt, and offers Switch model & retry / Try Again | Gemini/Antigravity CPA SAFETY completions currently finish as Refusal and kill the session; credit-limit stash (0016/0023) does not cover content-safety. |
+| `0025` | `patches/0025-mcp-elicitation-persist.patch` | Forward Computer Use MCP persist scopes onto ACP `_x.ai/mcp/elicit` and return selected `session`/`always` as MCP `_meta.persist` | Stock Grok drops MCP `_meta`; CodexHost cannot honestly show Always without a native persist round-trip. |
+
+| `0026` | `patches/0026-cua-turn-end-release.patch` | Release the user-installed cua_repl connection at native turn boundaries, with matching turn metadata and a bounded Mac Sky native release bridge | Grok MCP clients persist across turns; the installed Mac Sky runtime does not release control on the hidden tool alone. |
 
 Base SHA: see `patches/README.md` (`2bdd1d6a`). Source mode still tracks the moving `origin/main`; this is the patch-authorship pin. Fail closed on `git apply --check`. Daily CI `.github/workflows/compat-daily.yml` runs `git apply --check` of `patches/*.patch` against latest `xai-org/grok-build` `origin/main`.
 

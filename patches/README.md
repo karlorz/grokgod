@@ -38,10 +38,13 @@ files, from the order below, or from `PINNED_BASE_SHA`.
 - `0022-background-task-process-group-cleanup.patch`: Terminates the full process group on background task kill and actor cleanup so leaked child processes spawned by background tasks do not survive actor teardown.
 - `0023-usage-limit-retry-prompt-lifetime.patch`: Retains an independent exact-payload retry snapshot after assistant/tool activity and auto-compaction clear the cancellation rewind buffer. Transfers it to the usage-limit stash before terminal cleanup for paid/free failures, preserving combined text, images, and chips; completion, ordinary failure, cancellation, and session resets clear it. Explicit retry consumes the stash once without creating or replacing the session.
 - `0024-content-filter-turn-recovery.patch`: Empty `StopReason::ContentFilter` recovery via `[compat.content_filter] action` (`retry_then_error` default, `error`, `retry`, `notice`), `max_retries` (default 3), and env `GROK_CONTENT_FILTER_ACTION`. Default `retry_then_error` auto-resamples empty ContentFilter up to 3 times before failing the turn, stashing the exact prompt, and offering Switch model & retry / Try Again on a dedicated pager card (not the credit-limit upsell). Overlay allowlist `compat.content_filter.action` / `max_retries`.
+- `0025-mcp-elicitation-persist.patch`: Forward Computer Use MCP `_meta.persist` (`session`/`always`) onto ACP `_x.ai/mcp/elicit` as a first-class offer array, and return a selected scalar on accept as MCP `_meta.persist`. Allow once stays accept with no persist. TUI one-shot cards stay allow-once. Unknown tokens are dropped; unoffered selections cancel.
+
+- `0026-cua-turn-end-release.patch`: Await hidden `cua_repl.turn_ended` on native turn completion, failure, cancellation, and Session close. Carry matching session/prompt MCP metadata. On macOS, wrap the configured trusted Sky service with its native `ComputerUseIPCCodexTurnEndedRequest` bridge; preserve MCP/REPL state and elicitation. Missing cleanup blocks tool admission; cleanup errors disable the connection.
 
 ## Target Commit
 
-- Base commit: `grok-build` commit `2bdd1d6a` (`2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8`) — origin/main after the 1.0.45 pin; patches 0001–0024 are authored/rebased against this base. Source mode still tracks the moving `origin/main`; this is the patch-authorship/release pin.
+- Base commit: `grok-build` commit `2bdd1d6a` (`2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8`) — origin/main after the 1.0.45 pin; patches 0001–0026 are authored/rebased against this base. Source mode still tracks the moving `origin/main`; this is the patch-authorship/release pin.
 
 ## Verification
 
