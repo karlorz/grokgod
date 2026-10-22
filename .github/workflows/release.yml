@@ -53,11 +53,22 @@ jobs:
       # grok-build's dotslash manifest does not include macos-x86_64 or Windows.
       # Pin the same protoc version as bin/protoc and select it explicitly.
       - name: Install protoc 29.3
-        id: protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.3"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          case "$RUNNER_OS/$RUNNER_ARCH" in
+            Linux/X64) archive="protoc-29.3-linux-x86_64.zip" ;;
+            Linux/ARM64) archive="protoc-29.3-linux-aarch_64.zip" ;;
+            macOS/X64) archive="protoc-29.3-osx-x86_64.zip" ;;
+            macOS/ARM64) archive="protoc-29.3-osx-aarch_64.zip" ;;
+            Windows/X64) archive="protoc-29.3-win64.zip" ;;
+            *) echo "::error::Unsupported protoc platform: $RUNNER_OS/$RUNNER_ARCH"; exit 1 ;;
+          esac
+          curl --fail --location --retry 5 --retry-all-errors \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v29.3/$archive" \
+            --output "$RUNNER_TEMP/protoc.zip"
+          python -m zipfile -e "$RUNNER_TEMP/protoc.zip" "$RUNNER_TEMP/protoc"
+          chmod +x "$RUNNER_TEMP/protoc/bin/"* || true
+          echo "$RUNNER_TEMP/protoc/bin" >> "$GITHUB_PATH"
 
       - name: Verify protoc
         shell: bash
