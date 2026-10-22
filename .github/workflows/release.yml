@@ -273,6 +273,10 @@ jobs:
           fi
 
           {
+            if [ -f ".github/release-notes/${tag}.md" ]; then
+              cat ".github/release-notes/${tag}.md"
+              echo
+            fi
             echo "## Changes"
             echo
             if [ -n "$prev" ]; then

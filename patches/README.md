@@ -39,7 +39,6 @@ files, from the order below, or from `PINNED_BASE_SHA`.
 - `0023-usage-limit-retry-prompt-lifetime.patch`: Retains an independent exact-payload retry snapshot after assistant/tool activity and auto-compaction clear the cancellation rewind buffer. Transfers it to the usage-limit stash before terminal cleanup for paid/free failures, preserving combined text, images, and chips; completion, ordinary failure, cancellation, and session resets clear it. Explicit retry consumes the stash once without creating or replacing the session.
 - `0024-content-filter-turn-recovery.patch`: Empty `StopReason::ContentFilter` recovery via `[compat.content_filter] action` (`retry_then_error` default, `error`, `retry`, `notice`), `max_retries` (default 3), and env `GROK_CONTENT_FILTER_ACTION`. Default `retry_then_error` auto-resamples empty ContentFilter up to 3 times before failing the turn, stashing the exact prompt, and offering Switch model & retry / Try Again on a dedicated pager card (not the credit-limit upsell). Overlay allowlist `compat.content_filter.action` / `max_retries`.
 - `0025-mcp-elicitation-persist.patch`: Forward Computer Use MCP `_meta.persist` (`session`/`always`) onto ACP `_x.ai/mcp/elicit` as a first-class offer array, and return a selected scalar on accept as MCP `_meta.persist`. Allow once stays accept with no persist. TUI one-shot cards stay allow-once. Unknown tokens are dropped; unoffered selections cancel.
-
 - `0026-cua-turn-end-release.patch`: Await hidden `cua_repl.turn_ended` on native turn completion, failure, cancellation, and Session close. Carry matching session/prompt MCP metadata. On macOS, wrap the configured trusted Sky service with its native `ComputerUseIPCCodexTurnEndedRequest` bridge; preserve MCP/REPL state and elicitation. Missing cleanup blocks tool admission; cleanup errors disable the connection.
 
 ## Target Commit
@@ -74,3 +73,14 @@ To regenerate or update a patch:
 ## Fail-Closed Policy
 
 All patch applications must fail closed: if `git apply --check` or `git apply` exits with a non-zero status, build pipelines must halt immediately without building or distributing modified binaries.
+
+## Computer Use verification limits
+
+Patches 0025 and 0026 have focused native tests, full-stack application checks,
+and a verified Mac source build. Direct native probes verified ended-turn input
+rejection while REPL bindings survive. Full Clock-through-ACP completion,
+cancellation, next-turn reuse, and visible overlay disappearance remain pending.
+The macOS release bridge depends on the installed private Sky IPC contract;
+Windows and Linux use the hidden notification without live acceptance evidence.
+Cleanup is bounded to three seconds; there is no active-turn idle timer or
+SIGKILL cleanup guarantee.

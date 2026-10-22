@@ -91,6 +91,11 @@ try {
 JS
 }
 
+if ! git -C "$REAL_GROK_BUILD" rev-parse --git-dir >/dev/null 2>&1 &&
+   git -C /tmp/grok-build-2bdd1d6a rev-parse --git-dir >/dev/null 2>&1; then
+  REAL_GROK_BUILD=/tmp/grok-build-2bdd1d6a
+fi
+
 if git -C "$REAL_GROK_BUILD" rev-parse --git-dir >/dev/null 2>&1; then
   TMP_WT="$(mktemp -d -t grokgod-test-0026-wt-XXXXXX)"
   cleanup() {
@@ -114,24 +119,6 @@ if git -C "$REAL_GROK_BUILD" rev-parse --git-dir >/dev/null 2>&1; then
   echo "PASS: 0026 applies after full predecessor stack at $PIN_SHA"
 else
   echo "SKIP: real grok-build checkout unavailable"
-  # Still apply-check against a throwaway clone if present.
-  if git -C /tmp/grok-build-2bdd1d6a rev-parse --git-dir >/dev/null 2>&1; then
-    TMP_WT="$(mktemp -d -t grokgod-test-0026-clone-XXXXXX)"
-    git -C /tmp/grok-build-2bdd1d6a worktree add --detach "$TMP_WT" "$PIN_SHA" >/dev/null
-    cleanup() { git -C /tmp/grok-build-2bdd1d6a worktree remove --force "$TMP_WT" >/dev/null 2>&1 || true; }
-    trap cleanup EXIT INT TERM
-    for predecessor in "$REPO_ROOT"/patches/*.patch; do
-      [ -f "$predecessor" ] || continue
-      [ "$predecessor" = "$PATCH_0026" ] && break
-      git -C "$TMP_WT" apply --check "$predecessor"
-      git -C "$TMP_WT" apply "$predecessor"
-    done
-    git -C "$TMP_WT" apply --check "$PATCH_0026"
-    git -C "$TMP_WT" apply "$PATCH_0026"
-    git -C "$TMP_WT" diff --check
-  verify_sky_bridge "$TMP_WT"
-    echo "PASS: 0026 applies after full predecessor stack on /tmp clone"
-  fi
 fi
 
 echo "=== Patch 0026 tests passed ==="
