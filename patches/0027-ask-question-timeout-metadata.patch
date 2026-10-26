@@ -1,0 +1,364 @@
+diff --git a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
+index 69759e2..79a26df 100644
+--- a/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
++++ b/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
+@@ -738,6 +738,7 @@ fn make_ask_user_question_args(
+                 multi_select: Some(false),
+                             id: None,
+             }],
++        timeout: None,
+     };
+     let (tx, rx) = tokio::sync::oneshot::channel();
+     let ext = acp::ExtRequest::new(
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
+index 05f64af..9c54d54 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
+@@ -2371,6 +2371,9 @@ pub(crate) async fn spawn_session_actor(
+                     tool_call_id: request.tool_call_id.clone(),
+                     questions: request.questions.clone(),
+                     mode,
++                    // Countdown metadata as resolved by the tool from its effective
++                    // params; the coordinator does no config resolution of its own.
++                    timeout: request.timeout,
+                 };
+                 debug_assert!(
+                     !ext_req.session_id.is_empty(),
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/reverse_request_session_id_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/reverse_request_session_id_tests.rs
+index 8bffd52..8d9af0d 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/reverse_request_session_id_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/reverse_request_session_id_tests.rs
+@@ -13,6 +13,7 @@ fn ask_user_question_request_carries_session_id() {
+         tool_call_id: "call-1".to_string(),
+         questions: vec![],
+         mode: AskUserQuestionMode::Default,
++        timeout: None,
+     };
+     assert!(!req.session_id.is_empty());
+     // Wire format is camelCase (`sessionId`); Tier-2 routing reads it.
+diff --git a/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/mod.rs b/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/mod.rs
+index 51289d4..9ee9324 100644
+--- a/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/mod.rs
++++ b/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/mod.rs
+@@ -31,9 +31,9 @@ pub mod format;
+ pub mod types;
+ 
+ pub use types::{
+-    AskUserQuestionExtRequest, AskUserQuestionExtResponse, AskUserQuestionMode, QuestionAnnotation,
+-    UserQuestionError, UserQuestionRequest, UserQuestionResponse, UserQuestionResult,
+-    UserQuestionSender,
++    AskUserQuestionExtRequest, AskUserQuestionExtResponse, AskUserQuestionMode,
++    AskUserQuestionTimeout, QuestionAnnotation, UserQuestionError, UserQuestionRequest,
++    UserQuestionResponse, UserQuestionResult, UserQuestionSender,
+ };
+ 
+ use crate::notification::types::UserQuestionAsked;
+@@ -214,6 +214,36 @@ impl AskUserQuestionParams {
+             .or_else(timeout_reset_on_activity_from_env)
+             .unwrap_or(DEFAULT_ASK_USER_QUESTION_TIMEOUT_RESET_ON_ACTIVITY)
+     }
++
++    /// Client countdown metadata for the same budget [`Self::wait_budget`] arms.
++    /// `None` when the timer is disabled, so the wire field is omitted and a
++    /// client keeps its legacy payload.
++    pub fn timeout_metadata(&self) -> Option<AskUserQuestionTimeout> {
++        ask_user_question_timeout(self.wait_budget()?, self.resolved_timeout_action())
++    }
++}
++
++/// Convert a wait budget into the optional wire countdown deadline.
++///
++/// The deadline is wall-clock (the client renders it), derived from the same
++/// duration the native monotonic timer sleeps for. `None` when the sum leaves
++/// the signed 64-bit millisecond range, so a bogus budget can never emit an
++/// overflowing timestamp.
++pub fn ask_user_question_timeout(
++    budget: std::time::Duration,
++    action: TimeoutAction,
++) -> Option<AskUserQuestionTimeout> {
++    let now_ms = std::time::SystemTime::now()
++        .duration_since(std::time::UNIX_EPOCH)
++        .ok()?
++        .as_millis();
++    let now_ms = i128::try_from(now_ms).ok()?;
++    let budget_ms = i128::try_from(budget.as_millis()).ok()?;
++    let deadline = i64::try_from(now_ms.checked_add(budget_ms)?).ok()?;
++    Some(AskUserQuestionTimeout {
++        deadline_unix_ms: deadline,
++        action,
++    })
+ }
+ 
+ /// A single option within a question.
+@@ -467,12 +497,25 @@ impl xai_tool_runtime::Tool for AskUserQuestionTool {
+         let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+         let (activity_tx, mut activity_rx) = tokio::sync::mpsc::unbounded_channel();
+ 
++        // Shell-injected params win; absent or unset fields keep the legacy
++        // env→default budget so non-shell registry consumers are unchanged.
++        // Read once here: the same effective params drive the native timer and
++        // the countdown metadata the coordinator forwards to the client.
++        let params = {
++            let res = resources.lock().await;
++            res.get::<crate::types::resources::Params<AskUserQuestionParams>>()
++                .map(|p| p.0)
++                .unwrap_or_default()
++        };
++        let wait = params.wait_budget();
++
+         // ── Step 4: Send UserQuestionRequest ────────────────────────────
+         let request = types::UserQuestionRequest {
+             tool_call_id: ctx.call_id.as_str().to_owned(),
+             questions: input.questions.clone(),
+             result_tx,
+             activity_tx,
++            timeout: params.timeout_metadata(),
+         };
+ 
+         if sender.0.send(request).is_err() {
+@@ -482,8 +525,8 @@ impl xai_tool_runtime::Tool for AskUserQuestionTool {
+             ));
+         }
+ 
+-        // ── Step 5: Emit UserQuestionAsked + read the wait budget ───────
+-        let params = {
++        // ── Step 5: Emit UserQuestionAsked ──────────────────────────────
++        {
+             let questions_json = serde_json::to_value(&input.questions)
+                 .unwrap_or_else(|_| serde_json::Value::Array(vec![]));
+             let res = resources.lock().await;
+@@ -493,13 +536,7 @@ impl xai_tool_runtime::Tool for AskUserQuestionTool {
+                     questions_json,
+                 });
+             }
+-            // Shell-injected params win; absent or unset fields keep the legacy
+-            // env→default budget so non-shell registry consumers are unchanged.
+-            res.get::<crate::types::resources::Params<AskUserQuestionParams>>()
+-                .map(|p| p.0)
+-                .unwrap_or_default()
+-        };
+-        let wait = params.wait_budget();
++        }
+         // One wording for both unanswered paths (cancel + timeout below).
+         let unanswered = format::unanswered_text(params.non_interactive.unwrap_or(false));
+         tracing::info!(
+@@ -1453,6 +1490,82 @@ mod tests {
+ 
+     /// Idle-reset: timeout_secs=5, activity ping at 4s restarts the 5s timer,
+     /// so an answer at total 8s still succeeds (would have elapsed at 5s).
++    // ── Client countdown metadata tests ──────────────────────────────────
++
++    /// Disabled timer emits no countdown metadata, and so does a budget whose
++    /// millisecond conversion cannot be represented.
++    #[test]
++    fn timeout_metadata_absent_when_timer_disabled() {
++        let params = AskUserQuestionParams {
++            timeout_enabled: Some(false),
++            timeout_secs: Some(30),
++            timeout_action: None,
++            timeout_reset_on_activity: None,
++            non_interactive: None,
++        };
++        assert!(params.timeout_metadata().is_none());
++    }
++
++    /// The countdown deadline is derived from the same effective budget the
++    /// native timer sleeps for, and carries the resolved action.
++    #[test]
++    fn timeout_metadata_matches_effective_budget_and_action() {
++        let budget = std::time::Duration::from_secs(90);
++        let before = std::time::SystemTime::now()
++            .duration_since(std::time::UNIX_EPOCH)
++            .unwrap()
++            .as_millis() as i64;
++        let meta = ask_user_question_timeout(budget, TimeoutAction::Recommended).expect("metadata");
++        let after = std::time::SystemTime::now()
++            .duration_since(std::time::UNIX_EPOCH)
++            .unwrap()
++            .as_millis() as i64;
++
++        assert_eq!(meta.action, TimeoutAction::Recommended);
++        assert!(
++            meta.deadline_unix_ms >= before + 90_000 && meta.deadline_unix_ms <= after + 90_000,
++            "deadline {} outside [{}, {}]",
++            meta.deadline_unix_ms,
++            before + 90_000,
++            after + 90_000
++        );
++    }
++
++    /// A budget that would overflow the wire timestamp yields no metadata
++    /// instead of a wrapped deadline.
++    #[test]
++    fn timeout_metadata_rejects_overflowing_deadline() {
++        let budget = std::time::Duration::from_secs(u64::MAX / 2);
++        assert!(ask_user_question_timeout(budget, TimeoutAction::Decline).is_none());
++    }
++
++    /// The request the tool hands the coordinator carries the countdown so the
++    /// coordinator never re-resolves config.
++    #[tokio::test(start_paused = true)]
++    async fn request_carries_resolved_countdown_metadata() {
++        let (shared, mut rx) = resources_with_sender_and_params(AskUserQuestionParams {
++            timeout_enabled: Some(true),
++            timeout_secs: Some(120),
++            timeout_action: Some(TimeoutAction::Recommended),
++            timeout_reset_on_activity: None,
++            non_interactive: None,
++        });
++        let tool = AskUserQuestionTool;
++        let input = AskUserQuestionInput {
++            questions: vec![make_question("Pick?", &["A", "B"])],
++            use_id_keyed_format: false,
++        };
++        let handle = tokio::spawn(async move {
++            xai_tool_runtime::Tool::run(&tool, test_ctx_with_call_id(shared, "tc-meta"), input).await
++        });
++
++        let request = rx.recv().await.expect("should receive request");
++        let timeout = request.timeout.expect("countdown metadata");
++        assert_eq!(timeout.action, TimeoutAction::Recommended);
++        assert!(timeout.deadline_unix_ms > 0);
++        handle.abort();
++    }
++
+     #[tokio::test(start_paused = true)]
+     async fn idle_reset_activity_ping_restarts_timeout() {
+         let (shared, mut rx) = resources_with_sender_and_params(AskUserQuestionParams {
+diff --git a/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/types.rs b/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/types.rs
+index ac583b4..a622622 100644
+--- a/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/types.rs
++++ b/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/types.rs
+@@ -43,6 +43,20 @@ pub enum AskUserQuestionMode {
+     Plan,
+ }
+ 
++/// Optional countdown metadata for the questionnaire timer. Additive and backward compatible: it is
++/// omitted when the timer is disabled, so a client that predates the field sees the same payload as
++/// before. The native tool timer stays authoritative; this only lets a client render a countdown.
++#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct AskUserQuestionTimeout {
++    /// Absolute deadline in Unix milliseconds (wall clock), derived from the same budget the native
++    /// timer uses. The tool can end the wait a few milliseconds after this instant because the timer
++    /// starts when the request is dispatched.
++    pub deadline_unix_ms: i64,
++    /// What the tool does when the native timer expires.
++    pub action: super::TimeoutAction,
++}
++
+ /// ACP `ext_method` request payload (shell coordinator sends to client/pager).
+ ///
+ /// Serialized as `camelCase` for the ACP JSON-RPC wire format.
+@@ -54,6 +68,9 @@ pub struct AskUserQuestionExtRequest {
+     pub questions: Vec<Question>,
+     /// Controls whether the client shows plan-mode-only actions.
+     pub mode: AskUserQuestionMode,
++    /// Countdown metadata; absent when the questionnaire timer is disabled.
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub timeout: Option<AskUserQuestionTimeout>,
+ }
+ 
+ /// Accepts both `"value"` (old wire format) and `["value"]` (new wire format)
+@@ -171,6 +188,9 @@ pub struct UserQuestionRequest {
+     pub result_tx: oneshot::Sender<UserQuestionResult>,
+     #[educe(Debug(ignore))]
+     pub activity_tx: mpsc::UnboundedSender<()>,
++    /// Countdown metadata resolved by the tool from its effective params. The coordinator copies it
++    /// onto the ACP request verbatim so config resolution stays in one place.
++    pub timeout: Option<AskUserQuestionTimeout>,
+ }
+ 
+ // ── Resource type ────────────────────────────────────────────────────────
+@@ -297,6 +317,7 @@ mod tests {
+             tool_call_id: "tc-1".to_string(),
+             questions: vec![],
+             mode: AskUserQuestionMode::Plan,
++            timeout: None,
+         };
+         let json = serde_json::to_value(&req).unwrap();
+         // camelCase field names
+@@ -312,6 +333,7 @@ mod tests {
+             tool_call_id: "tc-1".to_string(),
+             questions: sample_questions(),
+             mode: AskUserQuestionMode::Default,
++            timeout: None,
+         };
+         let json = serde_json::to_string(&req).unwrap();
+         let back: AskUserQuestionExtRequest = serde_json::from_str(&json).unwrap();
+@@ -321,6 +343,75 @@ mod tests {
+         assert_eq!(back.mode, AskUserQuestionMode::Default);
+     }
+ 
++    /// Timer disabled (`None`) keeps the legacy payload: the field is omitted
++    /// entirely rather than serialized as `null`.
++    #[test]
++    fn ext_request_omits_timeout_when_absent() {
++        let req = AskUserQuestionExtRequest {
++            session_id: "sess-1".to_string(),
++            tool_call_id: "tc-1".to_string(),
++            questions: vec![],
++            mode: AskUserQuestionMode::Default,
++            timeout: None,
++        };
++        let json = serde_json::to_value(&req).unwrap();
++        assert!(
++            json.get("timeout").is_none(),
++            "absent timeout must be omitted: {json}"
++        );
++    }
++
++    /// Older clients that never send `timeout` still parse: the field is optional.
++    #[test]
++    fn ext_request_deserializes_without_timeout() {
++        let json = serde_json::json!({
++            "sessionId": "sess-1",
++            "toolCallId": "tc-1",
++            "questions": [],
++            "mode": "default"
++        });
++        let req: AskUserQuestionExtRequest = serde_json::from_value(json).unwrap();
++        assert!(req.timeout.is_none());
++    }
++
++    #[test]
++    fn ext_request_timeout_round_trips_camel_case() {
++        let req = AskUserQuestionExtRequest {
++            session_id: "sess-1".to_string(),
++            tool_call_id: "tc-1".to_string(),
++            questions: vec![],
++            mode: AskUserQuestionMode::Default,
++            timeout: Some(AskUserQuestionTimeout {
++                deadline_unix_ms: 1_767_225_600_000,
++                action: super::super::TimeoutAction::Recommended,
++            }),
++        };
++        let json = serde_json::to_value(&req).unwrap();
++        let timeout = json.get("timeout").expect("timeout present");
++        assert_eq!(
++            timeout.get("deadlineUnixMs").and_then(|v| v.as_i64()),
++            Some(1_767_225_600_000)
++        );
++        assert_eq!(
++            timeout.get("action").and_then(|v| v.as_str()),
++            Some("recommended")
++        );
++        let back: AskUserQuestionExtRequest = serde_json::from_value(json).unwrap();
++        assert_eq!(back.timeout, req.timeout);
++    }
++
++    #[test]
++    fn ext_request_timeout_rejects_unknown_action() {
++        let json = serde_json::json!({
++            "sessionId": "s",
++            "toolCallId": "tc",
++            "questions": [],
++            "mode": "default",
++            "timeout": { "deadlineUnixMs": 1, "action": "ignore" }
++        });
++        assert!(serde_json::from_value::<AskUserQuestionExtRequest>(json).is_err());
++    }
++
+     // -- AskUserQuestionExtResponse serde --
+ 
+     #[test]

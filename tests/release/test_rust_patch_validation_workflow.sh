@@ -116,9 +116,17 @@ for test_name in registry_tests:
         f"cargo test -p xai-grok-tools --lib {test_name} -- --exact",
         f"exact xai-grok-tools registry test missing: {test_name}",
     )
-assert content.count("cargo test -p xai-grok-tools --lib") == len(registry_tests), (
-    "workflow must contain exactly the three focused xai-grok-tools registry test commands"
+require(
+    "cargo test -p xai-grok-tools --lib ask_user_question",
+    "focused native question timeout/activity tests missing",
 )
+assert content.count("cargo test -p xai-grok-tools --lib") == len(registry_tests) + 1, (
+    "workflow must contain three registry commands and focused question tests"
+)
+for patch_id in ("0027", "0028"):
+    assert f"sh tests/patches/test_{patch_id}_apply.sh" in test_content, (
+        f"patch {patch_id} apply test must run in repository CI"
+    )
 
 lower = content.lower()
 for forbidden in (
