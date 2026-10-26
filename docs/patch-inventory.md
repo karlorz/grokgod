@@ -13,6 +13,7 @@ Patch `0024` additionally exposes `0024-content-filter-turn-recovery: applied|mi
 Patch `0025` additionally exposes `0025-mcp-elicitation-persist: applied|missing`.
 Patch `0026` additionally exposes `0026-cua-turn-end-release: applied|missing`.
 Patch `0027` additionally exposes `0027-ask-question-timeout-metadata: applied|missing`.
+Patch `0028` additionally exposes `0028-ask-question-activity-ack: applied|missing`.
 
 ## Keep — grok-build source patch (re-apply on update)
 
@@ -79,4 +80,6 @@ ACP request `x.ai/ask_user_question_activity` (SDK wire `_x.ai/ask_user_question
 
 The existing per-session activity map carries optional oneshot acknowledgements and is cleaned by its completion guard. Locks end before awaiting. The timer uses its captured native budget/action and reports the just-reset monotonic sleep deadline. Timer-disabled, reset-disabled, non-interactive, unknown and closed questions cannot be reset by this request. The old notification remains compatible; neither path answers or cancels a question.
 
-Validation: `sh tests/patches/test_0028_apply.sh`; focused Rust serde and paused-time acknowledgement/disabled tests run in Rust Patch Validation CI. Local production compilation and enabled/disabled native timing probes passed; local native unit execution was blocked by the 15 GiB disk guard. No build/install is required by this patch test.
+Terminal Grok continues to send activity notifications without requesting an acknowledgement. The native timer resets on that path too, subject to the same effective timeout/reset settings. Patches 0027 and 0028 expose timer state to compatible clients; patch 0011 continues to own timeout actions and recommended-option selection.
+
+Validation: `sh tests/patches/test_0028_apply.sh` checks the patch contract and application without a native build. [Rust Patch Validation CI](https://github.com/karlorz/grokgod/actions/runs/40342601536) passed all 92 focused `ask_user_question` tests with the complete patch stack, including recommended single-/multi-select expiry, timeout disabled, acknowledged activity reset, and reset disabled. Native timing probes also passed with reset enabled and disabled. The checksum-verified v1.0.55 macOS ARM64 release binary passed live `flash-max` terminal tests through a PTY: an 8-second idle timeout selected the recommended option; interaction at 4 seconds postponed expiry to 12 seconds when reset was enabled and left expiry at 8 seconds when disabled; timeout-disabled waited beyond that budget and accepted a manual answer; multi-select expiry selected both recommended options. These terminal checks cover the notification path as well as the native timer, without changing the user's normal configuration.

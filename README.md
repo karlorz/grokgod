@@ -69,7 +69,7 @@ Mach-O hex.
 
 ### Persist (what you get)
 
-Grouped; patch ids in the last column. Engine patches have no `patches.json`; full numbered inventory stays in [`docs/patch-inventory.md`](docs/patch-inventory.md).
+Grouped by capability; patch IDs are in the last column. Engine patches are tracked in [`patches/registry.tsv`](patches/registry.tsv), with the full numbered inventory in [`docs/patch-inventory.md`](docs/patch-inventory.md).
 
 | Group | What you get | Patches |
 |-------|----------------|---------|
@@ -81,10 +81,24 @@ Grouped; patch ids in the last column. Engine patches have no `patches.json`; fu
 | Usage limits | Switch-model retry; prompt lifetime across compact | 0016, 0020, 0023 |
 | Content filter | Fail empty ContentFilter, stash, switch/retry | 0024 |
 | Platform | Windows protoc; process-group cleanup; idle-resume context window | 0012, 0021, 0022 |
-| UX | Ask-question timeout action; `-m` does not stick; welcome accent | 0011, 0015, 0017 |
+| Questions | Configurable timeout action and activity reset; effective deadline metadata and acknowledged resets for compatible ACP clients | 0011, 0027, 0028 |
+| MCP approvals | Forward offered persistence scopes and return the selected scope, enabling Always allow in compatible clients such as CodexHost | 0025 |
+| Computer Use | Turn-boundary cleanup and macOS Sky release bridge for `cua_repl` | 0026 |
+| UX | `-m` does not stick; welcome accent | 0015, 0017 |
 | Compat | Claude permissions import gate | 0008 |
 
 To drop an engine patch you rebuild without that file.
+
+Ask-question timeout settings apply to terminal Grok and ACP sessions. The native
+timer owns expiry and automatic recommended-option selection (0011). Deadline
+metadata (0027) lets compatible clients such as CodexHost display a countdown;
+reset acknowledgements (0028) let them synchronize it after the native timer
+resets. Terminal Grok keeps its existing activity notifications and does not
+need acknowledgements. These patches add no new timeout configuration keys.
+With `timeout_enabled = false`, there is no automatic timeout or countdown
+metadata; with `timeout_reset_on_activity = false`, interaction leaves the
+original deadline running. See the
+[activity reset contract](docs/patch-inventory.md#0028--native-question-activity-reset-acknowledgement).
 
 ### Suggested profile
 
@@ -219,7 +233,7 @@ Value vocabularies: `healthDetails` is always an array of diagnostic strings
 `launcherOwnership` is `shim`/`foreign`/`absent`, `signature` is
 `adhoc`/`signed`/`unsigned`/`unsupported`,
 `artifactHashMatchesRecord`/`signatureVerified` are `true`/`false`/`null`, and
-`persist` lists the 20 source patches plus `overlay-pin`, `eval-home`,
+`persist` lists the source patches in `patches/registry.tsv` plus `overlay-pin`, `eval-home`,
 `weekly-pin`, and `orca-pin` with the same statuses as the human report.
 
 `patchedBinaryVersion`, `officialBinary*` are `null`/`false` on POSIX: status
