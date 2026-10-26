@@ -40,3 +40,5 @@ base-sha	2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8
 0024	0024-content-filter-turn-recovery	patches/0024-content-filter-turn-recovery.patch
 0025	0025-mcp-elicitation-persist	patches/0025-mcp-elicitation-persist.patch
 0026	0026-cua-turn-end-release	patches/0026-cua-turn-end-release.patch
+0027	0027-ask-question-timeout-metadata	patches/0027-ask-question-timeout-metadata.patch
+0028	0028-ask-question-activity-ack	patches/0028-ask-question-activity-ack.patch

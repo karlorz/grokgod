@@ -1,0 +1,326 @@
+diff --git a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs
+--- a/crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs
+@@ -1995,6 +1995,36 @@
+         let mut backend_no_bridge_err: Option<acp::Error> = None;
+         let method = args.method.clone();
+         let result = match method.as_ref() {
++            "x.ai/ask_user_question_activity" => {
++                #[derive(serde::Deserialize)]
++                #[serde(rename_all = "camelCase")]
++                struct ActivityParams {
++                    session_id: String,
++                    tool_call_id: String,
++                }
++                let params: ActivityParams = serde_json::from_str(args.params.get())
++                    .map_err(|e| acp::Error::invalid_params().data(e.to_string()))?;
++                // Lookup is scoped to the owning session. Clone before awaiting so
++                // neither the session map nor the activity map is locked across await.
++                let tx = self.resident_handle(&acp::SessionId::new(params.session_id))
++                    .and_then(|handle| {
++                        let map = handle.question_activity_senders.lock()
++                            .unwrap_or_else(|e| e.into_inner());
++                        map.get(&params.tool_call_id).cloned()
++                    });
++                let timeout = if let Some(tx) = tx {
++                    let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
++                    if tx.send(Some(ack_tx)).is_ok() {
++                        tokio::time::timeout(std::time::Duration::from_secs(2), ack_rx)
++                            .await.ok().and_then(Result::ok).flatten()
++                    } else {
++                        None
++                    }
++                } else {
++                    None
++                };
++                crate::extensions::to_raw_response(&serde_json::json!({ "timeout": timeout }))
++            }
+             "x.ai/getApiKey" | "x.ai/setApiKey" => {
+                 crate::extensions::auth::handle(self, &args).await
+             }
+@@ -2562,7 +2592,7 @@
+                     .lock()
+                     .unwrap_or_else(|e| e.into_inner());
+                 if let Some(tx) = map.get(tool_call_id) {
+-                    let _ = tx.send(());
++                    let _ = tx.send(None);
+                 }
+             }
+         }
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session.rs b/crates/codegen/xai-grok-shell/src/session/acp_session.rs
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session.rs
+@@ -800,7 +800,9 @@
+     pub(crate) pending_interactions: crate::session::pending_interaction::PendingInteractions,
+     /// Open `ask_user_question` activity channels keyed by tool_call_id.
+     pub(crate) question_activity_senders: std::sync::Arc<
+-        std::sync::Mutex<std::collections::HashMap<String, tokio::sync::mpsc::UnboundedSender<()>>>,
++        std::sync::Mutex<std::collections::HashMap<String, tokio::sync::mpsc::UnboundedSender<
++            xai_grok_tools::implementations::grok_build::ask_user_question::UserQuestionActivity,
++        >>>,
+     >,
+     /// Gates product analytics, not trace uploads.
+     /// Resolved at spawn as `is_telemetry_enabled() && !is_zdr()`; ZDR teams always have this false.
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
+@@ -1553,7 +1553,9 @@
+     let pending_interactions: crate::session::pending_interaction::PendingInteractions =
+         std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+     let question_activity_senders: std::sync::Arc<
+-        std::sync::Mutex<std::collections::HashMap<String, tokio::sync::mpsc::UnboundedSender<()>>>,
++        std::sync::Mutex<std::collections::HashMap<String, tokio::sync::mpsc::UnboundedSender<
++            xai_grok_tools::implementations::grok_build::ask_user_question::UserQuestionActivity,
++        >>>,
+     > = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+     let permissions_for_handle = permissions.clone();
+     let (event_tx, event_rx) = mpsc::unbounded_channel::<SessionEvent>();
+@@ -2415,7 +2417,7 @@
+                             std::sync::Mutex<
+                                 std::collections::HashMap<
+                                     String,
+-                                    tokio::sync::mpsc::UnboundedSender<()>,
++                                    tokio::sync::mpsc::UnboundedSender<xai_grok_tools::implementations::grok_build::ask_user_question::UserQuestionActivity>,
+                                 >,
+                             >,
+                         >,
+@@ -2423,9 +2425,8 @@
+                     }
+                     impl Drop for ActivityCleanupGuard {
+                         fn drop(&mut self) {
+-                            if let Ok(mut map) = self.map.lock() {
+-                                map.remove(&self.tool_call_id);
+-                            }
++                            self.map.lock().unwrap_or_else(|e| e.into_inner())
++                                .remove(&self.tool_call_id);
+                         }
+                     }
+                     let _activity_guard = ActivityCleanupGuard {
+diff --git a/crates/codegen/xai-grok-shell/src/session/handle.rs b/crates/codegen/xai-grok-shell/src/session/handle.rs
+--- a/crates/codegen/xai-grok-shell/src/session/handle.rs
++++ b/crates/codegen/xai-grok-shell/src/session/handle.rs
+@@ -59,7 +59,9 @@
+     pub pending_interactions: crate::session::pending_interaction::PendingInteractions,
+     /// Open `ask_user_question` activity channels keyed by tool_call_id.
+     pub question_activity_senders: std::sync::Arc<
+-        std::sync::Mutex<std::collections::HashMap<String, tokio::sync::mpsc::UnboundedSender<()>>>,
++        std::sync::Mutex<std::collections::HashMap<String, tokio::sync::mpsc::UnboundedSender<
++            xai_grok_tools::implementations::grok_build::ask_user_question::UserQuestionActivity,
++        >>>,
+     >,
+     pub(crate) active_work: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+     pub info: crate::session::info::Info,
+diff --git a/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/mod.rs b/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/mod.rs
+--- a/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/mod.rs
++++ b/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/mod.rs
+@@ -33,7 +33,7 @@
+ pub use types::{
+     AskUserQuestionExtRequest, AskUserQuestionExtResponse, AskUserQuestionMode,
+     AskUserQuestionTimeout, QuestionAnnotation, UserQuestionError, UserQuestionRequest,
+-    UserQuestionResponse, UserQuestionResult, UserQuestionSender,
++    UserQuestionActivity, UserQuestionResponse, UserQuestionResult, UserQuestionSender,
+ };
+ 
+ use crate::notification::types::UserQuestionAsked;
+@@ -219,7 +219,10 @@
+     /// `None` when the timer is disabled, so the wire field is omitted and a
+     /// client keeps its legacy payload.
+     pub fn timeout_metadata(&self) -> Option<AskUserQuestionTimeout> {
+-        ask_user_question_timeout(self.wait_budget()?, self.resolved_timeout_action())
++        let mut timeout = ask_user_question_timeout(self.wait_budget()?, self.resolved_timeout_action())?;
++        timeout.reset_on_activity = Some(self.resolved_timeout_reset_on_activity()
++            && !self.non_interactive.unwrap_or(false));
++        Some(timeout)
+     }
+ }
+ 
+@@ -243,6 +246,7 @@
+     Some(AskUserQuestionTimeout {
+         deadline_unix_ms: deadline,
+         action,
++        reset_on_activity: None,
+     })
+ }
+ 
+@@ -508,6 +512,17 @@
+                 .unwrap_or_default()
+         };
+         let wait = params.wait_budget();
++        let action = params.resolved_timeout_action();
++        let reset_enabled = wait.is_some() && params.resolved_timeout_reset_on_activity()
++            && !params.non_interactive.unwrap_or(false);
++        if !reset_enabled {
++            activity_rx.close();
++        }
++        let timeout = wait.and_then(|budget| {
++            let mut timeout = ask_user_question_timeout(budget, action)?;
++            timeout.reset_on_activity = Some(reset_enabled);
++            Some(timeout)
++        });
+ 
+         // ── Step 4: Send UserQuestionRequest ────────────────────────────
+         let request = types::UserQuestionRequest {
+@@ -515,7 +530,7 @@
+             questions: input.questions.clone(),
+             result_tx,
+             activity_tx,
+-            timeout: params.timeout_metadata(),
++            timeout,
+         };
+ 
+         if sender.0.send(request).is_err() {
+@@ -548,8 +563,6 @@
+         // ── Step 6: Block on the oneshot result (whole batch, one timer) ─ A single pending-decision timeout covers the
+         // questionnaire, not per question: N questions in one call share one wait. A `None` budget (`timeout_enabled = false`)
+         // runs the same await with no timer. When armed, user activity resets the sleep deadline unless disabled.
+-        let reset_enabled = params.resolved_timeout_reset_on_activity()
+-            && !params.non_interactive.unwrap_or(false);
+ 
+         let result = match wait {
+             None => match result_rx.await {
+@@ -583,8 +596,20 @@
+                         }
+                         maybe_act = activity_rx.recv(), if reset_enabled && !activity_closed => {
+                             match maybe_act {
+-                                Some(()) => {
++                                Some(ack) => {
+                                     sleep_fut.as_mut().reset(tokio::time::Instant::now() + dur);
++                                    if let Some(ack) = ack {
++                                        // Read the just-reset monotonic sleep, using the effective
++                                        // action captured above; never re-resolve config for an ack.
++                                        let remaining = sleep_fut.deadline()
++                                            .saturating_duration_since(tokio::time::Instant::now());
++                                        let timeout = ask_user_question_timeout(remaining, action)
++                                            .map(|mut timeout| {
++                                                timeout.reset_on_activity = Some(true);
++                                                timeout
++                                            });
++                                        let _ = ack.send(timeout);
++                                    }
+                                 }
+                                 None => {
+                                     activity_closed = true;
+@@ -595,7 +620,7 @@
+                             tracing::info!(
+                                 question_count,
+                                 timeout_secs = ?wait.map(|d| d.as_secs()),
+-                                timeout_action = ?params.resolved_timeout_action(),
++                                timeout_action = ?action,
+                                 "User question timed out; continuing without answers"
+                             );
+                             // Drop the oneshot receiver on return. The shell coordinator races `result_tx.closed()` against ACP so it unblocks and
+@@ -603,7 +628,7 @@
+                             // Non-interactive stays unanswered (no operator). Interactive `recommended` auto-selects.
+                             let message = if params.non_interactive.unwrap_or(false) {
+                                 unanswered.to_string()
+-                            } else if params.resolved_timeout_action() == TimeoutAction::Recommended {
++                            } else if action == TimeoutAction::Recommended {
+                                 format::timeout_recommended_text(&input.questions)
+                             } else {
+                                 unanswered.to_string()
+@@ -1571,7 +1596,7 @@
+         let (shared, mut rx) = resources_with_sender_and_params(AskUserQuestionParams {
+             timeout_enabled: Some(true),
+             timeout_secs: Some(5),
+-            timeout_action: None,
++            timeout_action: Some(TimeoutAction::Recommended),
+             timeout_reset_on_activity: Some(true),
+             non_interactive: None,
+         });
+@@ -1597,9 +1622,13 @@
+         let request = rx.recv().await.expect("should receive request");
+         // Advance 4s (under 5s timeout)
+         tokio::time::advance(std::time::Duration::from_secs(4)).await;
+-        // User activity ping restarts the 5s timer
+-        request.activity_tx.send(()).unwrap();
+-        tokio::task::yield_now().await;
++        // The acknowledgement is emitted only after the native sleep has reset.
++        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
++        request.activity_tx.send(Some(ack_tx)).unwrap();
++        let ack = ack_rx.await.unwrap().expect("native reset metadata");
++        assert_eq!(ack.reset_on_activity, Some(true));
++        assert_eq!(ack.action, TimeoutAction::Recommended);
++        assert!(ack.deadline_unix_ms > 0);
+         // Advance another 4s (total 8s from start; would have expired without reset)
+         tokio::time::advance(std::time::Duration::from_secs(4)).await;
+ 
+@@ -1697,7 +1726,10 @@
+ 
+         let request = rx.recv().await.expect("should receive request");
+         tokio::time::advance(std::time::Duration::from_secs(4)).await;
+-        request.activity_tx.send(()).unwrap();
++        assert_eq!(request.timeout.unwrap().reset_on_activity, Some(false));
++        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
++        assert!(request.activity_tx.send(Some(ack_tx)).is_err());
++        assert!(ack_rx.await.is_err());
+         tokio::task::yield_now().await;
+         // Advance 2 more seconds (total 6s past initial 5s timeout)
+         tokio::time::advance(std::time::Duration::from_secs(2)).await;
+@@ -1742,7 +1774,7 @@
+ 
+         let request = rx.recv().await.expect("should receive request");
+         tokio::time::advance(std::time::Duration::from_secs(4)).await;
+-        request.activity_tx.send(()).unwrap();
++        let _ = request.activity_tx.send(None);
+         tokio::task::yield_now().await;
+         tokio::time::advance(std::time::Duration::from_secs(2)).await;
+ 
+diff --git a/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/types.rs b/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/types.rs
+--- a/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/types.rs
++++ b/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/types.rs
+@@ -55,6 +55,9 @@
+     pub deadline_unix_ms: i64,
+     /// What the tool does when the native timer expires.
+     pub action: super::TimeoutAction,
++    /// Whether native user activity can restart this timer. Absent on older servers.
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub reset_on_activity: Option<bool>,
+ }
+ 
+ /// ACP `ext_method` request payload (shell coordinator sends to client/pager).
+@@ -176,6 +179,9 @@
+     MalformedResponse(String),
+ }
+ 
++/// `None` preserves fire-and-forget notifications; `Some` requests a native reset acknowledgement.
++pub type UserQuestionActivity = Option<oneshot::Sender<Option<AskUserQuestionTimeout>>>;
++
+ /// In-process request: tool -> coordinator (carries oneshot for reply). Sent over the `mpsc`
+ /// channel. The coordinator receives this, performs the ACP `ext_method` round-trip, and sends the
+ /// result back on `result_tx`.
+@@ -187,7 +193,7 @@
+     #[educe(Debug(ignore))]
+     pub result_tx: oneshot::Sender<UserQuestionResult>,
+     #[educe(Debug(ignore))]
+-    pub activity_tx: mpsc::UnboundedSender<()>,
++    pub activity_tx: mpsc::UnboundedSender<UserQuestionActivity>,
+     /// Countdown metadata resolved by the tool from its effective params. The coordinator copies it
+     /// onto the ACP request verbatim so config resolution stays in one place.
+     pub timeout: Option<AskUserQuestionTimeout>,
+@@ -384,6 +390,7 @@
+             timeout: Some(AskUserQuestionTimeout {
+                 deadline_unix_ms: 1_767_225_600_000,
+                 action: super::super::TimeoutAction::Recommended,
++                reset_on_activity: Some(true),
+             }),
+         };
+         let json = serde_json::to_value(&req).unwrap();
+@@ -396,8 +403,18 @@
+             timeout.get("action").and_then(|v| v.as_str()),
+             Some("recommended")
+         );
++        assert_eq!(timeout.get("resetOnActivity"), Some(&serde_json::json!(true)));
+         let back: AskUserQuestionExtRequest = serde_json::from_value(json).unwrap();
+         assert_eq!(back.timeout, req.timeout);
++    }
++
++    #[test]
++    fn timeout_accepts_legacy_metadata_without_reset_flag() {
++        let timeout: AskUserQuestionTimeout = serde_json::from_value(serde_json::json!({
++            "deadlineUnixMs": 1, "action": "decline"
++        })).unwrap();
++        assert_eq!(timeout.reset_on_activity, None);
++        assert!(serde_json::to_value(timeout).unwrap().get("resetOnActivity").is_none());
+     }
+ 
+     #[test]

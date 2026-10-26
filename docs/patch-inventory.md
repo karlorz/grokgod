@@ -12,6 +12,7 @@ Patch `0023` additionally exposes `0023-usage-limit-retry-prompt-lifetime: appli
 Patch `0024` additionally exposes `0024-content-filter-turn-recovery: applied|missing`.
 Patch `0025` additionally exposes `0025-mcp-elicitation-persist: applied|missing`.
 Patch `0026` additionally exposes `0026-cua-turn-end-release: applied|missing`.
+Patch `0027` additionally exposes `0027-ask-question-timeout-metadata: applied|missing`.
 
 ## Keep — grok-build source patch (re-apply on update)
 
@@ -43,6 +44,9 @@ Patch `0026` additionally exposes `0026-cua-turn-end-release: applied|missing`.
 | `0024` | `patches/0024-content-filter-turn-recovery.patch` | `[compat.content_filter] action=retry_then_error` with `max_retries=3` (default) resamples empty ContentFilter turns up to 3 times before failing, stashes the prompt, and offers Switch model & retry / Try Again | Gemini/Antigravity CPA SAFETY completions currently finish as Refusal and kill the session; credit-limit stash (0016/0023) does not cover content-safety. |
 | `0025` | `patches/0025-mcp-elicitation-persist.patch` | Forward Computer Use MCP persist scopes onto ACP `_x.ai/mcp/elicit` and return selected `session`/`always` as MCP `_meta.persist` | Stock Grok drops MCP `_meta`; CodexHost cannot honestly show Always without a native persist round-trip. |
 | `0026` | `patches/0026-cua-turn-end-release.patch` | Release the user-installed cua_repl connection at native turn boundaries, with matching turn metadata and a bounded Mac Sky native release bridge | Grok MCP clients persist across turns; the installed Mac Sky runtime does not release control on the hidden tool alone. |
+| `0027` | `patches/0027-ask-question-timeout-metadata.patch` | Add an optional `timeout: { deadlineUnixMs, action }` countdown to the `x.ai/ask_user_question` ACP request, omitted when the timer is disabled; the native tool derives it from the effective params that arm its monotonic timer and the coordinator forwards it verbatim | CodexHost renders a native question deadline only if the wire carries one. Deriving it in the tool keeps config resolution in a single place and leaves the native timer authoritative; a client-side countdown is cosmetic. |
+
+| `0028` | `patches/0028-ask-question-activity-ack.patch` | Acknowledge native question activity resets with the effective deadline and advertise optional `resetOnActivity` | Desktop countdowns must follow the native timer after interaction, respecting native reset configuration without optimistic client-side resets. |
 
 Base SHA: see `patches/README.md` (`2bdd1d6a`). Source mode still tracks the moving `origin/main`; this is the patch-authorship pin. Fail closed on `git apply --check`. Daily CI `.github/workflows/compat-daily.yml` runs `git apply --check` of `patches/*.patch` against latest `xai-org/grok-build` `origin/main`.
 
@@ -68,3 +72,11 @@ Production overlay lives under the automation root (Weekly:
 - PATH shim (`src/shim/grok-shim.sh`) and installer (`install.sh`)
 - `grokgod cache`
 - Official binary stays at `grok.orig`; we never Mach-O hex-edit
+
+### 0028 — Native question activity reset acknowledgement
+
+ACP request `x.ai/ask_user_question_activity` (SDK wire `_x.ai/ask_user_question_activity`) accepts `{sessionId,toolCallId}` and waits at most two seconds. It returns `{timeout:{deadlineUnixMs,action,resetOnActivity:true}}` only after the native question timer actually resets. Otherwise it returns `{timeout:null}`. Initial native question countdown metadata includes optional `resetOnActivity`; older metadata without that field remains readable.
+
+The existing per-session activity map carries optional oneshot acknowledgements and is cleaned by its completion guard. Locks end before awaiting. The timer uses its captured native budget/action and reports the just-reset monotonic sleep deadline. Timer-disabled, reset-disabled, non-interactive, unknown and closed questions cannot be reset by this request. The old notification remains compatible; neither path answers or cancels a question.
+
+Validation: `sh tests/patches/test_0028_apply.sh`; focused Rust serde and paused-time acknowledgement/disabled tests run in Rust Patch Validation CI. Local production compilation and enabled/disabled native timing probes passed; local native unit execution was blocked by the 15 GiB disk guard. No build/install is required by this patch test.

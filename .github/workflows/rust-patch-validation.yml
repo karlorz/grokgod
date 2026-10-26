@@ -138,3 +138,7 @@ jobs:
       - name: Run exact finalized-schema enum regression test
         working-directory: grok-build
         run: cargo test -p xai-grok-tools --lib registry::types::tests::finalized_generated_schemas_advertise_string_only_enums -- --exact
+
+      - name: Run focused native question timeout and activity tests
+        working-directory: grok-build
+        run: cargo test -p xai-grok-tools --lib ask_user_question
