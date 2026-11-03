@@ -1103,6 +1103,9 @@ try {
             $psi.RedirectStandardError = $true
             $psi.CreateNoWindow = $true
             $psi.Arguments = [string]::Join(" ", $argList)
+            foreach ($clearKey in @("GROKGOD_BIN", "GROKGOD_SHIM_PATH")) {
+                if (-not $EnvMap.ContainsKey($clearKey)) { $psi.EnvironmentVariables.Remove($clearKey) }
+            }
             $proc = [System.Diagnostics.Process]::Start($psi)
             # Outer concurrent-drain watchdog: async reads run while the
             # process is bounded by the driver's own watchdog plus its hard

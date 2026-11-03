@@ -915,6 +915,9 @@ exit 0
             $psi.RedirectStandardError = $true
             $psi.CreateNoWindow = $true
             $psi.Arguments = [string]::Join(" ", $argList)
+            foreach ($clearKey in @("GROKGOD_BIN", "GROKGOD_SHIM_PATH")) {
+                if (-not $EnvMap.ContainsKey($clearKey)) { $psi.EnvironmentVariables.Remove($clearKey) }
+            }
             $proc = [System.Diagnostics.Process]::Start($psi)
             # Outer concurrent-drain watchdog: async reads run while the
             # process is bounded by the driver's own watchdog plus its hard
@@ -1229,7 +1232,8 @@ while (`$listener.IsListening) {
         $mpsi.CreateNoWindow = $true
         $mpsi.EnvironmentVariables["GROKGOD_HOME"] = $mergedHome
         $mpsi.EnvironmentVariables["GROKGOD_BIN"] = $mockExe
-        $mpsi.EnvironmentVariables["GROKGOD_UPDATE_CHECK_URL"] = ($bypassBaseUrl.TrimEnd('/') + '/')
+        $mpsi.EnvironmentVariables.Remove("GROKGOD_SHIM_PATH")
+        $mpsi.EnvironmentVariables["GROKGOD_UPDATE_CHECK_URL"] = ($bypassBaseUrl.TrimEnd('/') + '/merged/')
         $mpsi.EnvironmentVariables["GROKGOD_UPDATE_CHECK_DISABLE"] = "0"
         $mpsi.EnvironmentVariables["GROKGOD_MOCK_MODE"] = "noisy-stderr"
         $mpsi.EnvironmentVariables["USERPROFILE"] = $isolatedProfile
@@ -1253,7 +1257,7 @@ while (`$listener.IsListening) {
         Assert-Condition ($mergedExit -eq 0) "Merged 2>&1 ordinary path preserves mock exit 0 after helper (got $mergedExit)"
         Assert-Condition ($mergedText -match 'grok 1\.0\.6 \(48271133\)') "Merged 2>&1 ordinary path delivers mock version stdout after helper"
         Assert-Condition ($mergedText -match '\[grokgod\] v2\.0\.0 available') "Merged 2>&1 ordinary path still emits the cached notice"
-        $mergedRefresh = Wait-BypassRequest "/"
+        $mergedRefresh = Wait-BypassRequest "/merged/"
         if (-not $mergedRefresh) {
             Write-Host "MERGED-REFRESH-DIAG requests=$([string]::Join(',', @(Read-BypassRequests))) exit=$mergedExit before=[$mergedCacheBefore] after=$(Get-Content $mergedCache -Raw) controlCache=$(Get-Content $noticeCache -Raw)"
         }
@@ -1393,7 +1397,7 @@ public class MockFailingEngine {
         # satisfy discovery. Production launchers are unchanged.
         if ($WorkingDirectory) { $psi.WorkingDirectory = $WorkingDirectory }
         $psi.EnvironmentVariables["PATH"] = $childPath
-        foreach ($clearKey in @("GROKGOD_POWERSHELL", "GROKGOD_POWERSHELL_BAKED")) {
+        foreach ($clearKey in @("GROKGOD_POWERSHELL", "GROKGOD_POWERSHELL_BAKED", "GROKGOD_BIN", "GROKGOD_SHIM_PATH")) {
             if ($psi.EnvironmentVariables.ContainsKey($clearKey) -and -not $ExtraEnv.ContainsKey($clearKey)) {
                 $psi.EnvironmentVariables.Remove($clearKey)
             }
