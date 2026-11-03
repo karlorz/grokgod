@@ -97,3 +97,12 @@ CI on b1d9b49: Linux `test_release_workflow.sh` still expected the old Windows P
 - `tests/shim/test_shim_windows.py` `1ae01fda0a802081fe89a095aadbfc55c13fab07d65f87604ccead8a08be64b2`
 
 Static after this follow-up: shim py 232/0, `tests/release/test_release_workflow.sh` 9/9. Native still pending on these driver bytes.
+
+## Follow-up: group-9 child cwd isolation (test-only)
+
+`where.exe` searches the current directory before PATH. Group-9 child processes now set WorkingDirectory to an empty fixture directory so host PSHOME/workspace `pwsh.exe` cannot satisfy discovery. Production launchers are unchanged.
+
+- `tests/shim/test_shim_windows.ps1` `0f24e20112bb8e2b93b6d55e53df09e3fa07a5b636761d47b7b58d8b1bc675a1`
+- `tests/shim/test_shim_windows.py` `975ee1cd6c40fabfa1c6d00ce68417c93d05f161fc74f970ffa5f992919500cc`
+
+Static: shim py 233/0.

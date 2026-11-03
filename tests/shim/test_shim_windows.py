@@ -92,6 +92,8 @@ def main():
         check("$isolatedProfile" in native_shim_src and "$env:USERPROFILE  = $isolatedProfile" in native_shim_src, "Native shim test isolates USERPROFILE to prevent host candidate skew")
         check('"ProgramFiles"' in native_shim_src and '"ProgramFiles(x86)"' in native_shim_src,
               "Native group-9 isolates both ProgramFiles roots in the child env only")
+        check("WorkingDirectory" in native_shim_src and "where.exe searches the child current directory" in native_shim_src,
+              "Native group-9 pins child cwd to an empty fixture so where.exe cannot see host pwsh")
         check("SKIP: broken-engine" not in native_shim_src and "SKIP: broken-engine case" not in native_shim_src,
               "Native group-9 does not skip broken-engine on host standard PS7")
         check("GROKGOD_ARGV_SENTINEL" in native_shim_src,

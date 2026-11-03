@@ -1278,7 +1278,7 @@ public class MockFailingEngine {
     New-Item -ItemType Directory -Force -Path $fakeEngineDir | Out-Null
     Copy-Item $failingEngineExe (Join-Path $fakeEngineDir "pwsh.exe") -Force
 
-    function Invoke-LauncherWithPath([string]$cmdPath, [string]$childPath, [string[]]$ArgTokens, [hashtable]$ExtraEnv) {
+    function Invoke-LauncherWithPath([string]$cmdPath, [string]$childPath, [string[]]$ArgTokens, [hashtable]$ExtraEnv, [string]$WorkingDirectory) {
         $argString = "/d /s /c `"`"$cmdPath`""
         foreach ($a in $ArgTokens) { $argString += " " + $a }
         $argString += "`""
@@ -1289,6 +1289,10 @@ public class MockFailingEngine {
         $psi.RedirectStandardOutput = $true
         $psi.RedirectStandardError = $true
         $psi.CreateNoWindow = $true
+        # where.exe searches the child current directory before PATH. Keep
+        # cwd on an empty fixture so host PSHOME/workspace pwsh.exe cannot
+        # satisfy discovery. Production launchers are unchanged.
+        if ($WorkingDirectory) { $psi.WorkingDirectory = $WorkingDirectory }
         $psi.EnvironmentVariables["PATH"] = $childPath
         foreach ($clearKey in @("GROKGOD_POWERSHELL", "GROKGOD_POWERSHELL_BAKED")) {
             if ($psi.EnvironmentVariables.ContainsKey($clearKey) -and -not $ExtraEnv.ContainsKey($clearKey)) {
@@ -1373,18 +1377,18 @@ public class MockOldEngine {
     # launcher refuses with actionable guidance (no silent 5.1 fallback).
     # Both ProgramFiles roots are empty fixture dirs in the CHILD env only,
     # so a host standard install cannot satisfy discovery.
-    $res = Invoke-LauncherWithPath -cmdPath $discoveryLauncher -childPath $fakeEngineDir -ArgTokens @("--version") -ExtraEnv $engineEnv
+    $res = Invoke-LauncherWithPath -cmdPath $discoveryLauncher -childPath $fakeEngineDir -ArgTokens @("--version") -ExtraEnv $engineEnv -WorkingDirectory $emptyPathDir
     Assert-Condition ($res.ExitCode -eq 127) "Broken pwsh verification exits 127 (got $($res.ExitCode))"
     Assert-Condition ($res.StdErr -match "PowerShell 7\+ is required") "Broken pwsh prints actionable prerequisite stderr"
     Assert-Condition ($res.StdErr -match "winget install") "Actionable stderr names the winget install command"
 
     # 9.1b candidate that starts and reports <7 is rejected the same way.
-    $res = Invoke-LauncherWithPath -cmdPath $discoveryLauncher -childPath $oldEngineDir -ArgTokens @("--version") -ExtraEnv $engineEnv
+    $res = Invoke-LauncherWithPath -cmdPath $discoveryLauncher -childPath $oldEngineDir -ArgTokens @("--version") -ExtraEnv $engineEnv -WorkingDirectory $emptyPathDir
     Assert-Condition ($res.ExitCode -eq 127) "pwsh <7 verification exits 127 (got $($res.ExitCode))"
     Assert-Condition ($res.StdErr -match "PowerShell 7\+ is required") "pwsh <7 prints actionable prerequisite stderr"
 
     # 9.2 no pwsh anywhere on PATH and no standard ProgramFiles install.
-    $res = Invoke-LauncherWithPath -cmdPath $discoveryLauncher -childPath $emptyPathDir -ArgTokens @("--version") -ExtraEnv $engineEnv
+    $res = Invoke-LauncherWithPath -cmdPath $discoveryLauncher -childPath $emptyPathDir -ArgTokens @("--version") -ExtraEnv $engineEnv -WorkingDirectory $emptyPathDir
     Assert-Condition ($res.ExitCode -eq 127) "No pwsh on PATH exits 127 (got $($res.ExitCode))"
     Assert-Condition ($res.StdErr -match "PowerShell 7\+ is required") "No pwsh on PATH prints actionable prerequisite stderr"
 
@@ -1394,7 +1398,7 @@ public class MockOldEngine {
     if ($verifiedPwsh) {
         $bakedLauncher = Join-Path $launcherDir "grok-baked.cmd"
         Set-Content -LiteralPath $bakedLauncher -Value (New-GrokgodLauncherScript -Identity grok -ShimPath $resolvedShim -PwshPath $verifiedPwsh) -Encoding ASCII
-        $res = Invoke-LauncherWithPath -cmdPath $bakedLauncher -childPath $system32Only -ArgTokens @("--version") -ExtraEnv $engineEnv
+        $res = Invoke-LauncherWithPath -cmdPath $bakedLauncher -childPath $system32Only -ArgTokens @("--version") -ExtraEnv $engineEnv -WorkingDirectory $emptyPathDir
         Assert-Condition ($res.ExitCode -eq 0 -and $res.StdOut -match "grok 1\.0\.6") "Baked verified pwsh works with pwsh-free PATH"
     } else {
         throw "This suite requires a verified runnable PowerShell 7 engine to bake and to prove standard discovery."
@@ -1413,11 +1417,11 @@ public class MockOldEngine {
             $stdEnv["ProgramFiles"] = $pfRoot
             $stdEnv["ProgramFiles(x86)"] = $emptyPf86
         }
-        $res = Invoke-LauncherWithPath -cmdPath $discoveryLauncher -childPath $system32Only -ArgTokens @("--version") -ExtraEnv $stdEnv
+        $res = Invoke-LauncherWithPath -cmdPath $discoveryLauncher -childPath $system32Only -ArgTokens @("--version") -ExtraEnv $stdEnv -WorkingDirectory $emptyPathDir
         Assert-Condition ($res.ExitCode -eq 0 -and $res.StdOut -match "grok 1\.0\.6") "Standard ProgramFiles discovery finds verified pwsh with pwsh-free PATH"
     } else {
         $pwshDir = Split-Path $verifiedPwsh -Parent
-        $res = Invoke-LauncherWithPath -cmdPath $discoveryLauncher -childPath $pwshDir -ArgTokens @("--version") -ExtraEnv $engineEnv
+        $res = Invoke-LauncherWithPath -cmdPath $discoveryLauncher -childPath $pwshDir -ArgTokens @("--version") -ExtraEnv $engineEnv -WorkingDirectory $emptyPathDir
         Assert-Condition ($res.ExitCode -eq 0 -and $res.StdOut -match "grok 1\.0\.6") "PATH discovery finds verified pwsh when it is not under PowerShell\7"
     }
 
