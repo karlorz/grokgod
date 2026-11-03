@@ -84,6 +84,8 @@ public static class GrokgodHandleInfo {
     public static extern uint ResumeThread(IntPtr hThread);
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool TerminateJobObject(IntPtr hJob, uint uExitCode);
     public const uint HANDLE_FLAG_INHERIT = 0x00000001;
     public const uint CREATE_SUSPENDED = 0x00000004;
     public const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
@@ -181,6 +183,7 @@ public static class GrokgodHandleInfo {
 public sealed class GrokgodJobChild : IDisposable {
     public int Id;
     public IntPtr JobHandle;
+    public IntPtr NativeProcessHandle;
     public StreamWriter StandardInput;
     public StreamReader StandardOutput;
     public StreamReader StandardError;
@@ -192,18 +195,27 @@ public sealed class GrokgodJobChild : IDisposable {
     public int ExitCode { get { return process.ExitCode; } }
     public bool WaitForExit(int milliseconds) { return process.WaitForExit(milliseconds); }
     public void KillProcess() {
-        try { if (process != null && !process.HasExited) process.Kill(); } catch {}
+        try {
+            if (NativeProcessHandle != IntPtr.Zero) GrokgodHandleInfo.TerminateProcess(NativeProcessHandle, 1);
+        } catch {}
+        try { if (process != null) process.Kill(true); } catch {
+            try { if (process != null) process.Kill(); } catch {}
+        }
     }
     public void CloseJob() {
         if (JobHandle != IntPtr.Zero) {
+            try { GrokgodHandleInfo.TerminateJobObject(JobHandle, 1); } catch {}
             GrokgodHandleInfo.CloseHandle(JobHandle);
             JobHandle = IntPtr.Zero;
         }
+        KillProcess();
     }
     public void Dispose() {
         if (disposed) return;
         disposed = true;
         CloseJob();
+        GrokgodHandleInfo.CloseIf(NativeProcessHandle);
+        NativeProcessHandle = IntPtr.Zero;
         try { if (StandardInput != null) StandardInput.Dispose(); } catch {}
         try { if (StandardOutput != null) StandardOutput.Dispose(); } catch {}
         try { if (StandardError != null) StandardError.Dispose(); } catch {}
@@ -272,8 +284,6 @@ public sealed class GrokgodJobChild : IDisposable {
             if (GrokgodHandleInfo.ResumeThread(hThread) == 0xFFFFFFFF) throw new Win32Exception();
             GrokgodHandleInfo.CloseIf(hThread);
             hThread = IntPtr.Zero;
-            GrokgodHandleInfo.CloseIf(hProcess);
-            hProcess = IntPtr.Zero;
             GrokgodJobChild child = new GrokgodJobChild();
             child.Id = pi.dwProcessId;
             child.process = proc;
@@ -284,6 +294,8 @@ public sealed class GrokgodJobChild : IDisposable {
             stdoutReader = null;
             child.StandardError = stderrReader;
             stderrReader = null;
+            child.NativeProcessHandle = hProcess;
+            hProcess = IntPtr.Zero;
             child.JobHandle = job;
             job = IntPtr.Zero;
             transferred = true;

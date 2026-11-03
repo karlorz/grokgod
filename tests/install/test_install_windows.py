@@ -192,6 +192,8 @@ def main():
           "Installer inherit helper warns on SetHandleInformation restore failure like the shim")
     check("JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE" in src,
           "Preflight uses a kill-on-close job so exited-root descendants are reaped")
+    check("TerminateJobObject" in src and "NativeProcessHandle" in src,
+          "Preflight terminates the job object and the CreateProcess handle")
     check("CREATE_SUSPENDED" in src and "AssignProcessToJobObject" in src,
           "Candidate is assigned to the job while still suspended")
     check("Get-CimInstance" not in src, "Installer production code does not enumerate CIM processes")
