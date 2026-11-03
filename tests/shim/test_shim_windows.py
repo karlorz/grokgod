@@ -111,8 +111,13 @@ def main():
               "Invoke-ShimStatusJson stopwatch stops after process Dispose")
         check("TrimEnd('/') + '/slow'" in native_shim_src,
               "Detached-refresh slow URL is a single slash, not //slow")
-        check("merged_stdout_stderr.txt" in native_shim_src and "2>&1" in native_shim_src,
+        check("merged_stdout_stderr.txt" in native_shim_src and "2>&1" in native_shim_src
+              and 'GROKGOD_MOCK_MODE"] = "noisy-stderr"' in native_shim_src,
               "Native suite merges stdout+stderr to one OS handle after isolated refresh then passthrough")
+        check("grok 1\\.0\\.6 \\(48271133\\)" in native_shim_src and "Merged 2>&1 ordinary path delivers mock version stdout after helper" in native_shim_src,
+              "Merged 2>&1 case asserts mock version stdout after the helper")
+        check("taskkill.exe /T /F /PID $mproc.Id" in native_shim_src,
+              "Merged 2>&1 watchdog kills the owned cmd root on WaitForExit timeout")
 
     driver_js_path = os.path.join(REPO_ROOT, "tests", "shim", "launcher_fixture_driver.js")
     if os.path.isfile(driver_js_path):

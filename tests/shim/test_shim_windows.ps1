@@ -1211,9 +1211,9 @@ while (`$listener.IsListening) {
         Set-Content -LiteralPath $bypassRequestLog -Value "" -Encoding ASCII
         $mergedOut = Join-Path $testDir "merged_stdout_stderr.txt"
         if (Test-Path -LiteralPath $mergedOut) { Remove-Item -LiteralPath $mergedOut -Force }
-        $inner = '"{0}" -NoProfile -ExecutionPolicy Bypass -File "{1}" grok --exit-code 42 >"{2}" 2>&1' -f $pwshExe, $ShimPath, $mergedOut
+        $inner = '"{0}" -NoProfile -ExecutionPolicy Bypass -File "{1}" grok chat >"{2}" 2>&1' -f $pwshExe, $ShimPath, $mergedOut
         $mpsi = New-Object System.Diagnostics.ProcessStartInfo
-        $mpsi.FileName = "cmd.exe"
+        $mpsi.FileName = (Join-Path $env:SystemRoot "System32\cmd.exe")
         $mpsi.Arguments = "/d /s /c `"$inner`""
         $mpsi.UseShellExecute = $false
         $mpsi.CreateNoWindow = $true
@@ -1221,21 +1221,27 @@ while (`$listener.IsListening) {
         $mpsi.EnvironmentVariables["GROKGOD_BIN"] = $mockExe
         $mpsi.EnvironmentVariables["GROKGOD_UPDATE_CHECK_URL"] = ($bypassBaseUrl.TrimEnd('/') + '/')
         $mpsi.EnvironmentVariables["GROKGOD_UPDATE_CHECK_DISABLE"] = "0"
-        $mpsi.EnvironmentVariables["GROKGOD_MOCK_MODE"] = "version"
+        $mpsi.EnvironmentVariables["GROKGOD_MOCK_MODE"] = "noisy-stderr"
         $mpsi.EnvironmentVariables["USERPROFILE"] = $isolatedProfile
         $mpsi.EnvironmentVariables["LOCALAPPDATA"] = $isolatedLocalApp
         $mproc = [System.Diagnostics.Process]::Start($mpsi)
-        [void]$mproc.WaitForExit(30000)
+        $mergedExited = $mproc.WaitForExit(30000)
+        if (-not $mergedExited) {
+            try { & taskkill.exe /T /F /PID $mproc.Id 2>$null | Out-Null } catch {}
+            try { $mproc.Kill() } catch {}
+        }
         $mergedExit = $null
-        try { $mergedExit = $mproc.ExitCode } catch {}
+        try { if ($mproc.HasExited) { $mergedExit = $mproc.ExitCode } } catch {}
         try { $mproc.Dispose() } catch {}
+        Assert-Condition $mergedExited "Merged 2>&1 ordinary path returns before the 30s owned-root watchdog"
         $mergedBytes = @()
         if (Test-Path -LiteralPath $mergedOut) { $mergedBytes = [System.IO.File]::ReadAllBytes($mergedOut) }
         $mergedText = ""
         if ($mergedBytes.Length -gt 0) {
-            $mergedText = ([Text.UTF8Encoding]::new($false, $true)).GetString($mergedBytes).Trim()
+            $mergedText = ([Text.UTF8Encoding]::new($false, $true)).GetString($mergedBytes)
         }
-        Assert-Condition ($mergedExit -eq 42) "Merged 2>&1 ordinary path preserves mock exit 42 (got $mergedExit)"
+        Assert-Condition ($mergedExit -eq 0) "Merged 2>&1 ordinary path preserves mock exit 0 after helper (got $mergedExit)"
+        Assert-Condition ($mergedText -match 'grok 1\.0\.6 \(48271133\)') "Merged 2>&1 ordinary path delivers mock version stdout after helper"
         Assert-Condition ($mergedText -match '\[grokgod\] v2\.0\.0 available') "Merged 2>&1 ordinary path still emits the cached notice"
         Assert-Condition (Wait-BypassRequest "/") "Merged 2>&1 ordinary path fires the detached refresh"
 
@@ -1362,7 +1368,7 @@ public class MockFailingEngine {
         foreach ($a in $ArgTokens) { $argString += " " + $a }
         $argString += "`""
         $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName = "cmd.exe"
+        $psi.FileName = (Join-Path $env:SystemRoot "System32\cmd.exe")
         $psi.Arguments = $argString
         $psi.UseShellExecute = $false
         $psi.RedirectStandardOutput = $true
@@ -1542,6 +1548,7 @@ public class MockOldEngine {
             $stdEnv["ProgramFiles"] = $emptyPf64
         } else {
             $stdEnv["ProgramFiles"] = $pfRoot
+            $stdEnv["ProgramW6432"] = $pfRoot
             $stdEnv["ProgramFiles(x86)"] = $emptyPf86
         }
         $expectStdPwsh = Join-Path $pfRoot "PowerShell\7\pwsh.exe"

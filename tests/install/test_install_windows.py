@@ -369,8 +369,16 @@ def main():
         check("Test 14: Full-launcher process fixtures" in install_test_src, "Native install test includes Test 14 for full-launcher process fixtures")
         test_14_count = len(re.findall(r'Write-Host\s+"Test 14:', install_test_src))
         check(test_14_count == 1, f"Native install test contains exactly one Test 14 heading (found {test_14_count})")
+        check("Test 15b: Bounded candidate preflight (held-eof stdout)" in install_test_src,
+              "Native install test covers preflight held-eof stdout descendant")
+        check("Test 15c: Bounded candidate preflight (held-stderr-eof)" in install_test_src,
+              "Native install test covers preflight held-stderr-eof descendant")
+        check("Preflight held-eof: no live mutation / no promotion" in install_test_src,
+              "Native install held-eof asserts no promotion")
         check("GROKGOD_MOCK_MODE" in install_test_src, "Native install mock exe selects fixture modes via environment")
-        for mode_fragment in ('"echo"', '"protocol"', '"hang"', '"noisy-stderr"', '"failure"', '"fixture-hold-pipe"'):
+        for mode_fragment in ('"echo"', '"protocol"', '"hang"', '"noisy-stderr"',
+                              '"held-eof"', '"held-stderr-eof"', '"failure"',
+                              '"fixture-hold-pipe"'):
             check(mode_fragment in install_test_src, f"Native install mock exe implements mode {mode_fragment}")
         check("launcher_fixture_driver.js" in install_test_src, "Native install test reuses the shared launcher fixture driver")
         check("New-GrokgodLauncherScript" in install_test_src, "Native install test generates launchers from installed LauncherHelpers")

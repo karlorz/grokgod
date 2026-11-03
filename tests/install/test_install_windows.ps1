@@ -184,6 +184,7 @@ $mockExeSrc = Join-Path $mockServerDir "grokgod-windows-x64.exe"
 $launchLogFile = Join-Path $fixtureRoot "mock_launch.log"
 $csharpSource = @"
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -232,6 +233,25 @@ class Program {
             }
             string payload = line ?? "";
             Console.Out.WriteLine("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":1,\"echoLength\":" + payload.Length + "}}");
+            return 0;
+        }
+
+        if (mode == "sleepy-child" || mode == "held-eof" || mode == "held-stderr-eof") {
+            Console.Out.WriteLine("grok 1.0.26 (482711333c71)");
+            Console.Out.Flush();
+            int holdSeconds = (mode == "sleepy-child") ? 5 : 120;
+            var child = new Process();
+            child.StartInfo.FileName = Process.GetCurrentProcess().MainModule.FileName;
+            child.StartInfo.Arguments = "fixture-hold-pipe " + holdSeconds;
+            child.StartInfo.UseShellExecute = false;
+            if (mode == "held-stderr-eof") {
+                child.StartInfo.RedirectStandardOutput = true;
+                child.StartInfo.RedirectStandardInput = true;
+            }
+            child.Start();
+            if (mode == "held-stderr-eof") {
+                try { child.StandardInput.Close(); } catch {}
+            }
             return 0;
         }
 
@@ -1130,6 +1150,39 @@ try {
         $survivingCandidates = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'grokgod-windows-x64.exe'" -ErrorAction SilentlyContinue)
     } catch {}
     Assert-Test ($survivingCandidates.Count -eq 0) "Preflight hang: no surviving candidate process"
+
+    # Test 15b/15c: candidate prints a version line then a descendant holds
+    # stdout or stderr. Preflight must fail closed (no promotion) with a
+    # bounded caller return and no surviving candidate processes.
+    Write-Host "`nTest 15b: Bounded candidate preflight (held-eof stdout)"
+    $heldOutPrefix = Join-Path $fixtureRoot "held_eof_prefix"
+    New-Item -ItemType Directory -Force -Path $heldOutPrefix | Out-Null
+    $heldOutSw = [System.Diagnostics.Stopwatch]::StartNew()
+    $resHeldOut = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile; "GROKGOD_MOCK_MODE" = "held-eof" } -ScriptArgs @("-Prefix", $heldOutPrefix)
+    $heldOutSw.Stop()
+    Assert-Test ($resHeldOut.ExitCode -ne 0) "Preflight held-eof: installer fails closed"
+    Assert-Test ($resHeldOut.Combined -match 'did not reach EOF') "Preflight held-eof: held pipe is reported"
+    Assert-Test (-not (Test-Path -LiteralPath (Join-Path $heldOutPrefix "bin\grokgod.exe"))) "Preflight held-eof: no live mutation / no promotion"
+    Assert-Test ($heldOutSw.Elapsed.TotalSeconds -lt 20) "Preflight held-eof: install returns bounded ($([Math]::Round($heldOutSw.Elapsed.TotalSeconds,1))s)"
+    Start-Sleep -Milliseconds 500
+    $survivingHeldOut = @()
+    try { $survivingHeldOut = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'grokgod-windows-x64.exe'" -ErrorAction SilentlyContinue) } catch {}
+    Assert-Test ($survivingHeldOut.Count -eq 0) "Preflight held-eof: no surviving candidate process"
+
+    Write-Host "`nTest 15c: Bounded candidate preflight (held-stderr-eof)"
+    $heldErrPrefix = Join-Path $fixtureRoot "held_stderr_prefix"
+    New-Item -ItemType Directory -Force -Path $heldErrPrefix | Out-Null
+    $heldErrSw = [System.Diagnostics.Stopwatch]::StartNew()
+    $resHeldErr = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile; "GROKGOD_MOCK_MODE" = "held-stderr-eof" } -ScriptArgs @("-Prefix", $heldErrPrefix)
+    $heldErrSw.Stop()
+    Assert-Test ($resHeldErr.ExitCode -ne 0) "Preflight held-stderr-eof: installer fails closed"
+    Assert-Test ($resHeldErr.Combined -match 'did not reach EOF') "Preflight held-stderr-eof: held pipe is reported"
+    Assert-Test (-not (Test-Path -LiteralPath (Join-Path $heldErrPrefix "bin\grokgod.exe"))) "Preflight held-stderr-eof: no live mutation / no promotion"
+    Assert-Test ($heldErrSw.Elapsed.TotalSeconds -lt 20) "Preflight held-stderr-eof: install returns bounded ($([Math]::Round($heldErrSw.Elapsed.TotalSeconds,1))s)"
+    Start-Sleep -Milliseconds 500
+    $survivingHeldErr = @()
+    try { $survivingHeldErr = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'grokgod-windows-x64.exe'" -ErrorAction SilentlyContinue) } catch {}
+    Assert-Test ($survivingHeldErr.Count -eq 0) "Preflight held-stderr-eof: no surviving candidate process"
 
     # Test 16: PowerShell 7 prerequisite gate and explicit setup helpers.
     # PS5.1 entry is tested narrowly (prerequisite/bootstrap only): the
