@@ -423,29 +423,12 @@ public class MockGrok {
     # $null that 5.1 hands back before any method call.
     function Get-CapturedStderr([string]$filePath) {
         if (-not (Test-Path -LiteralPath $filePath)) { return "" }
-        # Read raw bytes and decode strictly: the shim host may write the
-        # notice in UTF-8 (pwsh) or in the console codepage (Windows
-        # PowerShell, e.g. GBK on CP936 hosts). Get-Content -Raw would apply
-        # the *reader's* default encoding, which mangles one of the two forms
-        # depending on the host edition and locale.
+        # Raw bytes, UTF-8 only. The shim writes the notice as UTF-8 to the
+        # stderr handle; no console-codepage heuristics.
         $bytes = [System.IO.File]::ReadAllBytes($filePath)
         if ($bytes.Length -eq 0) { return "" }
-        $text = $null
-        try {
-            $strictUtf8 = New-Object System.Text.UTF8Encoding($false, $true)
-            $text = $strictUtf8.GetString($bytes)
-        } catch {
-            $text = [System.Text.Encoding]::Default.GetString($bytes)
-        }
-        $text = $text.Trim()
-        if (-not $text) { return "" }
-        $emDash = [string][char]0x2014
-        $mojibake = @(
-            ("$([char]0x00E2)$([char]0x20AC)$([char]0x201D)"),   # UTF-8 bytes E2 80 94 read as CP1252
-            ("$([char]0x0393)$([char]0x00C7)$([char]0x00F6)"),   # UTF-8 bytes E2 80 94 read as CP437
-            ("$([char]0x00D4)$([char]0x00C7)$([char]0x00F6)")    # UTF-8 bytes E2 80 94 read as CP850
-        )
-        foreach ($variant in $mojibake) { $text = $text.Replace($variant, $emDash) }
+        $strictUtf8 = New-Object System.Text.UTF8Encoding($false, $true)
+        $text = $strictUtf8.GetString($bytes).Trim()
         return $text
     }
 
@@ -463,6 +446,15 @@ public class MockGrok {
     $expectedNotice = "[grokgod] v2.0.0-rc.1 available (installed: v1.2.3-preview.1) " + [char]0x2014 + " run 'grok update' to upgrade"
     Assert-Condition ($p.ExitCode -eq 42) "Update notice preserves native exit code 42"
     Assert-Condition ($noticeErr -eq $expectedNotice) "Cached update notice matches exact stderr contract" $noticeErr
+    $noticeBytes = [System.IO.File]::ReadAllBytes($noticeErrFile)
+    $foundUtf8Dash = $false
+    for ($bi = 0; $bi -le $noticeBytes.Length - 3; $bi++) {
+        if ($noticeBytes[$bi] -eq 0xE2 -and $noticeBytes[$bi + 1] -eq 0x80 -and $noticeBytes[$bi + 2] -eq 0x94) {
+            $foundUtf8Dash = $true
+            break
+        }
+    }
+    Assert-Condition $foundUtf8Dash "Update notice stderr contains UTF-8 U+2014 bytes E2-80-94" ([BitConverter]::ToString($noticeBytes))
     # The equality above is the full contract; these pin its ASCII semantics and
     # the single-line shape so a mojibake-only failure cannot hide a payload bug.
     foreach ($fragment in @("[grokgod] v2.0.0-rc.1 available", "(installed: v1.2.3-preview.1)", "run 'grok update' to upgrade")) {
@@ -737,29 +729,64 @@ exit 0
         $psi.UseShellExecute = $false
         $psi.RedirectStandardOutput = $true
         $psi.RedirectStandardError = $true
+        $psi.RedirectStandardInput = $true
         $psi.CreateNoWindow = $true
         $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$ShimPath`" grok status --json"
         foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] }
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         $proc = [System.Diagnostics.Process]::Start($psi)
+        try { $proc.StandardInput.Close() } catch {}
+        $outTask = $proc.StandardOutput.ReadToEndAsync()
+        $errTask = $proc.StandardError.ReadToEndAsync()
         $exited = $proc.WaitForExit($TimeoutMs)
-        $sw.Stop()
         if (-not $exited) {
+            try { & taskkill.exe /T /F /PID $proc.Id 2>$null | Out-Null } catch {}
             try { $proc.Kill() } catch {}
+            Stop-FixtureMockProcesses | Out-Null
         }
-        $stdout = $proc.StandardOutput.ReadToEnd()
-        $stderr = $proc.StandardError.ReadToEnd()
+        # Wall-clock includes drains through caller EOF. A descendant holding
+        # inherited pipes cannot extend this past TimeoutMs: after the drain
+        # slice, kill only fixture-owned mock PIDs recorded from this exe.
+        $drainMs = $TimeoutMs - [int]$sw.ElapsedMilliseconds
+        if ($drainMs -lt 0) { $drainMs = 0 }
+        $outDone = $false
+        try { $outDone = $outTask.Wait($drainMs) } catch { $outDone = $false }
+        $drainMs = $TimeoutMs - [int]$sw.ElapsedMilliseconds
+        if ($drainMs -lt 0) { $drainMs = 0 }
+        $errDone = $false
+        try { $errDone = $errTask.Wait($drainMs) } catch { $errDone = $false }
+        if (-not $outDone -or -not $errDone) {
+            Stop-FixtureMockProcesses | Out-Null
+            $drainMs = $TimeoutMs - [int]$sw.ElapsedMilliseconds
+            if ($drainMs -lt 0) { $drainMs = 0 }
+            try { $outDone = $outTask.Wait($drainMs) } catch {}
+            $drainMs = $TimeoutMs - [int]$sw.ElapsedMilliseconds
+            if ($drainMs -lt 0) { $drainMs = 0 }
+            try { $errDone = $errTask.Wait($drainMs) } catch {}
+        }
+        $sw.Stop()
+        $stdout = $null
+        if ($outDone -and -not $outTask.IsFaulted -and -not $outTask.IsCanceled) { $stdout = [string]$outTask.Result }
+        $stderr = $null
+        if ($errDone -and -not $errTask.IsFaulted -and -not $errTask.IsCanceled) { $stderr = [string]$errTask.Result }
+        $exitCode = $null
+        try { if ($proc.HasExited) { $exitCode = $proc.ExitCode } } catch {}
+        try { $proc.StandardInput.Dispose() } catch {}
+        try { $proc.StandardOutput.Dispose() } catch {}
+        try { $proc.StandardError.Dispose() } catch {}
+        try { $proc.Dispose() } catch {}
         $parsed = $null
         try { $parsed = ($stdout | ConvertFrom-Json) } catch {}
         return [PSCustomObject]@{
-            ExitCode = $proc.ExitCode
+            ExitCode = $exitCode
             ElapsedMs = $sw.ElapsedMilliseconds
             StdOut = $stdout
             StdErr = $stderr
             Json = $parsed
             Health = if ($parsed) { [string]$parsed.health } else { "<unparsed>" }
             Version = if ($parsed) { $parsed.patchedBinaryVersion } else { "<unparsed>" }
-            TimedOut = (-not $exited)
+            TimedOut = (-not $exited -or -not $outDone -or -not $errDone)
+            DrainComplete = ($outDone -and $errDone)
         }
     }
 
@@ -803,6 +830,7 @@ exit 0
     Stop-FixtureMockProcesses | Out-Null
     $r = Invoke-ShimStatusJson -ExtraEnv @{ "GROKGOD_MOCK_MODE" = "held-eof" }
     Assert-Condition ($r.ElapsedMs -lt 10000) "Probe held-eof returns bounded ($($r.ElapsedMs)ms)"
+    Assert-Condition ($r.DrainComplete -eq $true) "Probe held-eof caller drains reach EOF within the helper budget"
     Assert-Condition ($r.Version -eq $null) "Probe held-eof reports null version"
     $killed = Stop-FixtureMockProcesses
     Assert-Condition (@(Get-FixtureMockProcesses).Count -eq 0) "Probe held-eof fixture cleanup leaves no surviving fixture process"
@@ -812,6 +840,7 @@ exit 0
     Stop-FixtureMockProcesses | Out-Null
     $r = Invoke-ShimStatusJson -ExtraEnv @{ "GROKGOD_MOCK_MODE" = "held-stderr-eof" }
     Assert-Condition ($r.ElapsedMs -lt 10000) "Probe held-stderr-eof returns bounded ($($r.ElapsedMs)ms)"
+    Assert-Condition ($r.DrainComplete -eq $true) "Probe held-stderr-eof caller drains reach EOF within the helper budget"
     Assert-Condition ($r.Version -eq $null) "Probe held-stderr-eof reports null version (stderr drain incomplete)"
     $killed = Stop-FixtureMockProcesses
     Assert-Condition (@(Get-FixtureMockProcesses).Count -eq 0) "Probe held-stderr-eof fixture cleanup leaves no surviving fixture process"
@@ -979,6 +1008,20 @@ exit 0
         }
         Assert-Condition (@(Get-FixtureMockProcesses).Count -eq 0) "Full-launcher fixtures leave no surviving fixture process"
 
+        # 6.6b Node parent observes whole-call EOF for status --json while a
+        # fixture descendant holds the probe pipes 120s. closeMs is the
+        # external caller completion, not the inner probe stopwatch.
+        Stop-FixtureMockProcesses | Out-Null
+        $res = Invoke-NodeLauncherFixture -cmdPath $grokLauncher -EnvMap (Get-DriverEnv "held-eof") -ArgTokens @("status", "--json") -TimeoutMs 15000
+        Assert-Condition ($res -ne $null -and $res.timedOut -eq $false) "Node parent held-eof status does not hit the driver watchdog"
+        if ($res) {
+            Assert-Condition ($res.closeMs -ne $null -and $res.closeMs -lt 10000) "Node parent held-eof close is bounded ($($res.closeMs)ms)"
+            $eofGap = $res.closeMs - $res.exitMs
+            Assert-Condition ($eofGap -lt 3000) "Node parent held-eof exit-to-close gap is small ($eofGap ms)"
+        }
+        Stop-FixtureMockProcesses | Out-Null
+        Assert-Condition (@(Get-FixtureMockProcesses).Count -eq 0) "Node parent held-eof leaves no surviving fixture process"
+
         # 6.7 launcher-level argument preservation. Direct %* forwarding
         # plus the driver's CRT quote/backslash then twice CMD-metachar
         # escaping (windowsVerbatimArguments) is the proven native
@@ -1082,7 +1125,7 @@ while (`$listener.IsListening) {
         $bypassPsi.UseShellExecute = $false
         $bypassPsi.CreateNoWindow = $true
         $bypassListenerProc = [System.Diagnostics.Process]::Start($bypassPsi)
-        $bypassBaseUrl = "http://127.0.0.1:$bypassPort/"
+        $bypassBaseUrl = "http://127.0.0.1:$bypassPort"
         $listenerReady = $false
         for ($i = 0; $i -lt 30; $i++) {
             Start-Sleep -Milliseconds 100
@@ -1145,7 +1188,7 @@ while (`$listener.IsListening) {
         }
 
         $bypassEnv = @{
-            "GROKGOD_UPDATE_CHECK_URL" = $bypassBaseUrl
+            "GROKGOD_UPDATE_CHECK_URL" = ($bypassBaseUrl.TrimEnd('/') + '/')
             "GROKGOD_UPDATE_CHECK_DISABLE" = "0"
             "GROKGOD_MOCK_MODE" = "version"
         }
@@ -1230,7 +1273,7 @@ while (`$listener.IsListening) {
             Reset-BypassCache -checkedAt 1
             Set-Content -LiteralPath $bypassRequestLog -Value "" -Encoding ASCII
             $slowEnv = Get-DriverEnv "version"
-            $slowEnv["GROKGOD_UPDATE_CHECK_URL"] = "$bypassBaseUrl/slow"
+            $slowEnv["GROKGOD_UPDATE_CHECK_URL"] = ($bypassBaseUrl.TrimEnd('/') + '/slow')
             Remove-Item Env:GROKGOD_UPDATE_CHECK_DISABLE -ErrorAction SilentlyContinue
             $slowEnv.Remove("GROKGOD_UPDATE_CHECK_DISABLE")
             $res = Invoke-NodeLauncherFixture -cmdPath $grokLauncher -EnvMap $slowEnv -ArgTokens @("chat") -TimeoutMs 25000
@@ -1321,7 +1364,39 @@ public class MockFailingEngine {
         try { $exitCode = $proc.ExitCode } catch {}
         try { $proc.Close() } catch {}
         try { $proc.Dispose() } catch {}
-        return [PSCustomObject]@{ ExitCode = $exitCode; StdOut = [string]$stdout; StdErr = [string]$stderr }
+        $whereChild = ""
+        try {
+            $wpsi = New-Object System.Diagnostics.ProcessStartInfo
+            $wpsi.FileName = "$env:SystemRoot\System32\where.exe"
+            $wpsi.Arguments = "pwsh.exe"
+            $wpsi.UseShellExecute = $false
+            $wpsi.RedirectStandardOutput = $true
+            $wpsi.RedirectStandardError = $true
+            $wpsi.CreateNoWindow = $true
+            if ($WorkingDirectory) { $wpsi.WorkingDirectory = $WorkingDirectory }
+            $wpsi.EnvironmentVariables["PATH"] = $childPath
+            foreach ($k in $ExtraEnv.Keys) { $wpsi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] }
+            $wp = [System.Diagnostics.Process]::Start($wpsi)
+            $whereChild = $wp.StandardOutput.ReadToEnd()
+            $wp.WaitForExit(5000) | Out-Null
+            try { $wp.Dispose() } catch {}
+        } catch { $whereChild = "where-failed: $_" }
+        return [PSCustomObject]@{
+            ExitCode = $exitCode
+            StdOut = [string]$stdout
+            StdErr = [string]$stderr
+            WorkingDirectory = $WorkingDirectory
+            ChildPath = $childPath
+            WherePwsh = $whereChild
+            EnvProgramFiles = [string]$ExtraEnv["ProgramFiles"]
+            EnvProgramFilesX86 = [string]$ExtraEnv["ProgramFiles(x86)"]
+            EnvProgramW6432 = [string]$ExtraEnv["ProgramW6432"]
+            CmdText = (Get-Content -LiteralPath $cmdPath -Raw)
+            ParentGrokgodPwsh = [string]$env:GROKGOD_POWERSHELL
+            ParentBaked = [string]$env:GROKGOD_POWERSHELL_BAKED
+            PsiHasOverride = $psi.EnvironmentVariables.ContainsKey("GROKGOD_POWERSHELL")
+            PsiHasBaked = $psi.EnvironmentVariables.ContainsKey("GROKGOD_POWERSHELL_BAKED")
+        }
     }
 
     $emptyPf64 = Join-Path $testDir "empty-pf64"
@@ -1371,6 +1446,7 @@ public class MockOldEngine {
         "LOCALAPPDATA" = $isolatedLocalApp
         "ProgramFiles" = $emptyPf64
         "ProgramFiles(x86)" = $emptyPf86
+        "ProgramW6432" = $emptyPf64
     }
 
     # 9.1 PATH-resolved pwsh fails the runnable/>=7 verification -> the
@@ -1378,17 +1454,32 @@ public class MockOldEngine {
     # Both ProgramFiles roots are empty fixture dirs in the CHILD env only,
     # so a host standard install cannot satisfy discovery.
     $res = Invoke-LauncherWithPath -cmdPath $discoveryLauncher -childPath $fakeEngineDir -ArgTokens @("--version") -ExtraEnv $engineEnv -WorkingDirectory $emptyPathDir
+    if ($res.ExitCode -ne 127) {
+        Write-Host "GROUP9-DIAG broken: exit=$($res.ExitCode) cwd=$($res.WorkingDirectory) PATH=$($res.ChildPath) PF=$($res.EnvProgramFiles) PF86=$($res.EnvProgramFilesX86) W6432=$($res.EnvProgramW6432)"
+        Write-Host "GROUP9-DIAG where.exe pwsh: $($res.WherePwsh)"
+        Write-Host "GROUP9-DIAG cmd: $($res.CmdText)"
+        Write-Host "GROUP9-DIAG stderr: $($res.StdErr)"
+    }
     Assert-Condition ($res.ExitCode -eq 127) "Broken pwsh verification exits 127 (got $($res.ExitCode))"
     Assert-Condition ($res.StdErr -match "PowerShell 7\+ is required") "Broken pwsh prints actionable prerequisite stderr"
     Assert-Condition ($res.StdErr -match "winget install") "Actionable stderr names the winget install command"
 
     # 9.1b candidate that starts and reports <7 is rejected the same way.
     $res = Invoke-LauncherWithPath -cmdPath $discoveryLauncher -childPath $oldEngineDir -ArgTokens @("--version") -ExtraEnv $engineEnv -WorkingDirectory $emptyPathDir
+    if ($res.ExitCode -ne 127) {
+        Write-Host "GROUP9-DIAG old: exit=$($res.ExitCode) cwd=$($res.WorkingDirectory) PATH=$($res.ChildPath) where=$($res.WherePwsh) stderr=$($res.StdErr)"
+    }
     Assert-Condition ($res.ExitCode -eq 127) "pwsh <7 verification exits 127 (got $($res.ExitCode))"
     Assert-Condition ($res.StdErr -match "PowerShell 7\+ is required") "pwsh <7 prints actionable prerequisite stderr"
 
     # 9.2 no pwsh anywhere on PATH and no standard ProgramFiles install.
     $res = Invoke-LauncherWithPath -cmdPath $discoveryLauncher -childPath $emptyPathDir -ArgTokens @("--version") -ExtraEnv $engineEnv -WorkingDirectory $emptyPathDir
+    if ($res.ExitCode -ne 127) {
+        Write-Host "GROUP9-DIAG missing: exit=$($res.ExitCode) cwd=$($res.WorkingDirectory) PATH=$($res.ChildPath) PF=$($res.EnvProgramFiles) W6432=$($res.EnvProgramW6432) parentOverride=$($res.ParentGrokgodPwsh) psiHasOverride=$($res.PsiHasOverride) psiHasBaked=$($res.PsiHasBaked)"
+        Write-Host "GROUP9-DIAG where.exe pwsh: $($res.WherePwsh)"
+        Write-Host "GROUP9-DIAG cmd: $($res.CmdText)"
+        Write-Host "GROUP9-DIAG stderr: $($res.StdErr)"
+    }
     Assert-Condition ($res.ExitCode -eq 127) "No pwsh on PATH exits 127 (got $($res.ExitCode))"
     Assert-Condition ($res.StdErr -match "PowerShell 7\+ is required") "No pwsh on PATH prints actionable prerequisite stderr"
 

@@ -94,12 +94,18 @@ def main():
               "Native group-9 isolates both ProgramFiles roots in the child env only")
         check("WorkingDirectory" in native_shim_src and "where.exe searches the child current directory" in native_shim_src,
               "Native group-9 pins child cwd to an empty fixture so where.exe cannot see host pwsh")
+        check("GROUP9-DIAG" in native_shim_src and "ProgramW6432" in native_shim_src,
+              "Native group-9 dumps child env/where.exe/cmd bytes when 127 is not observed")
         check("SKIP: broken-engine" not in native_shim_src and "SKIP: broken-engine case" not in native_shim_src,
               "Native group-9 does not skip broken-engine on host standard PS7")
         check("GROKGOD_ARGV_SENTINEL" in native_shim_src,
               "Native argv cases include a sentinel token that must never execute")
         check("held-stderr-eof" in native_shim_src and "Get-GrokgodPwshVersion returns null when stderr EOF is held" in native_shim_src,
               "Native suite covers stderr-held-EOF for the status probe and Get-GrokgodPwshVersion")
+        check("ReadToEndAsync" in native_shim_src and "DrainComplete" in native_shim_src,
+              "Native Invoke-ShimStatusJson drains concurrently and reports DrainComplete")
+        check("TrimEnd('/') + '/slow'" in native_shim_src,
+              "Detached-refresh slow URL is a single slash, not //slow")
 
     driver_js_path = os.path.join(REPO_ROOT, "tests", "shim", "launcher_fixture_driver.js")
     if os.path.isfile(driver_js_path):
@@ -196,9 +202,13 @@ def main():
         "$notice =",
         "[char]0x2014",
         "run 'grok update' to upgrade",
-        "[Console]::Error.WriteLine($notice)",
+        "Write-GrokgodStderrLine $notice",
     ))
     check(notice_contract, "Uses exact update notice stderr contract")
+    check("OpenStandardError()" in shim_src and "UTF8Encoding" in shim_src,
+          "Notice is written as UTF-8 bytes to the raw stderr handle")
+    check("Start-GrokgodIsolatedProcess" in shim_src and "HANDLE_FLAG_INHERIT" in shim_src,
+          "Helper process starts clear caller stdio inherit flags")
     check('if ($subcommand -ne "cache" -and -not $machineOrProtocol)' in shim_src,
           "Suppresses notice for administrative cache command and machine/protocol launches")
     check("$machineOrProtocol = Test-MachineProtocolLaunch -argsList $cmdArgs" in shim_src,

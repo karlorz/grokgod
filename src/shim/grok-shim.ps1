@@ -31,6 +31,68 @@ if ($PSVersionTable.PSEdition -ne 'Core' -or $PSVersionTable.PSVersion.Major -lt
     exit 1
 }
 
+# Stderr user notices are written as UTF-8 bytes to the raw standard-error
+# handle. Console.Error.WriteLine would transcode U+2014 through the console
+# output encoding (CP950 on some hosts becomes "?"), while stdout stays
+# untouched so ACP/protocol passthrough remains byte-clean.
+function Write-GrokgodStderrLine([string]$line) {
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    $bytes = $utf8.GetBytes($line + "`n")
+    $stream = [Console]::OpenStandardError()
+    $stream.Write($bytes, 0, $bytes.Length)
+    $stream.Flush()
+}
+
+# Process.Start with redirected stdio still uses bInheritHandles=true, so
+# the caller's original stdout/stderr handles (the T3/Node pipes) remain
+# inheritable and a grandchild can hold caller EOF after this process
+# exits. Clear the inherit flag around helper starts; restore afterwards
+# so Invoke-PatchedExecutable can still attach grokgod.exe to the caller.
+function Invoke-GrokgodChildWithoutInheritedStdio([scriptblock]$Block) {
+    if (-not ('GrokgodHandleInfo' -as [type])) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class GrokgodHandleInfo {
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool SetHandleInformation(IntPtr hObject, uint dwMask, uint dwFlags);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool GetHandleInformation(IntPtr hObject, out uint lpdwFlags);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr GetStdHandle(int nStdHandle);
+    public const uint HANDLE_FLAG_INHERIT = 0x00000001;
+}
+"@
+    }
+    $saved = New-Object System.Collections.Generic.List[object]
+    foreach ($n in @(-10, -11, -12)) {
+        $h = [GrokgodHandleInfo]::GetStdHandle($n)
+        if ($h -eq [IntPtr]::Zero -or $h -eq [IntPtr]::new(-1)) { continue }
+        $flags = [uint32]0
+        if (-not [GrokgodHandleInfo]::GetHandleInformation($h, [ref]$flags)) { continue }
+        [void]$saved.Add([pscustomobject]@{ Handle = $h; Flags = $flags })
+        [void][GrokgodHandleInfo]::SetHandleInformation($h, [GrokgodHandleInfo]::HANDLE_FLAG_INHERIT, 0)
+    }
+    try {
+        & $Block
+    } finally {
+        foreach ($item in $saved) {
+            $bit = $item.Flags -band [GrokgodHandleInfo]::HANDLE_FLAG_INHERIT
+            [void][GrokgodHandleInfo]::SetHandleInformation($item.Handle, [GrokgodHandleInfo]::HANDLE_FLAG_INHERIT, $bit)
+        }
+    }
+}
+
+function Start-GrokgodIsolatedProcess([System.Diagnostics.ProcessStartInfo]$startInfo) {
+    $started = $null
+    Invoke-GrokgodChildWithoutInheritedStdio {
+        $script:grokgodIsolatedProc = [System.Diagnostics.Process]::Start($startInfo)
+    }
+    $started = $script:grokgodIsolatedProc
+    $script:grokgodIsolatedProc = $null
+    return $started
+}
+
 # Capture dispatcher script path reliably at script scope
 $DispatcherScriptPath = if ($PSCommandPath) {
     $PSCommandPath
@@ -259,7 +321,7 @@ function Start-UpdateCacheRefresh([string]$cachePath, [string]$url, [Int64]$chec
         $psi.RedirectStandardOutput = $true
         $psi.RedirectStandardError = $true
         $psi.Arguments = ConvertTo-WindowsCommandLine -ArgumentList $refreshArgs
-        $refreshProc = [System.Diagnostics.Process]::Start($psi)
+        $refreshProc = Start-GrokgodIsolatedProcess $psi
         try { $refreshProc.StandardInput.Close() } catch {}
         [void]$refreshProc.StandardOutput.ReadToEndAsync()
         [void]$refreshProc.StandardError.ReadToEndAsync()
@@ -279,7 +341,7 @@ function Invoke-ReleaseUpdateCheck {
     $cachedVersion = [string]$cache.Version
     if ((Test-ReleaseVersion $cachedVersion) -and (Test-VersionCoreGreater $cachedVersion $installedVersion)) {
         $notice = '[grokgod] ' + $cachedVersion + ' available (installed: ' + $installedVersion + ') ' + [char]0x2014 + " run 'grok update' to upgrade"
-        [Console]::Error.WriteLine($notice)
+        Write-GrokgodStderrLine $notice
     }
 
     $unixEpoch = [DateTimeOffset]::Parse('1970-01-01T00:00:00Z')
@@ -339,7 +401,7 @@ function Get-GrokgodEngineVersion([string]$Path, [int]$TimeoutMs) {
         $psi.RedirectStandardError = $true
         $psi.RedirectStandardInput = $true
         $psi.CreateNoWindow = $true
-        $proc = [System.Diagnostics.Process]::Start($psi)
+        $proc = Start-GrokgodIsolatedProcess $psi
         try { $proc.StandardInput.Close() } catch {}
         $outTask = $proc.StandardOutput.ReadToEndAsync()
         $errTask = $proc.StandardError.ReadToEndAsync()
@@ -502,7 +564,7 @@ function Stop-OwnedProbeProcess([System.Diagnostics.Process]$proc, [int]$cleanup
                 $tpsi.CreateNoWindow = $true
                 $tpsi.RedirectStandardOutput = $true
                 $tpsi.RedirectStandardError = $true
-                $tk = [System.Diagnostics.Process]::Start($tpsi)
+                $tk = Start-GrokgodIsolatedProcess $tpsi
                 # Fire-and-forget drains keep the helper's pipes from
                 # blocking it; their content is never used, so nothing here
                 # waits on them past the supervised WaitForExit above.
@@ -557,7 +619,7 @@ function Get-BinaryReportedVersion([string]$exePath) {
 
         $proc = New-Object System.Diagnostics.Process
         $proc.StartInfo = $psi
-        [void]$proc.Start()
+        Invoke-GrokgodChildWithoutInheritedStdio { [void]$proc.Start() }
         # Immediate EOF for the candidate: a fixture that waits on stdin can
         # never hold this probe open.
         try { $proc.StandardInput.Close() } catch {}
