@@ -104,6 +104,9 @@ def main():
               "Native suite covers stderr-held-EOF for the status probe and Get-GrokgodPwshVersion")
         check("ReadToEndAsync" in native_shim_src and "DrainComplete" in native_shim_src,
               "Native Invoke-ShimStatusJson drains concurrently and reports DrainComplete")
+        helper_src = native_shim_src.split("function Invoke-ShimStatusJson", 1)[-1].split("# 5.1 version", 1)[0]
+        check(helper_src.rfind("$proc.Dispose()") < helper_src.rfind("$sw.Stop()"),
+              "Invoke-ShimStatusJson stopwatch stops after process Dispose")
         check("TrimEnd('/') + '/slow'" in native_shim_src,
               "Detached-refresh slow URL is a single slash, not //slow")
 

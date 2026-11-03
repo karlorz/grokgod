@@ -764,7 +764,6 @@ exit 0
             if ($drainMs -lt 0) { $drainMs = 0 }
             try { $errDone = $errTask.Wait($drainMs) } catch {}
         }
-        $sw.Stop()
         $stdout = $null
         if ($outDone -and -not $outTask.IsFaulted -and -not $outTask.IsCanceled) { $stdout = [string]$outTask.Result }
         $stderr = $null
@@ -775,6 +774,7 @@ exit 0
         try { $proc.StandardOutput.Dispose() } catch {}
         try { $proc.StandardError.Dispose() } catch {}
         try { $proc.Dispose() } catch {}
+        $sw.Stop()
         $parsed = $null
         try { $parsed = ($stdout | ConvertFrom-Json) } catch {}
         return [PSCustomObject]@{
