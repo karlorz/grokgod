@@ -109,6 +109,8 @@ def main():
               "Invoke-ShimStatusJson stopwatch stops after process Dispose")
         check("TrimEnd('/') + '/slow'" in native_shim_src,
               "Detached-refresh slow URL is a single slash, not //slow")
+        check("merged_stdout_stderr.txt" in native_shim_src and "2>&1" in native_shim_src,
+              "Native suite merges stdout+stderr to one OS handle after isolated refresh then passthrough")
 
     driver_js_path = os.path.join(REPO_ROOT, "tests", "shim", "launcher_fixture_driver.js")
     if os.path.isfile(driver_js_path):

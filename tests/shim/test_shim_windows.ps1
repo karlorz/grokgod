@@ -845,15 +845,6 @@ exit 0
     $killed = Stop-FixtureMockProcesses
     Assert-Condition (@(Get-FixtureMockProcesses).Count -eq 0) "Probe held-stderr-eof fixture cleanup leaves no surviving fixture process"
 
-    # 5.9 After a probe that clears stdio inherit flags, passthrough must
-    # still inherit the caller's redirected stdout (restore must not leave
-    # HANDLE_FLAG_INHERIT 0, including when stdout and stderr are one handle).
-    $afterProbeVer = Join-Path $testDir "after_probe_version.txt"
-    $afterProbeErr = Join-Path $testDir "after_probe_version.err"
-    $p = Start-Process -FilePath $pwshExe -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$ShimPath`"", "grok", "--version") -RedirectStandardOutput $afterProbeVer -RedirectStandardError $afterProbeErr -NoNewWindow -Wait -PassThru
-    $afterProbeOut = if (Test-Path -LiteralPath $afterProbeVer) { Get-Content -LiteralPath $afterProbeVer -Raw } else { "" }
-    Assert-Condition ($p.ExitCode -eq 0 -and $afterProbeOut -match "grok 1\.0\.6") "Passthrough still inherits stdout after isolated helper starts"
-
     # -------------------------------------------------------------------------
     # Test Group 6: Full-Launcher Process Fixtures via Node child_process
     # -------------------------------------------------------------------------
@@ -1211,6 +1202,42 @@ while (`$listener.IsListening) {
         Assert-Condition (Wait-BypassRequest "/") "Ordinary path fires the detached refresh (request logged)"
         Assert-Condition ($cacheAfterControl -match 'CHECKED_AT=[0-9]{9,}') "Ordinary path advances the refresh timestamp"
         Assert-Condition ((Get-CapturedStderr $controlErr) -match '\[grokgod\] v2\.0\.0 available') "Ordinary path prints the cached update notice"
+
+        # 7.0b Same process: stale-cache ordinary chat starts the isolated
+        # refresh helper then mock passthrough, with stdout and stderr merged
+        # to one OS handle (cmd 2>&1). Proves inherit flags are restored
+        # even when GetStdHandle(STD_OUTPUT)==GetStdHandle(STD_ERROR).
+        Reset-BypassCache -checkedAt 1
+        Set-Content -LiteralPath $bypassRequestLog -Value "" -Encoding ASCII
+        $mergedOut = Join-Path $testDir "merged_stdout_stderr.txt"
+        if (Test-Path -LiteralPath $mergedOut) { Remove-Item -LiteralPath $mergedOut -Force }
+        $inner = '"{0}" -NoProfile -ExecutionPolicy Bypass -File "{1}" grok --exit-code 42 >"{2}" 2>&1' -f $pwshExe, $ShimPath, $mergedOut
+        $mpsi = New-Object System.Diagnostics.ProcessStartInfo
+        $mpsi.FileName = "cmd.exe"
+        $mpsi.Arguments = "/d /s /c `"$inner`""
+        $mpsi.UseShellExecute = $false
+        $mpsi.CreateNoWindow = $true
+        $mpsi.EnvironmentVariables["GROKGOD_HOME"] = $fakeGrokgodHome
+        $mpsi.EnvironmentVariables["GROKGOD_BIN"] = $mockExe
+        $mpsi.EnvironmentVariables["GROKGOD_UPDATE_CHECK_URL"] = ($bypassBaseUrl.TrimEnd('/') + '/')
+        $mpsi.EnvironmentVariables["GROKGOD_UPDATE_CHECK_DISABLE"] = "0"
+        $mpsi.EnvironmentVariables["GROKGOD_MOCK_MODE"] = "version"
+        $mpsi.EnvironmentVariables["USERPROFILE"] = $isolatedProfile
+        $mpsi.EnvironmentVariables["LOCALAPPDATA"] = $isolatedLocalApp
+        $mproc = [System.Diagnostics.Process]::Start($mpsi)
+        [void]$mproc.WaitForExit(30000)
+        $mergedExit = $null
+        try { $mergedExit = $mproc.ExitCode } catch {}
+        try { $mproc.Dispose() } catch {}
+        $mergedBytes = @()
+        if (Test-Path -LiteralPath $mergedOut) { $mergedBytes = [System.IO.File]::ReadAllBytes($mergedOut) }
+        $mergedText = ""
+        if ($mergedBytes.Length -gt 0) {
+            $mergedText = ([Text.UTF8Encoding]::new($false, $true)).GetString($mergedBytes).Trim()
+        }
+        Assert-Condition ($mergedExit -eq 42) "Merged 2>&1 ordinary path preserves mock exit 42 (got $mergedExit)"
+        Assert-Condition ($mergedText -match '\[grokgod\] v2\.0\.0 available') "Merged 2>&1 ordinary path still emits the cached notice"
+        Assert-Condition (Wait-BypassRequest "/") "Merged 2>&1 ordinary path fires the detached refresh"
 
         # 7.1 machine/protocol forms: no notice, no cache write, no network
         $machineForms = @(
