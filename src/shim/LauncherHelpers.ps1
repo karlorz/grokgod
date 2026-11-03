@@ -241,7 +241,9 @@ function New-GrokgodLauncherScript {
         }
         $fromUri = New-Object System.Uri (($fullLaunch.TrimEnd('\', '/') + '\'))
         $toUri = New-Object System.Uri $fullShim
-        $rel = [Uri]::UnescapeDataString($fromUri.MakeRelativeUri($toUri).OriginalString).Replace('/', '\')
+        # Keep the percent-encoded relative form: it is ASCII on disk and
+        # pwsh -File resolves %XX escapes. Percent signs are doubled for cmd.
+        $rel = $fromUri.MakeRelativeUri($toUri).OriginalString.Replace('/', '\')
         if ([string]::IsNullOrWhiteSpace($rel) -or $rel.Contains(':')) {
             throw "ShimPath is not relative to LauncherDirectory; refusing silent discovery fallthrough."
         }
