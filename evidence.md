@@ -1,108 +1,163 @@
-# Evidence — Windows/T3 process integration (static checkpoint)
+# Evidence - Windows/T3 process integration
 
-## Scope and provenance
+## Current revision (acceptance candidate)
 
 - **Base (unchanged parent):** `4e082afa1dcb7e3ba14f81bd52696c922bf3997c`
 - **Branch:** `windows-t3-process-integration`
-- **Workspace:** `e209e01c-d64a-4f77-a292-e8405cea33b4::/Users/karlchow/orca/workspaces/src/windows-t3-process-integration`
-- **Checkpoint commit:** the local commit on this branch that introduced this evidence file. Exact SHA is reported to the coordinator as `git rev-parse HEAD` after that commit (do not copy a SHA from an older evidence snapshot).
-- **Code tree** (index minus this evidence file): `6b44e471982c0443e9e4c1f12cbc6807b6ddcf23`
-- **Code archive sha256** (`git archive` of that tree): `94557953e6cef02dc9c01a9b9b1f8c23b82f18fc17f7a138bc3e11fc429c79d3`
-- **Host:** macOS dev host. Native Windows execution is **pending** on MSI-1 `%TEMP%` fixtures and localhost fixtures; this checkpoint is static-only.
-- **No release / no deploy / no push:** nothing was pushed, tagged, published, installed, or merged. Live T3 settings and the patched binary on MSI-1 were not touched.
+- **Current commit:** `9b7e4384baa53cfe7b92a7393589170b70becc32` (local; root owns push/CI/release)
+- **Archive sha256** (`git archive --format=tar.gz HEAD`): `dcf13307868915909b65449ef819e5ee54132c33fabaa11507951c257f928653`
+- **Native host:** MSI-1, `%TEMP%` fixtures only, packaged PowerShell 7.6.9
+  (`C:\Program Files\WindowsApps\Microsoft.PowerShell_7.6.9.0_x64__8wekyb3d8bbwe\pwsh.exe`).
+- **Native status:** focused PS7 smoke PASS (12/12). The full same-SHA
+  shim + install + measure battery is **pending root review of this revision**;
+  no completion is claimed for it here.
+- **No release / no deploy / no push:** nothing was pushed, tagged, published,
+  installed, or merged from this worktree.
 
-Prior tree identities in older evidence (`925f0adc…` / `86dc51f3…` / `tree2.tar`) are historical. They do not describe these bytes.
-
-## Static results on these bytes
+## Static results on 9b7e438
 
 | Check | Result |
 | --- | --- |
 | `node src/installer/build.mjs --check` | 6/6 ok |
 | `node src/installer/cut.mjs --check` | 6/6 ok |
-| `sh tests/installer/test_generated_installers.sh` | 72 pass / 0 fail |
-| `sh tests/shim/test_shim_windows.sh` | 228 pass / 0 fail |
-| `sh tests/install/test_install_windows.sh` | 217 pass / 0 fail |
-| `install.sh` / `src/shim/grok-shim.sh` | unchanged vs base (POSIX generated artifacts not rewritten) |
+| `tests/installer/test_generated_installers.py` | 72 pass / 0 fail |
+| `tests/shim/test_shim_windows.py` | 253 pass / 0 fail |
+| `tests/install/test_install_windows.py` | 242 pass / 0 fail |
 
-POSIX `tests/install/test_install.sh` was not re-run: `install.sh` bytes match base.
+## Native PS7 smoke on 9b7e438 (PASS)
 
-## What changed on this checkpoint
+| Case | Result |
+| --- | --- |
+| Plain `ToArray()` + caller `@(...).Count`, empty / one / two | 0 / 1 / 2 PASS |
+| Launcher in a Unicode `Prefix\bin`, `%~dp0` relative shim bind, no `GROKGOD_SHIM_PATH` | exit 0, intended shim token PASS |
+| ASCII relative dir + literal `100%.ps1` shim filename | binds `100%%.ps1`, exit 0 PASS |
+| Non-ASCII relative suffix (arbitrary Unicode shim filename) | generator throws, no decoy discovery PASS |
 
-1. **SAFE ARGV.** Removed `GROKGOD_LAUNCHER_TAIL`, `__grokgod_launcher_tail`, and `ConvertFrom-WindowsCommandLine`. Canonical launchers (`LauncherHelpers.ps1.in` and both CMD templates) use `setlocal DisableDelayedExpansion` and forward `%*` directly to `pwsh -File`. The Node fixture driver applies the proven CRT quote/backslash encoding then twice CMD-metachar escaping with `windowsVerbatimArguments: true` (root audit `/tmp/grokgod-argv-audit`, 4/4 exact). Native argv cases (empty, spaces, embedded quote, trailing slash, standalone meta, Unicode, literal `%VAR%`, combined quote+metachar, leading flags, sentinel never executed) are in `tests/shim/test_shim_windows.ps1` and are **not yet run natively**.
-2. **Canonical PS7 resolver/probe.** `src/installer/shared/ps7-version-probe.ps1.part` and `ps7-resolver.ps1.part` are compiled into both `install.ps1` and `LauncherHelpers.ps1`. `build.mjs` `SHARED_INCLUDE_RE` accepts hyphenated function names. `cut.mjs` round-trips both functions. Lossless-merge checks confirm the two generated copies match the shared source. Files were untracked, not gitignored; they are added. Bootstrap helpers are inlined before the installer PS7 gate (no external installed-source dependency).
-3. **Deadlines.** Installer `Stop-GrokgodOwnedProcessTree` no longer does unconditional `tkOut.Wait(250)`; drains are fire-and-forget with stream disposal. Preflight stopwatch starts before `Process.Start`; remaining budget is recomputed before WaitForExit and each drain. Shared version probe WaitForExit uses remaining budget. Status intended 3s + documented cleanup and installer 5s + cleanup are unchanged in contract. Fail-closed empty version / held EOF / nonzero preflight is preserved.
-4. **PS7.** Shim still rejects PS<7 before side effects. Updater/refresh still uses `Resolve-GrokgodEngine` (verified absolute PS7, never powershell.exe fallback). Group 9 now overrides both `ProgramFiles` roots to empty fixture dirs in the **child env only**, uses a discovery-only launcher for missing/broken/<7, keeps baked-valid PS7, and proves genuine standard discovery from the verified engine path. Host-dependent skip removed.
-5. **Docs.** README dispatcher section describes direct `%*` + caller CRT/CMD escaping. T3 direct patched-exe + `GROK_DISABLE_AUTOUPDATER=1`, host selection, and release/patchset vs bundled vs official version vocabulary remain. Original wrapper timeout remains unresolved; direct-path mitigation remains the verified mitigation. No MSYS/T3-expansion invention.
+The installed-style launcher check removes `GROKGOD_SHIM_PATH`; the launcher
+must resolve the exact shim from `%~dp0..\grokgod\shim\grok-shim.ps1`.
 
-## Key file sha256 (working tree)
+## Historical native runs (superseded, retained as history)
 
-- `src/shim/grok-shim.ps1` `69e4b86883cdf9b6f9e72235f6b4716c33ce8defc87b1083d6d96828b597465a`
-- `src/shim/LauncherHelpers.ps1` `7ff491c5c2d0e0a007e7ac9529020152b3d7d2106efb00a4be4f58db7e730285`
-- `src/shim/templates/grok.cmd.template` `4d9ad730c48dda166536611e8c056bf525ce0fee71ba8155026146beead4917f`
-- `src/shim/templates/grokgod.cmd.template` `c9dac15eb83cb30ff9cb8ff1d444af5c80a49378fe47501595d7976189f1b4d9`
-- `install.ps1` `cd6916b4f78162321c6fdd22d4c580ca7713ffa47a0867dee6e83bd7c08786b4`
-- `src/installer/shared/ps7-resolver.ps1.part` `12f4655da43c9ac32e771cfd2562c23059407f3f350115c7e6bf4d7bbd69f383`
-- `src/installer/shared/ps7-version-probe.ps1.part` `68a4ff9c1498e19230ea1b242ddd6e63172bc2a7780f33d4f3bb6845b24a8bec`
-- `tests/shim/launcher_fixture_driver.js` `06d20daa1aab43ba93c6c424c1ec4a9a166b93cda3a47c8071969ab4af90a1f6`
-- `tests/shim/test_shim_windows.ps1` `631352dc7092ebf640177613cf52df2cd56be9c60d3ca88a8fd960ba10779ffa`
-- `tests/shim/test_shim_windows.py` `4bb6db5da15954d18a9b249a1cdb84fc3636b922b68b21bd1d869cb6552b3d88`
-- `tests/install/test_install_windows.py` `8a66476a82f345b79d56498bd4f034618612840a2f347c8f91b62a645a6f1e1b`
+All runs used the same packaged PS7 7.6.9 on MSI-1 and `%TEMP%` fixtures.
+`shim`/`install` are native pass/fail totals; `measure` is the full-launcher
+median over 5 valid samples.
 
-## Historical native baseline (superseded as acceptance; retained as history)
+| Tree | Shim | Install | Measure median |
+| --- | --- | --- | --- |
+| `c3f4c3b` | 180 / 0 | 205 / 13 | 1211.0 ms |
+| `c3033a0` | 180 / 0 | fatal at Test 15 Count | 1153.9 ms |
+| `c9be664` | 179 / 1 | 218 / 3 | 1236.8 ms |
+| `19170da` | 179 / 1 | 218 / 3 | 1242.1 ms |
 
-wt3v6 on an earlier tree: **139 pass / 8 fail**. Root independently classified those 8 as cached-notice exact stderr + detached refresh + six prerequisite/baked-path assertions. The handoff claim that 7 were harness ExitCode-after-Dispose and 1 was flaky is **unproven**; this checkpoint does not relabel them. All 8 must be retested on **these** bytes. Do not infer a pass from wt3v6.
+- The c9/19170 three "survivor" FAILs were a **test nesting bug**, not live
+  processes: `return ,@()` nested inside caller `@(f).Count` yields 1 even for
+  empty. Root proved this on native PS7. 9b7e438 returns a plain `ToArray()`
+  and proves 0/1/2 counts.
+- The c9/19170 shim 179/1 was `Merged 2>&1 ordinary path fires the detached
+  refresh`. The merged case now uses its own `GROKGOD_HOME`/stamp/`.update-check`
+  so the control case's detached writer cannot erase its stale cache. Cause is
+  not claimed; the final battery must show the assertion passing.
+- c303 install stopped after a `StrictMode` `Count` fatal in the then-new
+  survivor helper; 9b7e438 fixes the helper and its callers.
 
-## Explicitly pending (native)
+## Owned descendant and external-close evidence
 
-Run on identical source bytes (this checkpoint SHA) in MSI-1 `%TEMP%` only and localhost fixtures, **argv + group-9 prerequisite first**, then the broad battery:
+- **Shared probe external close (root-run on c303):** Node -> PS7 ->
+  `Get-GrokgodPwshVersion` against a fake engine spawning a 120 s stderr
+  holder. Result: null version, probe 3080 ms, caller exit 4119 ms, close
+  4120 ms, EOF gap 1 ms, no watchdog. Root cleaned only fixture-logged PIDs.
+- **Job-object candidate ownership:** the candidate is created with
+  `CREATE_SUSPENDED`, assigned to a kill-on-close job, its `Process.Handle`
+  retained, then resumed. Streams are constructed before resume; job
+  ownership transfers only after every reader exists; failure paths dispose
+  the job/process. No CIM and no `Process.Kill(true)` tree enumeration.
+- **Final same-SHA no-survivor receipts:** pending the reviewed full battery.
+  Test 15/15b/15c read the mock launch-log PIDs and assert none remain alive.
 
-- `pwsh -NoProfile -File tests/shim/test_shim_windows.ps1` (argv 6.7/6.8 including sentinel-never-executed; group 9 missing/broken/<7/baked/standard discovery)
-- `pwsh -NoProfile -File tests/install/test_install_windows.ps1`
-- Startup samples via `tests/shim/measure_launcher_startup.ps1` on isolated fixture env with output/exit checked
-- Double-pwsh spawn (CMD probe then shim) efficiency: **deferred** until measured on these bytes. Historical ~1.4 s vs T3 4 s is historical only.
-- Hanging prerequisite CMD candidate: `ps-engine-probe.cmd.part` documents that cmd.exe has no wait-with-timeout; a powershell.exe babysitter was rejected. **No production bound is claimed from the caller watchdog.** Targeted native hang proof remains pending/deferred with that rationale.
-- PSParser parse-only of edited PowerShell files on Windows
-- Draft PR / Windows CI: root ownership
-- Live flash-max install/test: root ownership
-- Version bump / tag / release: root ownership
+## Hanging-CMD prerequisite limitation
+
+`ps-engine-probe.cmd` documents that cmd.exe has no wait-with-timeout
+primitive. A `powershell.exe` babysitter was rejected. The caller's own
+watchdog (test driver, suite supervisor, or interactive user) owns a
+pathological hanging `pwsh.exe` candidate. No production bound is claimed for
+that case.
+
+## Key file sha256 on 9b7e438
+
+- `install.ps1` `0d60925a07844db739043eee6dac6e88a267555f336199f570208b08c04a7fff`
+- `src/shim/grok-shim.ps1` `9ab5156598987813a6c1f6072378721f93f97797569d8f2c10627ef276ac49dd`
+- `src/shim/LauncherHelpers.ps1` `7561ca91370e1c9fca605903f7631e853ae1549e56e751696bfc2a1a03976846`
+- `src/shim/templates/grok.cmd.template` `f84176a9cd84a5aa01e3d041efb1b09cf38adcfb8a61d3fb368c51413c3ed389`
+- `src/shim/templates/grokgod.cmd.template` `546cd2897a15f41f894e482abd92c13ee701b78703023530efac4c63adbce96e`
+- `src/installer/shared/ps7-version-probe.ps1.part` `aca3cd1aed4346cfcea018cf49231f235cd3d39ec62d065514b4c267568cd914`
+- `src/installer/shared/ps7-resolver.ps1.part` `c33f752906b78b3cb5851ead364c3deb279217c7dd2f0feb02c60adae5b6eff4`
+- `tests/shim/test_shim_windows.ps1` `b06f018a41ea24234a3f0f8a51298ff6f2af46e7fa4f7492c1d315ddbaee241e`
+- `tests/install/test_install_windows.ps1` `3b734acb5f7f45d23084e3b5b59cd7ef74dd70db385dd42890d8573778c95339`
+
+## What changed since the root-pushed c3 baseline
+
+1. **SAFE ARGV retained.** `setlocal DisableDelayedExpansion`, direct `%*`
+   forwarding, caller CRT quote/backslash then twice CMD-metachar escaping
+   with `windowsVerbatimArguments`. Native argv cases are in the shim suite.
+2. **Canonical PS7 resolver/probe retained.** Shared parts compile into
+   `install.ps1` and `LauncherHelpers.ps1`; the shared probe now clears stdio
+   inherit flags around its own `Process.Start` and kills on an incomplete
+   drain.
+3. **Bounded candidate ownership.** Kill-on-close job assigned while the
+   candidate is suspended; retained process handle; streams before resume;
+   job transfer after readers; fail-closed pipe-inherit clearing. No CIM, no
+   tree-enumeration kill fallback.
+4. **Unicode launchers.** ASCII absolute shim paths bind directly (cross-drive
+   safe, `%` doubled). Non-ASCII absolute paths bind a decoded ASCII
+   `%~dp0`-relative suffix from `LauncherDirectory`; an unrepresentable suffix
+   throws instead of falling through to discovery. The installer and fast path
+   pass the real `BinDir`. Test 14 drives the installed `Prefix\bin\grok.cmd`
+   with `GROKGOD_BIN` and `GROKGOD_SHIM_PATH` removed.
+5. **Test contracts.** Test 16 asserts `Prefix\grokgod\bin\grokgod.exe`; Test
+   15 survivor checks use recorded mock PIDs with plain-array counts; the
+   merged 2>&1 case has an isolated home.
+6. **Docs/guidance.** Windows Terminal guidance names `pwsh.exe`, rejects
+   Windows PowerShell 5.1, and is printed after successful installs.
+
+## History (labeled, superseded)
+
+The sections below describe earlier checkpoints. They are retained for
+provenance and do not describe 9b7e438.
+
+### Static checkpoint (base 4e082afa)
+
+- Code tree `6b44e471982c0443e9e4c1f12cbc6807b6ddcf23`,
+  archive `94557953e6cef02dc9c01a9b9b1f8c23b82f18fc17f7a138bc3e11fc429c79d3`.
+- Static only; native Windows execution was pending.
+- SAFE ARGV, canonical PS7 resolver/probe, deadline changes, PS7 gate, docs.
+
+### stderr-held EOF fail-closed (earlier follow-up)
+
+- Both stdout and stderr drains must complete; `where.exe` uses one 5000 ms
+  remaining budget.
+- Static on those bytes: build 6/6, cut 6/6, generated 72/0, shim py 231/0,
+  install py 219/0. Native pending at that time.
+
+### Driver path quoting and PS7 workflow step name
+
+- CI on `b1d9b49`: release workflow expected the old Windows PowerShell 5.1
+  job step name; the driver twice-escaped the launcher path.
+- Static after that follow-up: shim py 232/0, release workflow 9/9.
+
+### Group-9 child cwd isolation (test-only)
+
+- Group-9 child processes use an empty fixture cwd so `where.exe` cannot see
+  host PSHOME/workspace `pwsh.exe`. Static shim py 233/0.
+
+### wt3v6 native baseline (earlier tree)
+
+- 139 pass / 8 fail on an earlier tree. Root classified the 8 as cached-notice
+  exact stderr + detached refresh + prerequisite/baked-path assertions. That
+  baseline does not describe 9b7e438.
 
 ## Invariants held
 
-- No `patches/` or Rust edits, no Docker, no secrets, no live T3/PATH changes, no worker push/PR/merge/tag.
+- No `patches/` or Rust edits, no Docker, no secrets, no live T3/PATH changes,
+  no worker push/PR/merge/tag.
 - Generated artifacts produced only via `node src/installer/build.mjs`.
-- Current T3 direct binary + `GROK_DISABLE_AUTOUPDATER=1` setup is preserved (not modified this turn).
-
-## Follow-up: stderr-held EOF fail-closed (source hashes)
-
-Both stdout and stderr must complete before a version/candidate is accepted. `errTask.Wait` return is no longer discarded. `where.exe` enumeration uses one 5000ms remaining budget.
-
-- `src/installer/shared/ps7-version-probe.ps1.part` `b1801472db1809a409c22063680976d08821774adf17c3d0e38a9b4de6cd2f88`
-- `src/installer/shared/ps7-resolver.ps1.part` `c33f752906b78b3cb5851ead364c3deb279217c7dd2f0feb02c60adae5b6eff4`
-- `src/shim/grok-shim.ps1` `4fc077aaa236226e22a5ba327b72931075598bbf169995a8a9111925c747300b`
-- `src/installer/templates/install.ps1.in` `14c08e8f025ec4065bdfe0dc38771e91036e411a5c3b32f0aa149849046c369d`
-- `install.ps1` `025d969c0e197871de82d3311e10e58ad2f08eda0c3fe7e31e63dbe0958d5632`
-- `src/shim/LauncherHelpers.ps1` `c33ebcee22ddca4c2c771d30d7ea272611668691483ee55e8895846a9c3a6b6b`
-- `tests/shim/test_shim_windows.ps1` `e1c5e5682a194b7b3cac317ed3dd37b76048d9499e46162637a4f8d9f113d972`
-- `tests/shim/test_shim_windows.py` `3c768a3c94254c692f770ec07fa99ed7a416df55bc6ece3200a03551e58cf150`
-- `tests/install/test_install_windows.py` `24d8e69e202e0543c8d4e8c196333050c5b0a7297baa46c3230a19781080159a`
-
-Static on these bytes: build 6/6, cut 6/6, generated-installers 72/0, shim py 231/0, install py 219/0. Native still pending.
-
-## Follow-up: driver path quoting and PS7 workflow step name
-
-CI on b1d9b49: Linux `test_release_workflow.sh` still expected the old Windows PowerShell 5.1 job step name; Windows Node full-launcher cases exited 1 in ~30ms because the driver twice-escaped the launcher path (fixture dirs contain spaces). The audit escaped argv only; the cmd path is quoted for whitespace without caret-escaping.
-
-- `tests/shim/launcher_fixture_driver.js` `2c5eb29fe20dd594dbac91b24f124a1fcd81567f38cc855a2f0e75cec7265b12`
-- `tests/release/test_release_workflow.sh` `5792ca96a9aa21335a8022a19bc1feb10edbda689d5d80aa9f6cf40a7b4cd2d7`
-- `tests/shim/test_shim_windows.py` `1ae01fda0a802081fe89a095aadbfc55c13fab07d65f87604ccead8a08be64b2`
-
-Static after this follow-up: shim py 232/0, `tests/release/test_release_workflow.sh` 9/9. Native still pending on these driver bytes.
-
-## Follow-up: group-9 child cwd isolation (test-only)
-
-`where.exe` searches the current directory before PATH. Group-9 child processes now set WorkingDirectory to an empty fixture directory so host PSHOME/workspace `pwsh.exe` cannot satisfy discovery. Production launchers are unchanged.
-
-- `tests/shim/test_shim_windows.ps1` `0f24e20112bb8e2b93b6d55e53df09e3fa07a5b636761d47b7b58d8b1bc675a1`
-- `tests/shim/test_shim_windows.py` `975ee1cd6c40fabfa1c6d00ce68417c93d05f161fc74f970ffa5f992919500cc`
-
-Static: shim py 233/0.
+- Root owns CI, release, live install, and push.
