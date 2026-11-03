@@ -568,7 +568,11 @@ function Get-BinaryReportedVersion([string]$exePath) {
         $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
         $stderrTask = $proc.StandardError.ReadToEndAsync()
 
-        $exited = $proc.WaitForExit($probeWaitMs)
+        $waitMs = $probeWaitMs
+        $remainWait = $totalBudgetMs - [int]$watch.ElapsedMilliseconds
+        if ($remainWait -lt 0) { $remainWait = 0 }
+        if ($remainWait -lt $waitMs) { $waitMs = $remainWait }
+        $exited = $proc.WaitForExit($waitMs)
         if (-not $exited) {
             $remain = $totalBudgetMs - [int]$watch.ElapsedMilliseconds
             if ($remain -lt 0) { $remain = 0 }

@@ -230,8 +230,8 @@ def main():
     check("$probeWaitMs = 3000" in shim_src, "Probe wait preserves the intended 3000ms")
     check("$totalBudgetMs = 4000" in shim_src, "Probe total budget covers wait + drains + cleanup")
     check("ReadToEndAsync" in shim_src, "Probe drains stdout/stderr concurrently")
-    check("$proc.WaitForExit($probeWaitMs)" in shim_src,
-          "Probe waits with budget before any blocking read")
+    check("$probeWaitMs = 3000" in shim_src and "WaitForExit($waitMs)" in shim_src,
+          "Probe wait is the intended 3000ms capped by remaining total budget")
     check("function Stop-OwnedProbeProcess" in shim_src,
           "Probe terminates only owned process via Stop-OwnedProbeProcess")
     check("'taskkill.exe'" in shim_src and "/T /F /PID" in shim_src,
