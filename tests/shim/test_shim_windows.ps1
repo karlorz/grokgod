@@ -1193,6 +1193,14 @@ while (`$listener.IsListening) {
             "GROKGOD_MOCK_MODE" = "version"
         }
 
+        # Merged 2>&1 case gets its own home: the control case's detached
+        # refresh may still be writing the shared cache after its request
+        # is observed, which would erase a stale reset made here.
+        $mergedHome = Join-Path $testDir "merged_grokgod_home"
+        New-Item -ItemType Directory -Force -Path $mergedHome | Out-Null
+        $mergedStamp = Join-Path $mergedHome ".source-version"
+        $mergedCache = Join-Path $mergedHome ".update-check"
+
         # 7.0 control: ordinary interactive path with stale cache fires the refresh
         Reset-BypassCache -checkedAt 1
         Set-Content -LiteralPath $bypassRequestLog -Value "" -Encoding ASCII
@@ -1207,7 +1215,9 @@ while (`$listener.IsListening) {
         # refresh helper then mock passthrough, with stdout and stderr merged
         # to one OS handle (cmd 2>&1). Proves inherit flags are restored
         # even when GetStdHandle(STD_OUTPUT)==GetStdHandle(STD_ERROR).
-        Reset-BypassCache -checkedAt 1
+        Set-Content -LiteralPath $mergedStamp -Value "SHA=$mockExeHash`nPATCHSET=v1.0.0`nVERSION=v1.0.0`nMODE=release" -Encoding ASCII
+        Set-Content -LiteralPath $mergedCache -Value "CHECKED_AT=1`nVERSION=v2.0.0" -Encoding ASCII
+        $mergedCacheBefore = Get-Content $mergedCache -Raw
         Set-Content -LiteralPath $bypassRequestLog -Value "" -Encoding ASCII
         $mergedOut = Join-Path $testDir "merged_stdout_stderr.txt"
         if (Test-Path -LiteralPath $mergedOut) { Remove-Item -LiteralPath $mergedOut -Force }
@@ -1217,7 +1227,7 @@ while (`$listener.IsListening) {
         $mpsi.Arguments = "/d /s /c `"$inner`""
         $mpsi.UseShellExecute = $false
         $mpsi.CreateNoWindow = $true
-        $mpsi.EnvironmentVariables["GROKGOD_HOME"] = $fakeGrokgodHome
+        $mpsi.EnvironmentVariables["GROKGOD_HOME"] = $mergedHome
         $mpsi.EnvironmentVariables["GROKGOD_BIN"] = $mockExe
         $mpsi.EnvironmentVariables["GROKGOD_UPDATE_CHECK_URL"] = ($bypassBaseUrl.TrimEnd('/') + '/')
         $mpsi.EnvironmentVariables["GROKGOD_UPDATE_CHECK_DISABLE"] = "0"
@@ -1245,7 +1255,7 @@ while (`$listener.IsListening) {
         Assert-Condition ($mergedText -match '\[grokgod\] v2\.0\.0 available') "Merged 2>&1 ordinary path still emits the cached notice"
         $mergedRefresh = Wait-BypassRequest "/"
         if (-not $mergedRefresh) {
-            Write-Host "MERGED-REFRESH-DIAG requests=$([string]::Join(',', @(Read-BypassRequests))) exit=$mergedExit cache=$(Get-Content $noticeCache -Raw)"
+            Write-Host "MERGED-REFRESH-DIAG requests=$([string]::Join(',', @(Read-BypassRequests))) exit=$mergedExit before=[$mergedCacheBefore] after=$(Get-Content $mergedCache -Raw) controlCache=$(Get-Content $noticeCache -Raw)"
         }
         Assert-Condition $mergedRefresh "Merged 2>&1 ordinary path fires the detached refresh"
 
