@@ -114,37 +114,11 @@ rem grokgod thin launcher for Windows ($Identity) - requires PowerShell 7+
 setlocal DisableDelayedExpansion
 $bakedLine
 $shimBindLine
-if defined GROKGOD_SHIM_PATH if exist "%GROKGOD_SHIM_PATH%" goto shim_ready
-set "GROKGOD_SHIM_DIR=%~dp0"
-if exist "%GROKGOD_SHIM_DIR%grok-shim.ps1" (
-    set "GROKGOD_SHIM_PATH=%GROKGOD_SHIM_DIR%grok-shim.ps1"
-    goto shim_ready
+if not exist "%GROKGOD_SHIM_PATH%" (
+    echo grokgod: bound shim not found: "%GROKGOD_SHIM_PATH%" 1>&2
+    echo grokgod: refusing co-located/default discovery for an explicit binding. 1>&2
+    exit /b 64
 )
-if exist "%GROKGOD_SHIM_DIR%..\grokgod\shim\grok-shim.ps1" (
-    set "GROKGOD_SHIM_PATH=%GROKGOD_SHIM_DIR%..\grokgod\shim\grok-shim.ps1"
-    goto shim_ready
-)
-if defined GROKGOD_HOME if exist "%GROKGOD_HOME%\shim\grok-shim.ps1" (
-    set "GROKGOD_SHIM_PATH=%GROKGOD_HOME%\shim\grok-shim.ps1"
-    goto shim_ready
-)
-if exist "%USERPROFILE%\.grokgod\shim\grok-shim.ps1" (
-    set "GROKGOD_SHIM_PATH=%USERPROFILE%\.grokgod\shim\grok-shim.ps1"
-    goto shim_ready
-)
-if exist "%GROKGOD_SHIM_DIR%..\grokgod\src\shim\grok-shim.ps1" (
-    set "GROKGOD_SHIM_PATH=%GROKGOD_SHIM_DIR%..\grokgod\src\shim\grok-shim.ps1"
-    goto shim_ready
-)
-if exist "%USERPROFILE%\.grokgod\src\shim\grok-shim.ps1" (
-    set "GROKGOD_SHIM_PATH=%USERPROFILE%\.grokgod\src\shim\grok-shim.ps1"
-    goto shim_ready
-)
-if exist "%USERPROFILE%\.grokgod\grok-shim.ps1" (
-    set "GROKGOD_SHIM_PATH=%USERPROFILE%\.grokgod\grok-shim.ps1"
-    goto shim_ready
-)
-set "GROKGOD_SHIM_PATH=grok-shim.ps1"
 :shim_ready
 
 __GROKGOD_PS7_PROBE__

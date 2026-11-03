@@ -191,6 +191,10 @@ def main():
           "Generated launchers invoke the shim via runtime GROKGOD_SHIM_PATH")
     check("LauncherDirectory" in launcher_helpers_content,
           "New-GrokgodLauncherScript binds a %~dp0-relative shim from LauncherDirectory")
+    check('if not exist "%GROKGOD_SHIM_PATH%"' in launcher_helpers_content,
+          "Generated launchers reject a missing bound shim before any discovery")
+    check("exit /b 64" in launcher_helpers_content and "bound shim not found" in launcher_helpers_content,
+          "Missing bound shim prints stderr and exits 64")
     check("Kill(true)" not in shim_src, "Shim does not call Process.Kill(true) tree enumeration")
     check("TerminateJobObject" not in shim_src, "Shim does not TerminateJobObject as a kill fallback")
     check("grokgod\\shim\\grok-shim.ps1" in grok_cmd_content and "GROKGOD_HOME" in grok_cmd_content,

@@ -1025,6 +1025,68 @@ exit 0
         Stop-FixtureMockProcesses | Out-Null
         Assert-Condition (@(Get-FixtureMockProcesses).Count -eq 0) "Node parent held-eof leaves no surviving fixture process"
 
+        # 6.6c Bound shim missing: the generated launcher must fail with
+        # exit 64 and never fall through to a co-located or default decoy.
+        Write-Host "`n-- Testing Bound-Missing Shim Guard --"
+        $guardRoot = Join-Path $testDir "bound missing ünicode"
+        $guardBin = Join-Path $guardRoot "bin"
+        $guardShimDir = Join-Path $guardRoot "grokgod\shim"
+        New-Item -ItemType Directory -Force -Path $guardBin, $guardShimDir | Out-Null
+        $guardShim = Join-Path $guardShimDir "grok-shim.ps1"
+        $guardLauncher = Join-Path $guardBin "grok.cmd"
+        $guardContent = New-GrokgodLauncherScript -Identity grok -ShimPath $guardShim -PwshPath $pwshExe -LauncherDirectory $guardBin
+        Set-Content -LiteralPath $guardLauncher -Value $guardContent -Encoding ASCII
+        $guardOnDisk = Get-Content -LiteralPath $guardLauncher -Raw
+        Assert-Condition ($guardOnDisk -match '%~dp0') "Bound-missing guard: launcher binds the shim relative to %~dp0"
+        Assert-Condition ($guardOnDisk -match 'if not exist "%GROKGOD_SHIM_PATH%"') "Bound-missing guard: launcher rejects a missing explicit binding"
+        Set-Content -LiteralPath (Join-Path $guardBin "grok-shim.ps1") -Value 'Write-Output "DECOY-COLOCATED"; exit 0' -Encoding UTF8
+        $guardDefaultDir = Join-Path $isolatedProfile ".grokgod\shim"
+        New-Item -ItemType Directory -Force -Path $guardDefaultDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $guardDefaultDir "grok-shim.ps1") -Value 'Write-Output "DECOY-DEFAULT"; exit 0' -Encoding UTF8
+
+        function Invoke-GuardLauncher([string]$cmdPath) {
+            $gpsi = New-Object System.Diagnostics.ProcessStartInfo
+            $gpsi.FileName = (Join-Path $env:SystemRoot "System32\cmd.exe")
+            $gpsi.Arguments = "/d /s /c `"`"$cmdPath`" status`""
+            $gpsi.UseShellExecute = $false
+            $gpsi.RedirectStandardOutput = $true
+            $gpsi.RedirectStandardError = $true
+            $gpsi.CreateNoWindow = $true
+            $gpsi.EnvironmentVariables.Remove("GROKGOD_SHIM_PATH")
+            $gpsi.EnvironmentVariables["USERPROFILE"] = $isolatedProfile
+            $gpsi.EnvironmentVariables["GROKGOD_HOME"] = $fakeGrokgodHome
+            $gpsi.EnvironmentVariables["GROKGOD_BIN"] = $mockExe
+            $gpsi.EnvironmentVariables["GROKGOD_UPDATE_CHECK_DISABLE"] = "1"
+            $gpsi.EnvironmentVariables["PATH"] = (Join-Path $env:SystemRoot "System32")
+            $gp = [System.Diagnostics.Process]::Start($gpsi)
+            $gOutTask = $gp.StandardOutput.ReadToEndAsync()
+            $gErrTask = $gp.StandardError.ReadToEndAsync()
+            $gExited = $gp.WaitForExit(30000)
+            if (-not $gExited) {
+                try { & taskkill.exe /T /F /PID $gp.Id 2>$null | Out-Null } catch {}
+                try { $gp.Kill() } catch {}
+            }
+            $gOut = ""
+            if ($gOutTask.Wait(5000) -and -not $gOutTask.IsFaulted -and -not $gOutTask.IsCanceled) { $gOut = [string]$gOutTask.Result }
+            $gErr = ""
+            if ($gErrTask.Wait(5000) -and -not $gErrTask.IsFaulted -and -not $gErrTask.IsCanceled) { $gErr = [string]$gErrTask.Result }
+            $gCode = $null
+            try { if ($gp.HasExited) { $gCode = $gp.ExitCode } } catch {}
+            try { $gp.Dispose() } catch {}
+            return [PSCustomObject]@{ ExitCode = $gCode; StdOut = $gOut; StdErr = $gErr }
+        }
+
+        $missing = Invoke-GuardLauncher $guardLauncher
+        Assert-Condition ($missing.ExitCode -eq 64) "Bound-missing guard: missing bound shim exits 64 (got $($missing.ExitCode))"
+        Assert-Condition ($missing.StdErr -match 'bound shim not found') "Bound-missing guard: missing bound shim prints actionable stderr"
+        Assert-Condition ($missing.StdOut -notmatch 'DECOY-') "Bound-missing guard: no co-located or default decoy executed"
+
+        Set-Content -LiteralPath $guardShim -Value 'Write-Output "BOUND-SHIM-OK"; exit 0' -Encoding UTF8
+        $present = Invoke-GuardLauncher $guardLauncher
+        Assert-Condition ($present.ExitCode -eq 0) "Bound-missing guard: present bound shim exits 0 (got $($present.ExitCode))"
+        Assert-Condition ($present.StdOut -match 'BOUND-SHIM-OK') "Bound-missing guard: present bound shim runs the intended script"
+        Assert-Condition ($present.StdOut -notmatch 'DECOY-') "Bound-missing guard: present bound shim does not run a decoy"
+
         # 6.7 launcher-level argument preservation. Direct %* forwarding
         # plus the driver's CRT quote/backslash then twice CMD-metachar
         # escaping (windowsVerbatimArguments) is the proven native
