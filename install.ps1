@@ -323,8 +323,6 @@ public static class GrokgodHandleInfo {
     public static extern uint ResumeThread(IntPtr hThread);
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    public static extern bool TerminateJobObject(IntPtr hJob, uint uExitCode);
     public const uint HANDLE_FLAG_INHERIT = 0x00000001;
     public const uint CREATE_SUSPENDED = 0x00000004;
     public const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
@@ -434,16 +432,10 @@ public sealed class GrokgodJobChild : IDisposable {
     public int ExitCode { get { return process.ExitCode; } }
     public bool WaitForExit(int milliseconds) { return process.WaitForExit(milliseconds); }
     public void KillProcess() {
-        try {
-            if (NativeProcessHandle != IntPtr.Zero) GrokgodHandleInfo.TerminateProcess(NativeProcessHandle, 1);
-        } catch {}
-        try { if (process != null) process.Kill(true); } catch {
-            try { if (process != null) process.Kill(); } catch {}
-        }
+        try { if (process != null && !process.HasExited) process.Kill(); } catch {}
     }
     public void CloseJob() {
         if (JobHandle != IntPtr.Zero) {
-            try { GrokgodHandleInfo.TerminateJobObject(JobHandle, 1); } catch {}
             GrokgodHandleInfo.CloseHandle(JobHandle);
             JobHandle = IntPtr.Zero;
         }
@@ -1777,8 +1769,8 @@ if ($LocalReleaseVerified) {
 
                     $fastVerifiedPwsh = $null
                     try { $fastVerifiedPwsh = Resolve-GrokgodPwsh } catch { $fastVerifiedPwsh = $null }
-                    $fastGrokContent = New-GrokgodLauncherScript -Identity "grok" -ShimPath $fastInstalledShimPs1 -PwshPath $fastVerifiedPwsh
-                    $fastGrokgodContent = New-GrokgodLauncherScript -Identity "grokgod" -ShimPath $fastInstalledShimPs1 -PwshPath $fastVerifiedPwsh
+                    $fastGrokContent = New-GrokgodLauncherScript -Identity "grok" -ShimPath $fastInstalledShimPs1 -PwshPath $fastVerifiedPwsh -LauncherDirectory $BinDir
+                    $fastGrokgodContent = New-GrokgodLauncherScript -Identity "grokgod" -ShimPath $fastInstalledShimPs1 -PwshPath $fastVerifiedPwsh -LauncherDirectory $BinDir
                     Set-Content -LiteralPath $fastGrokCmd -Value $fastGrokContent -Encoding ASCII
                     Set-Content -LiteralPath $fastGrokgodCmd -Value $fastGrokgodContent -Encoding ASCII
                     Write-OK "Regenerated command launchers: $fastGrokCmd and $fastGrokgodCmd"
@@ -2307,8 +2299,8 @@ try {
 
     $verifiedPwsh = $null
     try { $verifiedPwsh = Resolve-GrokgodPwsh } catch { $verifiedPwsh = $null }
-    $grokCmdContent = New-GrokgodLauncherScript -Identity "grok" -ShimPath $installedShimPs1 -PwshPath $verifiedPwsh
-    $grokgodCmdContent = New-GrokgodLauncherScript -Identity "grokgod" -ShimPath $installedShimPs1 -PwshPath $verifiedPwsh
+    $grokCmdContent = New-GrokgodLauncherScript -Identity "grok" -ShimPath $installedShimPs1 -PwshPath $verifiedPwsh -LauncherDirectory $BinDir
+    $grokgodCmdContent = New-GrokgodLauncherScript -Identity "grokgod" -ShimPath $installedShimPs1 -PwshPath $verifiedPwsh -LauncherDirectory $BinDir
 
     Set-Content -LiteralPath $grokCmdPath -Value $grokCmdContent -Encoding ASCII
     Tx-Log "Wrote launcher $grokCmdPath"

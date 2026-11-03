@@ -220,20 +220,39 @@ function New-GrokgodLauncherScript {
         # stops being runnable, and discovery then applies. The path is
         # re-verified here at generation time so an arbitrary or stale value
         # can never be baked in. Empty = pure discovery launcher.
-        [string]$PwshPath = ""
+        [string]$PwshPath = "",
+
+        # Directory that will hold the generated .cmd. Used to bind an ASCII
+        # %~dp0-relative GROKGOD_SHIM_PATH so Unicode absolute shim paths are
+        # never written into the ASCII launcher file.
+        [string]$LauncherDirectory = ""
     )
 
     $normalizedShim = $ShimPath.Trim()
     if (-not (Test-Path -LiteralPath $normalizedShim)) {
         throw "ShimPath '$normalizedShim' does not exist."
     }
-    # ASCII ShimPath is bound into the launcher so an explicit caller path
-    # cannot be replaced by a different discovered grok-shim.ps1. Non-ASCII
-    # paths stay out of the ASCII .cmd file and are resolved at runtime via
-    # GROKGOD_SHIM_PATH / GROKGOD_HOME / %~dp0.
+    $fullShim = [System.IO.Path]::GetFullPath($normalizedShim)
     $shimBindLine = ""
-    if ($normalizedShim -notmatch '[^\x00-\x7F]') {
-        $shimBindLine = 'set "GROKGOD_SHIM_PATH=' + $normalizedShim + '"'
+    if ($LauncherDirectory) {
+        $fullLaunch = [System.IO.Path]::GetFullPath($LauncherDirectory.Trim())
+        if (-not (Test-Path -LiteralPath $fullLaunch)) {
+            throw "LauncherDirectory '$LauncherDirectory' does not exist."
+        }
+        $fromUri = New-Object System.Uri (($fullLaunch.TrimEnd('\', '/') + '\'))
+        $toUri = New-Object System.Uri $fullShim
+        $rel = [Uri]::UnescapeDataString($fromUri.MakeRelativeUri($toUri).OriginalString).Replace('/', '\')
+        if ([string]::IsNullOrWhiteSpace($rel) -or $rel.Contains(':')) {
+            throw "ShimPath is not relative to LauncherDirectory; refusing silent discovery fallthrough."
+        }
+        if ($rel -match '[^\x00-\x7F]') {
+            throw "Relative shim path from LauncherDirectory is not ASCII; refusing silent discovery fallthrough."
+        }
+        $shimBindLine = 'set "GROKGOD_SHIM_PATH=%~dp0' + ($rel.Replace('%', '%%')) + '"'
+    } elseif ($fullShim -notmatch '[^\x00-\x7F]') {
+        $shimBindLine = 'set "GROKGOD_SHIM_PATH=' + ($fullShim.Replace('%', '%%')) + '"'
+    } else {
+        throw "ShimPath contains non-ASCII characters; pass -LauncherDirectory so the launcher binds a %~dp0-relative ASCII path."
     }
     $bakedLine = ""
     $trimmedPwsh = $PwshPath.Trim()
@@ -256,7 +275,7 @@ function New-GrokgodLauncherScript {
             if (-not $bakedParsed -or $bakedParsed.Major -lt 7) {
                 throw "PwshPath '$trimmedPwsh' is not a verified runnable PowerShell 7+ engine (probe returned '$bakedVersion')."
             }
-            $bakedLine = 'set "GROKGOD_POWERSHELL_BAKED=' + $trimmedPwsh + '"'
+            $bakedLine = 'set "GROKGOD_POWERSHELL_BAKED=' + ($trimmedPwsh.Replace('%', '%%')) + '"'
         }
     }
 

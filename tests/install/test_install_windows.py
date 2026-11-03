@@ -192,8 +192,9 @@ def main():
           "Installer inherit helper warns on SetHandleInformation restore failure like the shim")
     check("JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE" in src,
           "Preflight uses a kill-on-close job so exited-root descendants are reaped")
-    check("TerminateJobObject" in src and "NativeProcessHandle" in src,
-          "Preflight terminates the job object and the CreateProcess handle")
+    check("Kill(true)" not in src, "Installer does not call Process.Kill(true) tree enumeration")
+    check("TerminateJobObject" not in src, "Installer does not TerminateJobObject as a kill fallback")
+    check("LauncherDirectory" in src, "Installer passes LauncherDirectory when generating cmd launchers")
     check("CREATE_SUSPENDED" in src and "AssignProcessToJobObject" in src,
           "Candidate is assigned to the job while still suspended")
     check("Get-CimInstance" not in src, "Installer production code does not enumerate CIM processes")
@@ -398,6 +399,14 @@ def main():
               "Native install preflight survivor checks use recorded mock PIDs")
         check("@(Get-AliveLoggedMockProcesses).Count" in install_test_src,
               "Alive-PID collection is wrapped so StrictMode empty returns have Count")
+        check("return $alive.ToArray()" in install_test_src and "return ,$alive.ToArray()" not in install_test_src,
+              "Alive-PID helper returns a plain ToArray() without a unary comma wrap")
+        check("Plain ToArray empty + @() Count is 0" in install_test_src,
+              "Native install proves empty/one/multiple @() Count on plain ToArray()")
+        check('Join-Path $targetBin "grok.cmd"' in install_test_src,
+              "Test 14 uses the installed Prefix\\bin\\grok.cmd")
+        check('"GROKGOD_SHIM_PATH" = $installedShimForFixture' not in install_test_src,
+              "Test 14 does not override GROKGOD_SHIM_PATH")
         check("GROKGOD_MOCK_MODE" in install_test_src, "Native install mock exe selects fixture modes via environment")
         for mode_fragment in ('"echo"', '"protocol"', '"hang"', '"noisy-stderr"',
                               '"held-eof"', '"held-stderr-eof"', '"failure"',

@@ -84,8 +84,6 @@ public static class GrokgodHandleInfo {
     public static extern uint ResumeThread(IntPtr hThread);
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    public static extern bool TerminateJobObject(IntPtr hJob, uint uExitCode);
     public const uint HANDLE_FLAG_INHERIT = 0x00000001;
     public const uint CREATE_SUSPENDED = 0x00000004;
     public const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
@@ -195,16 +193,10 @@ public sealed class GrokgodJobChild : IDisposable {
     public int ExitCode { get { return process.ExitCode; } }
     public bool WaitForExit(int milliseconds) { return process.WaitForExit(milliseconds); }
     public void KillProcess() {
-        try {
-            if (NativeProcessHandle != IntPtr.Zero) GrokgodHandleInfo.TerminateProcess(NativeProcessHandle, 1);
-        } catch {}
-        try { if (process != null) process.Kill(true); } catch {
-            try { if (process != null) process.Kill(); } catch {}
-        }
+        try { if (process != null && !process.HasExited) process.Kill(); } catch {}
     }
     public void CloseJob() {
         if (JobHandle != IntPtr.Zero) {
-            try { GrokgodHandleInfo.TerminateJobObject(JobHandle, 1); } catch {}
             GrokgodHandleInfo.CloseHandle(JobHandle);
             JobHandle = IntPtr.Zero;
         }

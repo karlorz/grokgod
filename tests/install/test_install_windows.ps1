@@ -175,7 +175,7 @@ function Get-AliveLoggedMockProcesses {
         $p = Get-Process -Id $id -ErrorAction SilentlyContinue
         if ($null -ne $p) { [void]$alive.Add($p) }
     }
-    return ,$alive.ToArray()
+    return $alive.ToArray()
 }
 
 # -----------------------------------------------------------------------------
@@ -1050,21 +1050,17 @@ try {
     } else {
         Write-Host "  Node driver engine: $nodeExe"
 
-        # Generate launchers with the INSTALLED LauncherHelpers + shim, and
-        # bake in a verified runnable pwsh so the launcher works even where
-        # PATH cannot resolve pwsh (non-interactive provider spawns).
+        # Use the installer-written Prefix\bin\grok.cmd so Unicode homes
+        # resolve grok-shim.ps1 via %~dp0, not a GROKGOD_SHIM_PATH override.
         . $installedHelpersForFixture
         $fixtureVerifiedPwsh = $null
         try { $fixtureVerifiedPwsh = Resolve-GrokgodPwsh } catch { $fixtureVerifiedPwsh = $null }
-        $fixtureLauncherDir = Join-Path $fixtureRoot "launchers"
-        New-Item -ItemType Directory -Force -Path $fixtureLauncherDir | Out-Null
-        $fixtureGrokCmd = Join-Path $fixtureLauncherDir "grok.cmd"
-        $bakedPwshArg = ""
-        if ($fixtureVerifiedPwsh) { $bakedPwshArg = $fixtureVerifiedPwsh }
-        Set-Content -LiteralPath $fixtureGrokCmd -Value (New-GrokgodLauncherScript -Identity grok -ShimPath $installedShimForFixture -PwshPath $bakedPwshArg) -Encoding ASCII
+        $fixtureGrokCmd = Join-Path $targetBin "grok.cmd"
+        Assert-Test (Test-Path -LiteralPath $fixtureGrokCmd) "Installed grok.cmd exists for launcher tests"
         if ($fixtureVerifiedPwsh) {
             Write-Host "  Launcher engine: $fixtureVerifiedPwsh (verified)"
-            Assert-Test ((Get-Content $fixtureGrokCmd -Raw) -match 'set "GROKGOD_POWERSHELL_BAKED=') "Generated fixture launcher bakes the verified engine path"
+            Assert-Test ((Get-Content -LiteralPath $fixtureGrokCmd -Raw) -match 'set "GROKGOD_POWERSHELL_BAKED=') "Installed launcher bakes the verified engine path"
+            Assert-Test ((Get-Content -LiteralPath $fixtureGrokCmd -Raw) -match '%~dp0') "Installed launcher binds the shim relative to %~dp0"
         } else {
             Write-Host "  Launcher engine: discovery (no verified pwsh resolved)" -ForegroundColor Yellow
         }
@@ -1076,7 +1072,6 @@ try {
             $m = @{
                 "GROKGOD_HOME" = $stageHome
                 "GROKGOD_BIN" = $installedExe
-                "GROKGOD_SHIM_PATH" = $installedShimForFixture
                 "GROKGOD_UPDATE_CHECK_DISABLE" = "1"
                 "USERPROFILE" = $testUserProfile
             }
@@ -1194,6 +1189,18 @@ try {
     # Test 15: bounded candidate preflight — a hanging candidate is killed by
     # the 5000ms budget, the install fails closed before any live mutation,
     # and no candidate process survives.
+    # StrictMode array-count contract used by Test 15 survivor checks:
+    # return $list.ToArray() enumerates; @(fn).Count is 0/1/N. A unary
+    # comma wrap makes @(fn).Count 1 for empty.
+    function Get-CountDemoArray([object[]]$Items) {
+        $l = New-Object System.Collections.Generic.List[object]
+        foreach ($i in @($Items)) { if ($null -ne $i) { [void]$l.Add($i) } }
+        return $l.ToArray()
+    }
+    Assert-Test (@(Get-CountDemoArray @()).Count -eq 0) "Plain ToArray empty + @() Count is 0"
+    Assert-Test (@(Get-CountDemoArray @('a')).Count -eq 1) "Plain ToArray one + @() Count is 1"
+    Assert-Test (@(Get-CountDemoArray @('a','b')).Count -eq 2) "Plain ToArray two + @() Count is 2"
+
     Write-Host "`nTest 15: Bounded candidate preflight (hang)"
     $hangPrefix = Join-Path $fixtureRoot "hang_prefix"
     New-Item -ItemType Directory -Force -Path $hangPrefix | Out-Null

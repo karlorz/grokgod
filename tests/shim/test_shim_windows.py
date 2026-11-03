@@ -189,8 +189,10 @@ def main():
           "cmd templates invoke the shim via runtime GROKGOD_SHIM_PATH (no baked absolute path)")
     check('File "%GROKGOD_SHIM_PATH%"' in launcher_helpers_content,
           "Generated launchers invoke the shim via runtime GROKGOD_SHIM_PATH")
-    check("$shimBindLine" in launcher_helpers_content,
-          "ASCII ShimPath is bound into generated launchers so discovery cannot reroute")
+    check("LauncherDirectory" in launcher_helpers_content,
+          "New-GrokgodLauncherScript binds a %~dp0-relative shim from LauncherDirectory")
+    check("Kill(true)" not in shim_src, "Shim does not call Process.Kill(true) tree enumeration")
+    check("TerminateJobObject" not in shim_src, "Shim does not TerminateJobObject as a kill fallback")
     check("grokgod\\shim\\grok-shim.ps1" in grok_cmd_content and "GROKGOD_HOME" in grok_cmd_content,
           "cmd templates discover Prefix\\grokgod\\shim and GROKGOD_HOME\\shim")
     check("New-GrokgodLauncherScript" in launcher_helpers_content, "LauncherHelpers provides New-GrokgodLauncherScript helper")

@@ -50,7 +50,6 @@ try {
     $envBackup = @{
         "GROKGOD_HOME" = $env:GROKGOD_HOME
         "GROKGOD_BIN"  = $env:GROKGOD_BIN
-        "GROKGOD_SHIM_PATH" = $env:GROKGOD_SHIM_PATH
     }
     $env:GROKGOD_HOME = $grokgodHome
     $env:GROKGOD_BIN  = Join-Path $grokgodHome "bin\grokgod.exe"
@@ -94,7 +93,6 @@ class MeasureMock {
     $helpersSource = Join-Path $RepoRoot "src\shim\LauncherHelpers.ps1"
     . $helpersSource
     $resolvedShim = (Resolve-Path $ShimPath).Path
-    $env:GROKGOD_SHIM_PATH = $resolvedShim
 
     # Report the actual launcher-selected engine: resolve and verify it the
     # same way the suites do, then bake it into the generated launcher. The
@@ -103,7 +101,7 @@ class MeasureMock {
     try { $verifiedPwsh = Resolve-GrokgodPwsh } catch { $verifiedPwsh = $null }
 
     $grokLauncher = Join-Path $LauncherDir "grok.cmd"
-    Set-Content -LiteralPath $grokLauncher -Value (New-GrokgodLauncherScript -Identity grok -ShimPath $resolvedShim -PwshPath ([string]$verifiedPwsh)) -Encoding ASCII
+    Set-Content -LiteralPath $grokLauncher -Value (New-GrokgodLauncherScript -Identity grok -ShimPath $resolvedShim -PwshPath ([string]$verifiedPwsh) -LauncherDirectory $LauncherDir) -Encoding ASCII
 
     if ($verifiedPwsh) {
         $engineReport = "verified pwsh: $verifiedPwsh"

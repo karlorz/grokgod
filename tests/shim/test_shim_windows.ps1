@@ -865,7 +865,7 @@ exit 0
     # provider spawns). Discovery-only launcher when unresolvable.
     $bakedPwsh = ""
     if ($verifiedPwsh) { $bakedPwsh = $verifiedPwsh }
-    Set-Content -LiteralPath $grokLauncher -Value (New-GrokgodLauncherScript -Identity grok -ShimPath $resolvedShim -PwshPath $bakedPwsh) -Encoding ASCII
+    Set-Content -LiteralPath $grokLauncher -Value (New-GrokgodLauncherScript -Identity grok -ShimPath $resolvedShim -PwshPath $bakedPwsh -LauncherDirectory $launcherDir) -Encoding ASCII
     if ($verifiedPwsh) {
         Write-Host "  Launcher engine: $verifiedPwsh (verified)"
     } else {
@@ -877,7 +877,6 @@ exit 0
         $m = @{
             "GROKGOD_HOME" = $fakeGrokgodHome
             "GROKGOD_BIN" = $mockExe
-            "GROKGOD_SHIM_PATH" = $resolvedShim
             "GROKGOD_UPDATE_CHECK_DISABLE" = "1"
             "USERPROFILE" = $isolatedProfile
             "LOCALAPPDATA" = $isolatedLocalApp
@@ -1244,7 +1243,11 @@ while (`$listener.IsListening) {
         Assert-Condition ($mergedExit -eq 0) "Merged 2>&1 ordinary path preserves mock exit 0 after helper (got $mergedExit)"
         Assert-Condition ($mergedText -match 'grok 1\.0\.6 \(48271133\)') "Merged 2>&1 ordinary path delivers mock version stdout after helper"
         Assert-Condition ($mergedText -match '\[grokgod\] v2\.0\.0 available') "Merged 2>&1 ordinary path still emits the cached notice"
-        Assert-Condition (Wait-BypassRequest "/") "Merged 2>&1 ordinary path fires the detached refresh"
+        $mergedRefresh = Wait-BypassRequest "/"
+        if (-not $mergedRefresh) {
+            Write-Host "MERGED-REFRESH-DIAG requests=$([string]::Join(',', @(Read-BypassRequests))) exit=$mergedExit cache=$(Get-Content $noticeCache -Raw)"
+        }
+        Assert-Condition $mergedRefresh "Merged 2>&1 ordinary path fires the detached refresh"
 
         # 7.1 machine/protocol forms: no notice, no cache write, no network
         $machineForms = @(
@@ -1452,7 +1455,7 @@ public class MockFailingEngine {
     # Discovery-only launcher: group 9.1/9.2/9.4 must not inherit a baked
     # engine from the group-6 launcher, or isolation would never 127.
     $discoveryLauncher = Join-Path $launcherDir "grok-discovery.cmd"
-    Set-Content -LiteralPath $discoveryLauncher -Value (New-GrokgodLauncherScript -Identity grok -ShimPath $resolvedShim) -Encoding ASCII
+    Set-Content -LiteralPath $discoveryLauncher -Value (New-GrokgodLauncherScript -Identity grok -ShimPath $resolvedShim -LauncherDirectory $launcherDir) -Encoding ASCII
 
     $oldEngineSrc = @"
 using System;
@@ -1484,7 +1487,6 @@ public class MockOldEngine {
     $engineEnv = @{
         "GROKGOD_HOME" = $fakeGrokgodHome
         "GROKGOD_BIN" = $mockExe
-        "GROKGOD_SHIM_PATH" = $resolvedShim
         "GROKGOD_UPDATE_CHECK_DISABLE" = "1"
         "USERPROFILE" = $isolatedProfile
         "LOCALAPPDATA" = $isolatedLocalApp
@@ -1532,7 +1534,7 @@ public class MockOldEngine {
     # provider-spawn case).
     if ($verifiedPwsh) {
         $bakedLauncher = Join-Path $launcherDir "grok-baked.cmd"
-        Set-Content -LiteralPath $bakedLauncher -Value (New-GrokgodLauncherScript -Identity grok -ShimPath $resolvedShim -PwshPath $verifiedPwsh) -Encoding ASCII
+        Set-Content -LiteralPath $bakedLauncher -Value (New-GrokgodLauncherScript -Identity grok -ShimPath $resolvedShim -PwshPath $verifiedPwsh -LauncherDirectory $launcherDir) -Encoding ASCII
         $res = Invoke-LauncherWithPath -cmdPath $bakedLauncher -childPath $system32Only -ArgTokens @("--version") -ExtraEnv $engineEnv -WorkingDirectory $emptyPathDir
         Assert-Condition ($res.ExitCode -eq 0 -and $res.StdOut -match "grok 1\.0\.6") "Baked verified pwsh works with pwsh-free PATH"
     } else {
