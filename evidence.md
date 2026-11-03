@@ -87,3 +87,13 @@ Both stdout and stderr must complete before a version/candidate is accepted. `er
 - `tests/install/test_install_windows.py` `24d8e69e202e0543c8d4e8c196333050c5b0a7297baa46c3230a19781080159a`
 
 Static on these bytes: build 6/6, cut 6/6, generated-installers 72/0, shim py 231/0, install py 219/0. Native still pending.
+
+## Follow-up: driver path quoting and PS7 workflow step name
+
+CI on b1d9b49: Linux `test_release_workflow.sh` still expected the old Windows PowerShell 5.1 job step name; Windows Node full-launcher cases exited 1 in ~30ms because the driver twice-escaped the launcher path (fixture dirs contain spaces). The audit escaped argv only; the cmd path is quoted for whitespace without caret-escaping.
+
+- `tests/shim/launcher_fixture_driver.js` `2c5eb29fe20dd594dbac91b24f124a1fcd81567f38cc855a2f0e75cec7265b12`
+- `tests/release/test_release_workflow.sh` `5792ca96a9aa21335a8022a19bc1feb10edbda689d5d80aa9f6cf40a7b4cd2d7`
+- `tests/shim/test_shim_windows.py` `1ae01fda0a802081fe89a095aadbfc55c13fab07d65f87604ccead8a08be64b2`
+
+Static after this follow-up: shim py 232/0, `tests/release/test_release_workflow.sh` 9/9. Native still pending on these driver bytes.

@@ -88,9 +88,10 @@ function main() {
 
   const t0 = Date.now();
   // Proven native argv transport (root /tmp/grokgod-argv-audit 4/4 exact):
-  // CRT quote/backslash encoding, wrap in quotes, then twice CMD-metachar
-  // escaping. Spawned with windowsVerbatimArguments through cmd.exe /d /s /c.
-  // Launchers forward %* directly under setlocal DisableDelayedExpansion.
+  // user tokens get CRT quote/backslash encoding, wrap in quotes, then twice
+  // CMD-metachar escaping. The launcher path is not user argv: quote it for
+  // cmd if it contains whitespace, without caret-escaping the quotes (the
+  // audit cmd had no spaces; this suite's fixture directory does).
   const meta = /([()\][%!^"`<>&|;, *?])/g;
   function escapeArg(value) {
     let arg = String(value).replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1');
@@ -98,7 +99,12 @@ function main() {
     arg = arg.replace(meta, '^$1');
     return arg.replace(meta, '^$1');
   }
-  const commandLine = [cmd].concat(args).map(escapeArg).join(' ');
+  function quoteCmdPath(p) {
+    const s = String(p);
+    if (/[\s"]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  }
+  const commandLine = quoteCmdPath(cmd) + (args.length ? ' ' + args.map(escapeArg).join(' ') : '');
   const child = spawn('cmd.exe', ['/d', '/s', '/c', '"' + commandLine + '"'], {
     cwd,
     stdio: ['pipe', 'pipe', 'pipe'],

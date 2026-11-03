@@ -407,6 +407,8 @@ def main():
               "Driver passes the pre-quoted /c line verbatim (no Node re-quoting)")
         check("replace(/(\\\\*)\"/g" in driver_src and "arg.replace(meta" in driver_src,
               "Driver applies proven CRT quote/backslash encoding then twice CMD-metachar escaping")
+        check("function quoteCmdPath" in driver_src and "[cmd].concat(args).map(escapeArg)" not in driver_src,
+              "Driver quotes the launcher path separately and does not twice-escape it")
         check("closeMs" in driver_src and "exitMs" in driver_src,
               "Driver records both exit and close/EOF timings")
     if os.path.isfile(native_shim_test_path):
