@@ -181,7 +181,6 @@ public static class GrokgodHandleInfo {
 public sealed class GrokgodJobChild : IDisposable {
     public int Id;
     public IntPtr JobHandle;
-    public IntPtr NativeProcessHandle;
     public StreamWriter StandardInput;
     public StreamReader StandardOutput;
     public StreamReader StandardError;
@@ -206,8 +205,6 @@ public sealed class GrokgodJobChild : IDisposable {
         if (disposed) return;
         disposed = true;
         CloseJob();
-        GrokgodHandleInfo.CloseIf(NativeProcessHandle);
-        NativeProcessHandle = IntPtr.Zero;
         try { if (StandardInput != null) StandardInput.Dispose(); } catch {}
         try { if (StandardOutput != null) StandardOutput.Dispose(); } catch {}
         try { if (StandardError != null) StandardError.Dispose(); } catch {}
@@ -286,7 +283,7 @@ public sealed class GrokgodJobChild : IDisposable {
             stdoutReader = null;
             child.StandardError = stderrReader;
             stderrReader = null;
-            child.NativeProcessHandle = hProcess;
+            GrokgodHandleInfo.CloseIf(hProcess);
             hProcess = IntPtr.Zero;
             child.JobHandle = job;
             job = IntPtr.Zero;

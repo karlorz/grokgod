@@ -1033,11 +1033,16 @@ exit 0
         $guardShimDir = Join-Path $guardRoot "grokgod\shim"
         New-Item -ItemType Directory -Force -Path $guardBin, $guardShimDir | Out-Null
         $guardShim = Join-Path $guardShimDir "grok-shim.ps1"
-        $guardLauncher = Join-Path $guardBin "grok.cmd"
-        Set-Content -LiteralPath $guardShim -Value 'Write-Output "BOUND-SHIM-OK"; exit 0' -Encoding UTF8
-        $guardContent = New-GrokgodLauncherScript -Identity grok -ShimPath $guardShim -PwshPath $pwshExe -LauncherDirectory $guardBin
-        Set-Content -LiteralPath $guardLauncher -Value $guardContent -Encoding ASCII
-        $guardOnDisk = Get-Content -LiteralPath $guardLauncher -Raw
+        $guardShimContent = 'Write-Output "BOUND-SHIM-OK"; exit 0'
+        Set-Content -LiteralPath $guardShim -Value $guardShimContent -Encoding UTF8
+        $guardLaunchers = @{}
+        foreach ($guardIdentity in @("grok", "grokgod")) {
+            $guardLauncher = Join-Path $guardBin "$guardIdentity.cmd"
+            $guardContent = New-GrokgodLauncherScript -Identity $guardIdentity -ShimPath $guardShim -PwshPath $pwshExe -LauncherDirectory $guardBin
+            Set-Content -LiteralPath $guardLauncher -Value $guardContent -Encoding ASCII
+            $guardLaunchers[$guardIdentity] = $guardLauncher
+        }
+        $guardOnDisk = Get-Content -LiteralPath $guardLaunchers["grok"] -Raw
         Assert-Condition ($guardOnDisk -match '%~dp0') "Bound-missing guard: launcher binds the shim relative to %~dp0"
         Assert-Condition ($guardOnDisk -match 'if not exist "%GROKGOD_SHIM_PATH%"') "Bound-missing guard: launcher rejects a missing explicit binding"
         Set-Content -LiteralPath (Join-Path $guardBin "grok-shim.ps1") -Value 'Write-Output "DECOY-COLOCATED"; exit 0' -Encoding UTF8
@@ -1078,16 +1083,20 @@ exit 0
         }
 
         Remove-Item -LiteralPath $guardShim -Force
-        $missing = Invoke-GuardLauncher $guardLauncher
-        Assert-Condition ($missing.ExitCode -eq 64) "Bound-missing guard: missing bound shim exits 64 (got $($missing.ExitCode))"
-        Assert-Condition ($missing.StdErr -match 'bound shim not found') "Bound-missing guard: missing bound shim prints actionable stderr"
-        Assert-Condition ($missing.StdOut -notmatch 'DECOY-') "Bound-missing guard: no co-located or default decoy executed"
+        foreach ($guardIdentity in @("grok", "grokgod")) {
+            $missing = Invoke-GuardLauncher $guardLaunchers[$guardIdentity]
+            Assert-Condition ($missing.ExitCode -eq 64) "Bound-missing guard [$guardIdentity]: missing bound shim exits 64 (got $($missing.ExitCode))"
+            Assert-Condition ($missing.StdErr -match 'bound shim not found') "Bound-missing guard [$guardIdentity]: missing bound shim prints actionable stderr"
+            Assert-Condition ($missing.StdOut -notmatch 'DECOY-') "Bound-missing guard [$guardIdentity]: no co-located or default decoy executed"
+        }
 
-        Set-Content -LiteralPath $guardShim -Value 'Write-Output "BOUND-SHIM-OK"; exit 0' -Encoding UTF8
-        $present = Invoke-GuardLauncher $guardLauncher
-        Assert-Condition ($present.ExitCode -eq 0) "Bound-missing guard: present bound shim exits 0 (got $($present.ExitCode))"
-        Assert-Condition ($present.StdOut -match 'BOUND-SHIM-OK') "Bound-missing guard: present bound shim runs the intended script"
-        Assert-Condition ($present.StdOut -notmatch 'DECOY-') "Bound-missing guard: present bound shim does not run a decoy"
+        Set-Content -LiteralPath $guardShim -Value $guardShimContent -Encoding UTF8
+        foreach ($guardIdentity in @("grok", "grokgod")) {
+            $present = Invoke-GuardLauncher $guardLaunchers[$guardIdentity]
+            Assert-Condition ($present.ExitCode -eq 0) "Bound-missing guard [$guardIdentity]: present bound shim exits 0 (got $($present.ExitCode))"
+            Assert-Condition ($present.StdOut -match 'BOUND-SHIM-OK') "Bound-missing guard [$guardIdentity]: present bound shim runs the intended script"
+            Assert-Condition ($present.StdOut -notmatch 'DECOY-') "Bound-missing guard [$guardIdentity]: present bound shim does not run a decoy"
+        }
 
         # 6.7 launcher-level argument preservation. Direct %* forwarding
         # plus the driver's CRT quote/backslash then twice CMD-metachar
