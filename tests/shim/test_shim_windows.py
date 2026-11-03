@@ -96,6 +96,8 @@ def main():
               "Native group-9 pins child cwd to an empty fixture so where.exe cannot see host pwsh")
         check("GROUP9-DIAG" in native_shim_src and "ProgramW6432" in native_shim_src,
               "Native group-9 dumps child env/where.exe/cmd bytes when 127 is not observed")
+        check("GROUP9-DIAG std:" in native_shim_src,
+              "Native group-9 dumps verified path and child output when standard discovery fails")
         check("SKIP: broken-engine" not in native_shim_src and "SKIP: broken-engine case" not in native_shim_src,
               "Native group-9 does not skip broken-engine on host standard PS7")
         check("GROKGOD_ARGV_SENTINEL" in native_shim_src,

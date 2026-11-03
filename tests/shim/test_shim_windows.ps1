@@ -1544,7 +1544,15 @@ public class MockOldEngine {
             $stdEnv["ProgramFiles"] = $pfRoot
             $stdEnv["ProgramFiles(x86)"] = $emptyPf86
         }
+        $expectStdPwsh = Join-Path $pfRoot "PowerShell\7\pwsh.exe"
         $res = Invoke-LauncherWithPath -cmdPath $discoveryLauncher -childPath $system32Only -ArgTokens @("--version") -ExtraEnv $stdEnv -WorkingDirectory $emptyPathDir
+        if (-not ($res.ExitCode -eq 0 -and $res.StdOut -match "grok 1\.0\.6")) {
+            Write-Host "GROUP9-DIAG std: exit=$($res.ExitCode) verified=$verifiedPwsh pfRoot=$pfRoot expect=$expectStdPwsh exists=$(Test-Path -LiteralPath $expectStdPwsh)"
+            Write-Host "GROUP9-DIAG std cwd=$($res.WorkingDirectory) PATH=$($res.ChildPath) W6432=$($res.EnvProgramW6432) where=$($res.WherePwsh)"
+            Write-Host "GROUP9-DIAG std stdout=$($res.StdOut)"
+            Write-Host "GROUP9-DIAG std stderr=$($res.StdErr)"
+            Write-Host "GROUP9-DIAG std cmd=$($res.CmdText)"
+        }
         Assert-Condition ($res.ExitCode -eq 0 -and $res.StdOut -match "grok 1\.0\.6") "Standard ProgramFiles discovery finds verified pwsh with pwsh-free PATH"
     } else {
         $pwshDir = Split-Path $verifiedPwsh -Parent
