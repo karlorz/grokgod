@@ -394,6 +394,8 @@ def main():
               "Native install Test 16 asserts Prefix\\grokgod\\bin\\grokgod.exe")
         check("Get-LoggedMockPids" in install_test_src and "Get-AliveLoggedMockProcesses" in install_test_src,
               "Native install preflight survivor checks use recorded mock PIDs")
+        check("@(Get-AliveLoggedMockProcesses).Count" in install_test_src,
+              "Alive-PID collection is wrapped so StrictMode empty returns have Count")
         check("GROKGOD_MOCK_MODE" in install_test_src, "Native install mock exe selects fixture modes via environment")
         for mode_fragment in ('"echo"', '"protocol"', '"hang"', '"noisy-stderr"',
                               '"held-eof"', '"held-stderr-eof"', '"failure"',

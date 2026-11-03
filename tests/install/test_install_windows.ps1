@@ -170,12 +170,12 @@ function Get-LoggedMockPids {
 }
 
 function Get-AliveLoggedMockProcesses {
-    $alive = @()
+    $alive = New-Object System.Collections.Generic.List[object]
     foreach ($id in @(Get-LoggedMockPids)) {
         $p = Get-Process -Id $id -ErrorAction SilentlyContinue
-        if ($p) { $alive += $p }
+        if ($null -ne $p) { [void]$alive.Add($p) }
     }
-    return @($alive)
+    return ,$alive.ToArray()
 }
 
 # -----------------------------------------------------------------------------
@@ -1208,7 +1208,7 @@ try {
     Start-Sleep -Milliseconds 500
     $hangPids = @(Get-LoggedMockPids)
     Assert-Test ($hangPids.Count -gt 0) "Preflight hang: mock recorded owned PIDs"
-    Assert-Test ((Get-AliveLoggedMockProcesses).Count -eq 0) "Preflight hang: no surviving recorded PID ($($hangPids -join ','))"
+    Assert-Test (@(Get-AliveLoggedMockProcesses).Count -eq 0) "Preflight hang: no surviving recorded PID ($($hangPids -join ','))"
 
     # Test 15b/15c: candidate prints a version line then a descendant holds
     # stdout or stderr. Preflight must fail closed (no promotion) with a
@@ -1227,7 +1227,7 @@ try {
     Start-Sleep -Milliseconds 500
     $heldOutPids = @(Get-LoggedMockPids)
     Assert-Test ($heldOutPids.Count -gt 0) "Preflight held-eof: mock recorded owned PIDs"
-    Assert-Test ((Get-AliveLoggedMockProcesses).Count -eq 0) "Preflight held-eof: no surviving recorded PID ($($heldOutPids -join ','))"
+    Assert-Test (@(Get-AliveLoggedMockProcesses).Count -eq 0) "Preflight held-eof: no surviving recorded PID ($($heldOutPids -join ','))"
 
     Write-Host "`nTest 15c: Bounded candidate preflight (held-stderr-eof)"
     $heldErrPrefix = Join-Path $fixtureRoot "held_stderr_prefix"
@@ -1243,7 +1243,7 @@ try {
     Start-Sleep -Milliseconds 500
     $heldErrPids = @(Get-LoggedMockPids)
     Assert-Test ($heldErrPids.Count -gt 0) "Preflight held-stderr-eof: mock recorded owned PIDs"
-    Assert-Test ((Get-AliveLoggedMockProcesses).Count -eq 0) "Preflight held-stderr-eof: no surviving recorded PID ($($heldErrPids -join ','))"
+    Assert-Test (@(Get-AliveLoggedMockProcesses).Count -eq 0) "Preflight held-stderr-eof: no surviving recorded PID ($($heldErrPids -join ','))"
 
     # Test 16: PowerShell 7 prerequisite gate and explicit setup helpers.
     # PS5.1 entry is tested narrowly (prerequisite/bootstrap only): the

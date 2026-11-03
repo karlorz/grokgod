@@ -458,6 +458,10 @@ public sealed class GrokgodJobChild : IDisposable {
         IntPtr errWrite = IntPtr.Zero;
         IntPtr hProcess = IntPtr.Zero;
         IntPtr hThread = IntPtr.Zero;
+        StreamWriter stdinWriter = null;
+        StreamReader stdoutReader = null;
+        StreamReader stderrReader = null;
+        Process proc = null;
         bool transferred = false;
         try {
             job = GrokgodHandleInfo.CreateKillOnCloseJob();
@@ -468,9 +472,9 @@ public sealed class GrokgodJobChild : IDisposable {
             if (!GrokgodHandleInfo.CreatePipe(out inRead, out inWrite, ref sa, 0)) throw new Win32Exception();
             if (!GrokgodHandleInfo.CreatePipe(out outRead, out outWrite, ref sa, 0)) throw new Win32Exception();
             if (!GrokgodHandleInfo.CreatePipe(out errRead, out errWrite, ref sa, 0)) throw new Win32Exception();
-            GrokgodHandleInfo.SetHandleInformation(inWrite, GrokgodHandleInfo.HANDLE_FLAG_INHERIT, 0);
-            GrokgodHandleInfo.SetHandleInformation(outRead, GrokgodHandleInfo.HANDLE_FLAG_INHERIT, 0);
-            GrokgodHandleInfo.SetHandleInformation(errRead, GrokgodHandleInfo.HANDLE_FLAG_INHERIT, 0);
+            if (!GrokgodHandleInfo.SetHandleInformation(inWrite, GrokgodHandleInfo.HANDLE_FLAG_INHERIT, 0)) throw new Win32Exception();
+            if (!GrokgodHandleInfo.SetHandleInformation(outRead, GrokgodHandleInfo.HANDLE_FLAG_INHERIT, 0)) throw new Win32Exception();
+            if (!GrokgodHandleInfo.SetHandleInformation(errRead, GrokgodHandleInfo.HANDLE_FLAG_INHERIT, 0)) throw new Win32Exception();
             GrokgodHandleInfo.STARTUPINFO si = new GrokgodHandleInfo.STARTUPINFO();
             si.cb = Marshal.SizeOf(typeof(GrokgodHandleInfo.STARTUPINFO));
             si.dwFlags = GrokgodHandleInfo.STARTF_USESTDHANDLES | GrokgodHandleInfo.STARTF_USESHOWWINDOW;
@@ -493,7 +497,15 @@ public sealed class GrokgodJobChild : IDisposable {
             GrokgodHandleInfo.CloseIf(errWrite);
             errWrite = IntPtr.Zero;
             if (!GrokgodHandleInfo.AssignProcessToJobObject(job, hProcess)) throw new Win32Exception();
-            Process proc = Process.GetProcessById(pi.dwProcessId);
+            UTF8Encoding utf8 = new UTF8Encoding(false);
+            stdinWriter = new StreamWriter(new FileStream(new SafeFileHandle(inWrite, true), FileAccess.Write, 4096, false), utf8);
+            inWrite = IntPtr.Zero;
+            stdinWriter.AutoFlush = true;
+            stdoutReader = new StreamReader(new FileStream(new SafeFileHandle(outRead, true), FileAccess.Read, 4096, false), utf8);
+            outRead = IntPtr.Zero;
+            stderrReader = new StreamReader(new FileStream(new SafeFileHandle(errRead, true), FileAccess.Read, 4096, false), utf8);
+            errRead = IntPtr.Zero;
+            proc = Process.GetProcessById(pi.dwProcessId);
             IntPtr retained = proc.Handle;
             if (retained == IntPtr.Zero) throw new InvalidOperationException("process handle");
             if (GrokgodHandleInfo.ResumeThread(hThread) == 0xFFFFFFFF) throw new Win32Exception();
@@ -501,19 +513,18 @@ public sealed class GrokgodJobChild : IDisposable {
             hThread = IntPtr.Zero;
             GrokgodHandleInfo.CloseIf(hProcess);
             hProcess = IntPtr.Zero;
-            UTF8Encoding utf8 = new UTF8Encoding(false);
             GrokgodJobChild child = new GrokgodJobChild();
             child.Id = pi.dwProcessId;
+            child.process = proc;
+            proc = null;
+            child.StandardInput = stdinWriter;
+            stdinWriter = null;
+            child.StandardOutput = stdoutReader;
+            stdoutReader = null;
+            child.StandardError = stderrReader;
+            stderrReader = null;
             child.JobHandle = job;
             job = IntPtr.Zero;
-            child.process = proc;
-            child.StandardInput = new StreamWriter(new FileStream(new SafeFileHandle(inWrite, true), FileAccess.Write, 4096, false), utf8);
-            inWrite = IntPtr.Zero;
-            child.StandardInput.AutoFlush = true;
-            child.StandardOutput = new StreamReader(new FileStream(new SafeFileHandle(outRead, true), FileAccess.Read, 4096, false), utf8);
-            outRead = IntPtr.Zero;
-            child.StandardError = new StreamReader(new FileStream(new SafeFileHandle(errRead, true), FileAccess.Read, 4096, false), utf8);
-            errRead = IntPtr.Zero;
             transferred = true;
             return child;
         } finally {
@@ -528,6 +539,10 @@ public sealed class GrokgodJobChild : IDisposable {
                 GrokgodHandleInfo.CloseIf(outWrite);
                 GrokgodHandleInfo.CloseIf(errRead);
                 GrokgodHandleInfo.CloseIf(errWrite);
+                try { if (stdinWriter != null) stdinWriter.Dispose(); } catch {}
+                try { if (stdoutReader != null) stdoutReader.Dispose(); } catch {}
+                try { if (stderrReader != null) stderrReader.Dispose(); } catch {}
+                try { if (proc != null) proc.Dispose(); } catch {}
             }
         }
     }
