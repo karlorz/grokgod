@@ -27,6 +27,9 @@
      15. Server health and readiness probe: fails closed with clear diagnostic if mock server cannot start
      16. Post-update convergence: one-visible-command invocation of changed updater in finalize mode
      17. Table-scoped TOML scalar key merging: unrelated keys in other sections do not prevent defaults; targets preserved and idempotent
+     18. Full-launcher process fixtures: generated launchers driven from Node child_process (version/echo/protocol/failure/hang), bounded watchdogs, no surviving fixture processes
+     19. Bounded candidate preflight: hanging candidate killed by the 5000ms budget, install fails closed before any live mutation, no surviving candidate process
+     20. PowerShell 7 prerequisite gate: PS5.1 entry relaunches under verified PS7 or fails closed with guidance; -InstallPowerShell7 and -SetWindowsTerminalProfile helpers exit before any live mutation
 #>
 param(
     [string]$InstallScript = "$PSScriptRoot\..\..\install.ps1"
@@ -66,8 +69,14 @@ $ShimSource = Join-Path $RepoRoot "src\shim\grok-shim.ps1"
 $HelpersSource = Join-Path $RepoRoot "src\shim\LauncherHelpers.ps1"
 $DailyMinimalSource = Join-Path $RepoRoot "examples\daily-minimal\minimal.md"
 
-# Determine host PowerShell engine to align child processes with outer suite
-$HostShell = if ($PSVersionTable.PSEdition -eq "Core") { "pwsh.exe" } else { "powershell.exe" }
+# PS7-only suite: the suite must be hosted by PowerShell 7 and every child
+# it spawns (mock server, installer invocations) runs under pwsh.exe. The
+# only powershell.exe surfaces are the narrow Test 16 gate/bootstrap cases,
+# which pass -Shell "powershell.exe" explicitly.
+if ($PSVersionTable.PSEdition -ne 'Core' -or $PSVersionTable.PSVersion.Major -lt 7) {
+    throw "This suite requires PowerShell 7+; host is $($PSVersionTable.PSEdition) $($PSVersionTable.PSVersion)."
+}
+$HostShell = (Get-Command pwsh.exe -ErrorAction Stop).Source
 Write-Host "Host PowerShell Edition: $($PSVersionTable.PSEdition) ($($PSVersionTable.PSVersion))"
 Write-Host "Child Process Engine:    $HostShell"
 
@@ -167,12 +176,87 @@ Set-Content -LiteralPath $officialGrokExe -Value "OFFICIAL_AUTH_BINARY_DATA_DO_N
 $officialGrokBaselineHash = (Get-FileHash -LiteralPath $officialGrokExe -Algorithm SHA256).Hash
 Write-Host "Established guarded official grok fixture: $officialGrokExe (Hash: $officialGrokBaselineHash)"
 
-# Compile a deterministic Win32 console executable fixture via csc.exe (works on PS5.1 and PS7)
+# Compile a deterministic Win32 console executable fixture via csc.exe (works on PS5.1 and PS7).
+# GROKGOD_MOCK_MODE selects deterministic fixture roles for the full-launcher
+# process tests (Test 14): version, echo, protocol, failure, hang,
+# noisy-stderr, plus pipe-holding child roles.
 $mockExeSrc = Join-Path $mockServerDir "grokgod-windows-x64.exe"
+$launchLogFile = Join-Path $fixtureRoot "mock_launch.log"
 $csharpSource = @"
 using System;
+using System.IO;
+using System.Text;
+using System.Threading;
+
 class Program {
+    static void AppendLaunch(string logPath, string mode, string[] args) {
+        if (String.IsNullOrEmpty(logPath)) { return; }
+        try {
+            StringBuilder sb = new StringBuilder();
+            sb.Append(System.Diagnostics.Process.GetCurrentProcess().Id);
+            sb.Append("|").Append(mode);
+            foreach (string a in args) { sb.Append("|").Append(a.Length); }
+            sb.Append("\n");
+            File.AppendAllText(logPath, sb.ToString());
+        } catch {}
+    }
+
     static int Main(string[] args) {
+        string mode = Environment.GetEnvironmentVariable("GROKGOD_MOCK_MODE") ?? "";
+        AppendLaunch(@"$($launchLogFile.Replace('\', '\\'))", mode, args);
+
+        if (args.Length > 0 && args[0] == "fixture-hold-pipe") {
+            int seconds = 5;
+            if (args.Length > 1) { int.TryParse(args[1], out seconds); }
+            Thread.Sleep(seconds * 1000);
+            return 0;
+        }
+
+        if (mode == "echo") {
+            Console.Error.WriteLine("FIXTURE-STDERR-MARKER");
+            Stream stdin = Console.OpenStandardInput();
+            Stream stdout = Console.OpenStandardOutput();
+            byte[] buffer = new byte[65536];
+            int read;
+            while ((read = stdin.Read(buffer, 0, buffer.Length)) > 0) {
+                stdout.Write(buffer, 0, read);
+                stdout.Flush();
+            }
+            return 0;
+        }
+
+        if (mode == "protocol") {
+            string line;
+            using (StreamReader sr = new StreamReader(Console.OpenStandardInput())) {
+                line = sr.ReadLine();
+            }
+            string payload = line ?? "";
+            Console.Out.WriteLine("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":1,\"echoLength\":" + payload.Length + "}}");
+            return 0;
+        }
+
+        if (mode == "hang") {
+            Thread.Sleep(60000);
+            Console.WriteLine("grok 1.0.26 (482711333c71)");
+            return 0;
+        }
+
+        if (mode == "noisy-stderr") {
+            Stream err = Console.OpenStandardError();
+            byte[] chunk = new byte[8192];
+            for (int i = 0; i < chunk.Length; i++) { chunk[i] = (byte)('a' + (i % 26)); }
+            for (int i = 0; i < 16; i++) { err.Write(chunk, 0, chunk.Length); err.Flush(); }
+            Console.Out.WriteLine("grok 1.0.26 (482711333c71)");
+            return 0;
+        }
+
+        if (mode == "failure") {
+            int code = 1;
+            string codeEnv = Environment.GetEnvironmentVariable("MOCK_EXIT_CODE");
+            if (!String.IsNullOrEmpty(codeEnv)) { int.TryParse(codeEnv, out code); }
+            return code;
+        }
+
         if (args.Length > 0 && args[0] == "--version") {
             Console.WriteLine("grok 1.0.26 (482711333c71)");
             return 0;
@@ -374,7 +458,7 @@ try {
     Assert-Test (Test-Path -LiteralPath $backupDir) "Backup directory exists"
 
     $backupFiles = Get-ChildItem -LiteralPath $backupDir -Filter "*.bak" -ErrorAction SilentlyContinue
-    Assert-Test ($backupFiles.Count -gt 0) "Durable backups survive installation commit (not purged)"
+    Assert-Test (@($backupFiles).Count -gt 0) "Durable backups survive installation commit (not purged)"
 
     $resUninstall = Invoke-InstallerProcess -EnvVars @{ "USERPROFILE" = $testUserProfile } -ScriptArgs @("-Prefix", $targetPrefix, "-Uninstall")
     Assert-Test ($resUninstall.ExitCode -eq 0) "Uninstall exits with 0"
@@ -586,11 +670,11 @@ try {
     # Run repeated install
     $resRepeat1 = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile } -ScriptArgs @("-Prefix", $targetPrefix, "-Force")
     Assert-Test ($resRepeat1.ExitCode -eq 0) "First repeated install succeeds"
-    $backupsAfter1 = (Get-ChildItem -LiteralPath $backupDir -Filter "*.bak" -ErrorAction SilentlyContinue).Count
+    $backupsAfter1 = @(Get-ChildItem -LiteralPath $backupDir -Filter "*.bak" -ErrorAction SilentlyContinue).Count
 
     $resRepeat2 = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile } -ScriptArgs @("-Prefix", $targetPrefix, "-Force")
     Assert-Test ($resRepeat2.ExitCode -eq 0) "Second repeated install succeeds"
-    $backupsAfter2 = (Get-ChildItem -LiteralPath $backupDir -Filter "*.bak" -ErrorAction SilentlyContinue).Count
+    $backupsAfter2 = @(Get-ChildItem -LiteralPath $backupDir -Filter "*.bak" -ErrorAction SilentlyContinue).Count
     Assert-Test ($backupsAfter2 -eq $backupsAfter1) "Repeated installs with identical state do not cause backup churn ($backupsAfter2 == $backupsAfter1)"
 
     # Verify official grok untouched across installs
@@ -866,6 +950,242 @@ try {
     $explicitFilterBody = Get-TomlSectionBody -TomlContent $explicitResultContent -SectionName "compat.content_filter"
     Assert-Test ($explicitFilterBody -match '(?m)^\s*action\s*=\s*"error"\s*$') "Explicit content-filter action error is preserved"
     Assert-Test ($explicitFilterBody -match '(?m)^\s*max_retries\s*=\s*1\s*$') "Explicit content-filter max_retries 1 is preserved"
+
+    # -------------------------------------------------------------------------
+    # Test 14: Full-Launcher Process Fixtures via Node child_process
+    # -------------------------------------------------------------------------
+    Write-Host "Test 14: Full-launcher process fixtures (Node child_process topology)"
+    $installedExe = Join-Path $stageHome "bin\grokgod.exe"
+    $installedShimForFixture = Join-Path $stageHome "shim\grok-shim.ps1"
+    $installedHelpersForFixture = Join-Path $stageHome "shim\LauncherHelpers.ps1"
+    Assert-Test (Test-Path -LiteralPath $installedExe) "Installed fixture binary exists for launcher tests"
+    Assert-Test (Test-Path -LiteralPath $installedShimForFixture) "Installed shim exists for launcher tests"
+    Assert-Test (Test-Path -LiteralPath $installedHelpersForFixture) "Installed LauncherHelpers exists for launcher tests"
+
+    $nodeExe = $null
+    try { $nodeExe = (Get-Command node -ErrorAction Stop).Source } catch { $nodeExe = $null }
+
+    function Get-InstallFixtureProcesses {
+        try {
+            return @(Get-CimInstance -ClassName Win32_Process -Filter "ExecutablePath = '$installedExe'" -ErrorAction SilentlyContinue)
+        } catch { return @() }
+    }
+
+    if (-not $nodeExe) {
+        Write-Host "  SKIP: node.exe not found; full-launcher fixture group requires Node.js" -ForegroundColor Yellow
+    } else {
+        Write-Host "  Node driver engine: $nodeExe"
+
+        # Generate launchers with the INSTALLED LauncherHelpers + shim, and
+        # bake in a verified runnable pwsh so the launcher works even where
+        # PATH cannot resolve pwsh (non-interactive provider spawns).
+        . $installedHelpersForFixture
+        $fixtureVerifiedPwsh = $null
+        try { $fixtureVerifiedPwsh = Resolve-GrokgodPwsh } catch { $fixtureVerifiedPwsh = $null }
+        $fixtureLauncherDir = Join-Path $fixtureRoot "launchers"
+        New-Item -ItemType Directory -Force -Path $fixtureLauncherDir | Out-Null
+        $fixtureGrokCmd = Join-Path $fixtureLauncherDir "grok.cmd"
+        $bakedPwshArg = ""
+        if ($fixtureVerifiedPwsh) { $bakedPwshArg = $fixtureVerifiedPwsh }
+        Set-Content -LiteralPath $fixtureGrokCmd -Value (New-GrokgodLauncherScript -Identity grok -ShimPath $installedShimForFixture -PwshPath $bakedPwshArg) -Encoding ASCII
+        if ($fixtureVerifiedPwsh) {
+            Write-Host "  Launcher engine: $fixtureVerifiedPwsh (verified)"
+            Assert-Test ((Get-Content $fixtureGrokCmd -Raw) -match 'set "GROKGOD_POWERSHELL_BAKED=') "Generated fixture launcher bakes the verified engine path"
+        } else {
+            Write-Host "  Launcher engine: discovery (no verified pwsh resolved)" -ForegroundColor Yellow
+        }
+
+        $driverJs = Join-Path $RepoRoot "tests\shim\launcher_fixture_driver.js"
+        Assert-Test (Test-Path -LiteralPath $driverJs) "Shared launcher fixture driver exists"
+
+        function Get-InstallDriverEnv([string]$mode) {
+            $m = @{
+                "GROKGOD_HOME" = $stageHome
+                "GROKGOD_BIN" = $installedExe
+                "GROKGOD_UPDATE_CHECK_DISABLE" = "1"
+                "USERPROFILE" = $testUserProfile
+            }
+            if ($mode) { $m["GROKGOD_MOCK_MODE"] = $mode }
+            return $m
+        }
+
+        function Invoke-InstallNodeFixture([string]$cmdPath, [hashtable]$EnvMap, [string[]]$ArgTokens, [string]$stdinB64 = "", [int]$TimeoutMs = 15000) {
+            $noBomUtf8 = New-Object System.Text.UTF8Encoding($false)
+            $argsFile = Join-Path $fixtureRoot ("driver_args_" + [Guid]::NewGuid().ToString('N') + ".json")
+            $envFile = Join-Path $fixtureRoot ("driver_env_" + [Guid]::NewGuid().ToString('N') + ".json")
+            # The unary comma keeps the array/hashtable intact on the pipeline:
+            # without it, ConvertTo-Json sees a single-element array's element
+            # (or nothing for an empty one) and emits a non-array JSON value.
+            # Serialize the token array element-by-element: pipeline-based
+            # ConvertTo-Json unwraps single-element arrays differently on
+            # Windows PowerShell 5.1 (emits the bare string, not a JSON
+            # array), which the driver rejects. Per-element scalar
+            # serialization emits a deterministic JSON array on every engine
+            # and preserves empty tokens as "".
+            $argsJson = "[" + (($ArgTokens | ForEach-Object { ConvertTo-Json -InputObject ([string]$_) -Compress }) -join ",") + "]"
+            [System.IO.File]::WriteAllText($argsFile, $argsJson, $noBomUtf8)
+            [System.IO.File]::WriteAllText($envFile, (,$EnvMap | ConvertTo-Json -Compress), $noBomUtf8)
+            $argList = @("`"$driverJs`"", "--cmd", "`"$cmdPath`"", "--args-file", "`"$argsFile`"", "--env-file", "`"$envFile`"", "--timeout-ms", "$TimeoutMs")
+            if ($stdinB64) { $argList += @("--stdin-b64", "`"$stdinB64`"") }
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = $nodeExe
+            $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            $psi.CreateNoWindow = $true
+            $psi.Arguments = [string]::Join(" ", $argList)
+            $proc = [System.Diagnostics.Process]::Start($psi)
+            # Outer concurrent-drain watchdog: async reads run while the
+            # process is bounded by the driver's own watchdog plus its hard
+            # cap. The blocking ReadToEnd-before-WaitForExit pattern is
+            # avoided so a node/driver failure cannot hang the suite.
+            $outTask = $proc.StandardOutput.ReadToEndAsync()
+            $errTask = $proc.StandardError.ReadToEndAsync()
+            $exited = $proc.WaitForExit($TimeoutMs + 30000)
+            if (-not $exited) {
+                try { & taskkill.exe /T /F /PID $proc.Id 2>$null | Out-Null } catch {}
+                try { $proc.Kill() } catch {}
+            }
+            $stdout = $null
+            try { if ($outTask.Wait(5000) -and -not $outTask.IsFaulted -and -not $outTask.IsCanceled) { $stdout = [string]$outTask.Result } } catch {}
+            try { if ($errTask.Wait(5000) -and -not $errTask.IsFaulted -and -not $errTask.IsCanceled) { $errTask.Result | Out-Null } } catch {}
+            try { $proc.Close() } catch {}
+            $parsed = $null
+            try { $parsed = ($stdout.Trim() | ConvertFrom-Json) } catch {}
+            return $parsed
+        }
+
+        # 14.1 version through the full launcher against the installed home
+        foreach ($fp in Get-InstallFixtureProcesses) { try { (Get-Process -Id $fp.ProcessId -ErrorAction SilentlyContinue).Kill() } catch {} }
+        if (Test-Path $launchLogFile) { Remove-Item $launchLogFile -Force }
+        $res = Invoke-InstallNodeFixture -cmdPath $fixtureGrokCmd -EnvMap (Get-InstallDriverEnv "") -ArgTokens @("--version")
+        Assert-Test ($res -ne $null) "Launcher fixture driver returned a report"
+        if ($res) {
+            Assert-Test ($res.ok -eq $true -and $res.exitCode -eq 0) "Full-launcher --version against installed home exits 0 (got exit=$($res.exitCode) error=$($res.error))"
+            $drvOut = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($res.stdoutB64))
+            Assert-Test ($drvOut -match "grok 1\.0\.26 \(482711333c71\)") "Full-launcher --version prints installed fixture version"
+            Assert-Test ($res.closeMs -ne $null -and $res.closeMs -lt 15000) "Full-launcher --version close is bounded ($($res.closeMs)ms)"
+        }
+
+        # 14.2 echo mode: stdin through EOF with exact bytes and stderr marker
+        $echoBytes = [byte[]]@(0, 1, 2, 10, 13, 250, 251, 65, 66, 67)
+        $res = Invoke-InstallNodeFixture -cmdPath $fixtureGrokCmd -EnvMap (Get-InstallDriverEnv "echo") -ArgTokens @("echo") -stdinB64 ([Convert]::ToBase64String($echoBytes))
+        Assert-Test ($res -ne $null) "Launcher fixture driver returned a report (echo)"
+        if ($res) {
+            $roundtrip = [Convert]::FromBase64String($res.stdoutB64)
+            $byteExact = ($roundtrip.Length -eq $echoBytes.Length)
+            if ($byteExact) { for ($i = 0; $i -lt $echoBytes.Length; $i++) { if ($roundtrip[$i] -ne $echoBytes[$i]) { $byteExact = $false; break } } }
+            Assert-Test $byteExact "Full-launcher echo preserves exact stdout bytes through EOF"
+            $drvErr = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($res.stderrB64))
+            Assert-Test ($drvErr -match "FIXTURE-STDERR-MARKER") "Full-launcher echo carries distinct stderr marker"
+        }
+
+        # 14.3 protocol mode: minimal initialize gets an NDJSON response
+        $initB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' + "`n"))
+        $res = Invoke-InstallNodeFixture -cmdPath $fixtureGrokCmd -EnvMap (Get-InstallDriverEnv "protocol") -ArgTokens @("agent", "stdio") -stdinB64 $initB64
+        Assert-Test ($res -ne $null) "Launcher fixture driver returned a report (protocol)"
+        if ($res) {
+            $protoOut = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($res.stdoutB64))
+            $protoJson = $null
+            try { $protoJson = (($protoOut -split "`n")[0] | ConvertFrom-Json) } catch {}
+            Assert-Test ($protoJson -ne $null -and $protoJson.jsonrpc -eq "2.0") "Full-launcher protocol mode answers NDJSON initialize"
+        }
+
+        # 14.4 failure mode: exit code preserved, exactly one launch recorded
+        if (Test-Path $launchLogFile) { Remove-Item $launchLogFile -Force }
+        $failEnv = Get-InstallDriverEnv "failure"
+        $failEnv["MOCK_EXIT_CODE"] = "42"
+        $res = Invoke-InstallNodeFixture -cmdPath $fixtureGrokCmd -EnvMap $failEnv -ArgTokens @("chat")
+        $launchCount = if (Test-Path $launchLogFile) { @(Get-Content $launchLogFile | Where-Object { $_ -match '\S' }).Count } else { 0 }
+        Assert-Test ($res -ne $null -and $res.exitCode -eq 42) "Full-launcher failure mode exits 42"
+        Assert-Test ($launchCount -eq 1) "Full-launcher failure mode records exactly one launch (no rerun)"
+
+        # 14.5 hang mode: watchdog bounds the run, no fixture survivor
+        foreach ($fp in Get-InstallFixtureProcesses) { try { (Get-Process -Id $fp.ProcessId -ErrorAction SilentlyContinue).Kill() } catch {} }
+        $res = Invoke-InstallNodeFixture -cmdPath $fixtureGrokCmd -EnvMap (Get-InstallDriverEnv "hang") -ArgTokens @("chat") -TimeoutMs 12000
+        Assert-Test ($res -ne $null -and $res.timedOut -eq $true) "Full-launcher hang mode hits the driver watchdog"
+        if ($res) {
+            Assert-Test ($res.closeMs -ne $null -and $res.closeMs -lt 25000) "Full-launcher hang mode close is bounded ($($res.closeMs)ms)"
+        }
+        Start-Sleep -Milliseconds 500
+        Assert-Test (@(Get-InstallFixtureProcesses).Count -eq 0) "Full-launcher hang mode leaves no surviving fixture process"
+    }
+
+    # Test 15: bounded candidate preflight — a hanging candidate is killed by
+    # the 5000ms budget, the install fails closed before any live mutation,
+    # and no candidate process survives.
+    Write-Host "`nTest 15: Bounded candidate preflight (hang)"
+    $hangPrefix = Join-Path $fixtureRoot "hang_prefix"
+    New-Item -ItemType Directory -Force -Path $hangPrefix | Out-Null
+    $hangSw = [System.Diagnostics.Stopwatch]::StartNew()
+    $resHang = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile; "GROKGOD_MOCK_MODE" = "hang" } -ScriptArgs @("-Prefix", $hangPrefix)
+    $hangSw.Stop()
+    Assert-Test ($resHang.ExitCode -ne 0) "Preflight hang: installer fails closed"
+    Assert-Test ($resHang.Combined -match 'Preflight timed out') "Preflight hang: bounded timeout is reported"
+    Assert-Test (-not (Test-Path -LiteralPath (Join-Path $hangPrefix "bin\grokgod.exe"))) "Preflight hang: no live mutation before preflight"
+    Assert-Test ($hangSw.Elapsed.TotalSeconds -lt 20) "Preflight hang: install returns bounded ($([Math]::Round($hangSw.Elapsed.TotalSeconds,1))s)"
+    Start-Sleep -Milliseconds 500
+    $survivingCandidates = @()
+    try {
+        $survivingCandidates = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'grokgod-windows-x64.exe'" -ErrorAction SilentlyContinue)
+    } catch {}
+    Assert-Test ($survivingCandidates.Count -eq 0) "Preflight hang: no surviving candidate process"
+
+    # Test 16: PowerShell 7 prerequisite gate and explicit setup helpers.
+    # PS5.1 entry is tested narrowly (prerequisite/bootstrap only): the
+    # installer either relaunches under a verified pwsh or prints guidance
+    # and installs nothing. The setup helpers exit before any network or
+    # live mutation.
+    Write-Host "`nTest 16: PowerShell 7 prerequisite gate and setup helpers"
+
+    $gatePrefix = Join-Path $fixtureRoot "ps7_gate_prefix"
+    New-Item -ItemType Directory -Force -Path $gatePrefix | Out-Null
+    $gateEnv = @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile }
+    $gateRes = Invoke-InstallerProcess -EnvVars $gateEnv -ScriptArgs @("-Prefix", $gatePrefix) -Shell "powershell.exe"
+    # Decide the expected branch with the same verification the gate uses:
+    # a runnable pwsh visible from this session means the installer must
+    # have relaunched under it and completed; otherwise it must stop with
+    # guidance before touching the prefix.
+    $suiteVerifiedPwsh = $null
+    try {
+        $helpersSrc = Join-Path $RepoRoot "src\shim\LauncherHelpers.ps1"
+        . $helpersSrc
+        $suiteVerifiedPwsh = Resolve-GrokgodPwsh
+    } catch { $suiteVerifiedPwsh = $null }
+    if ($suiteVerifiedPwsh) {
+        Assert-Test ($gateRes.ExitCode -eq 0) "PS5.1 entry relaunches under verified PS7 and installs (exit=$($gateRes.ExitCode))"
+        Assert-Test ($gateRes.Combined -match "Relaunching under") "PS5.1 entry reports the relaunch target"
+        Assert-Test (Test-Path -LiteralPath (Join-Path $gatePrefix "bin\grokgod.exe")) "PS5.1 relaunch completed the installation"
+    } else {
+        Assert-Test ($gateRes.ExitCode -ne 0) "PS5.1 entry fails closed without a runnable PS7"
+        Assert-Test ($gateRes.Combined -match "requires PowerShell 7") "PS5.1 entry prints the PS7 prerequisite"
+        Assert-Test ($gateRes.Combined -match "No files were installed") "PS5.1 entry installs nothing"
+        Assert-Test (-not (Test-Path -LiteralPath (Join-Path $gatePrefix "bin\grokgod.exe"))) "PS5.1 entry leaves the prefix empty"
+    }
+
+    # The explicit setup helper dispatches BEFORE the version gate, so it
+    # must work when invoked from Windows PowerShell 5.1 as well (guidance
+    # only, no -Apply, no mutation).
+    $helperRes = Invoke-InstallerProcess -EnvVars $gateEnv -ScriptArgs @("-InstallPowerShell7") -Shell "powershell.exe"
+    Assert-Test ($helperRes.ExitCode -eq 0) "InstallPowerShell7 helper exits 0 when invoked from PS5.1"
+    Assert-Test ($helperRes.Combined -match "PowerShell 7") "InstallPowerShell7 helper prints PowerShell 7 guidance"
+    Assert-Test ($helperRes.Combined -match "winget install --id Microsoft.PowerShell") "InstallPowerShell7 helper prints the winget command"
+    Assert-Test ($helperRes.Combined -match "Windows Terminal") "Setup helper prints the manual Windows Terminal guidance"
+
+    if ($suiteVerifiedPwsh) {
+        # Bound-parameter relay: -Prefix carries a value with spaces plus
+        # switches; the PS<7 relaunch must reconstruct all of them (they
+        # live in $PSBoundParameters, not $args) and the installation must
+        # land inside the spaced prefix.
+        $spacedPrefix = Join-Path $fixtureRoot "prefix with spaces"
+        $relayRes = Invoke-InstallerProcess -EnvVars $gateEnv -ScriptArgs @("-Prefix", $spacedPrefix, "-NoUpgrade") -Shell "powershell.exe"
+        Assert-Test ($relayRes.ExitCode -eq 0) "PS5.1 relaunch relays bound parameters and exits 0 (exit=$($relayRes.ExitCode))"
+        Assert-Test ($relayRes.Combined -match "Relaunching under") "PS5.1 entry reports the relaunch target"
+        Assert-Test (Test-Path -LiteralPath (Join-Path $spacedPrefix "bin\grokgod.exe")) "Relaunched install lands inside the spaced prefix"
+        Assert-Test (-not (Test-Path -LiteralPath (Join-Path $testUserProfile ".grokgod\bin\grokgod.exe"))) "Spaced-prefix install did not fall back to the default prefix"
+    } else {
+        Write-Host "  SKIP: no verified pwsh in this session; bound-parameter relay case needs the relaunch branch" -ForegroundColor Yellow
+    }
 } finally {
     if ($serverProc -and -not $serverProc.HasExited) {
         $serverProc.Kill()

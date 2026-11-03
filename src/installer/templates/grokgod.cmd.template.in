@@ -1,6 +1,6 @@
 @echo off
 rem grokgod thin launcher for Windows (grokgod)
-setlocal
+setlocal DisableDelayedExpansion
 set "GROKGOD_SHIM_DIR=%~dp0"
 if exist "%GROKGOD_SHIM_DIR%grok-shim.ps1" (
     set "GROKGOD_SHIM_PATH=%GROKGOD_SHIM_DIR%grok-shim.ps1"
@@ -16,7 +16,12 @@ if exist "%GROKGOD_SHIM_DIR%grok-shim.ps1" (
 
 {{GROKGOD:ps-engine-probe.cmd}}
 
-:powershell_ready
+:ps7_ready
 
+rem Argument transport: DisableDelayedExpansion (set above) preserves "!" in
+rem user tokens; %* is forwarded directly to pwsh -File. Callers that spawn
+rem this launcher through cmd.exe /d /s /c must apply CRT quote/backslash
+rem encoding and then twice CMD-metachar escaping with
+rem windowsVerbatimArguments (see tests/shim/launcher_fixture_driver.js).
 "%POWERSHELL_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%GROKGOD_SHIM_PATH%" grokgod %*
 exit /b %ERRORLEVEL%

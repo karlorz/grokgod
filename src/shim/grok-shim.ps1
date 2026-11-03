@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+#Requires -Version 7.0
 <#
 .SYNOPSIS
     grokgod Windows Dispatcher / Shim
@@ -10,13 +10,26 @@
       - grokgod update [allowed args] -> wrapper update
       - grokgod status [--json] -> wrapper status
       - grokgod sessions / cache / other unsupported maintenance -> explicit Windows error, never TUI
+    Requires PowerShell 7 or newer; there is no Windows PowerShell 5.1 path.
     Preserves exact arguments and exit codes.
-    Consumes raw $args directly to avoid named parameter binding on dashed arguments in PS 5.1/7.
+    Consumes raw $args directly to avoid named parameter binding on dashed arguments.
 #>
 
 # Enforce strict parsing
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+# Hard PowerShell 7 floor, enforced before any config/cache/status/update/
+# passthrough side effect. #Requires -Version 7.0 above already rejects a
+# 5.1 parse; this runtime guard covers hosts that load the script in ways
+# that bypass #Requires (dot-source, Invoke-Expression) and prints the
+# remediation hint instead of a generic parse error.
+if ($PSVersionTable.PSEdition -ne 'Core' -or $PSVersionTable.PSVersion.Major -lt 7) {
+    [Console]::Error.WriteLine("error: grok-shim.ps1 requires PowerShell 7 or newer; this host runs $($PSVersionTable.PSEdition) $($PSVersionTable.PSVersion).")
+    [Console]::Error.WriteLine("hint: install PowerShell 7 with: winget install --id Microsoft.PowerShell -e")
+    [Console]::Error.WriteLine("hint: the grokgod launcher always invokes this shim through a verified pwsh.exe.")
+    exit 1
+}
 
 # Capture dispatcher script path reliably at script scope
 $DispatcherScriptPath = if ($PSCommandPath) {
@@ -40,7 +53,8 @@ if ($normIdentity -ne "grok" -and $normIdentity -ne "grokgod" -and $normIdentity
     exit 1
 }
 
-# Remaining application arguments
+# Remaining application arguments. Launchers forward %* directly to
+# pwsh -File, so $args is already the CRT-split token list.
 [string[]]$cmdArgs = @()
 if ($args -and $args.Count -gt 1) {
     for ($i = 1; $i -lt $args.Count; $i++) {
@@ -178,13 +192,17 @@ function Get-UpdateCacheData([string]$path) {
 
 function Set-UpdateCache([string]$path, [Int64]$checkedAt, [string]$version) {
     $tempPath = "$path.tmp.$PID.$([Guid]::NewGuid().ToString('N'))"
+    # A null backup file name makes File.Replace throw ArgumentException on
+    # .NET Framework (Windows PowerShell 5.1); a real (then removed) backup
+    # works on both .NET Framework and modern .NET.
+    $backupPath = "$path.bak.$PID.$([Guid]::NewGuid().ToString('N'))"
     try {
         $content = "CHECKED_AT=$checkedAt`n"
         if (Test-ReleaseVersion $version) { $content += "VERSION=$version`n" }
         $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
         [System.IO.File]::WriteAllText($tempPath, $content, $utf8NoBom)
         if (Test-Path -LiteralPath $path) {
-            [System.IO.File]::Replace($tempPath, $path, $null)
+            [System.IO.File]::Replace($tempPath, $path, $backupPath)
         } else {
             [System.IO.File]::Move($tempPath, $path)
         }
@@ -192,6 +210,8 @@ function Set-UpdateCache([string]$path, [Int64]$checkedAt, [string]$version) {
     } catch {
         Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
         return $false
+    } finally {
+        Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -208,8 +228,16 @@ function Invoke-UpdateCacheRefresh([string]$cachePath, [string]$url, [Int64]$che
 }
 
 function Start-UpdateCacheRefresh([string]$cachePath, [string]$url, [Int64]$checkedAt) {
+    $hostExe = $null
     try {
-        $hostExe = (Get-Process -Id $PID -ErrorAction Stop).Path
+        # Same verified PowerShell 7 engine the updater uses: the running
+        # engine by construction, or a validated POWERSHELL_EXE override.
+        $hostExe = Resolve-GrokgodEngine
+    } catch {
+        [Console]::Error.WriteLine("error: detached update refresh skipped: $_")
+        return
+    }
+    try {
         if (-not $hostExe -or -not $script:DispatcherScriptPath) { return }
         $refreshArgs = @(
             '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
@@ -220,8 +248,21 @@ function Start-UpdateCacheRefresh([string]$cachePath, [string]$url, [Int64]$chec
         $psi.FileName = $hostExe
         $psi.UseShellExecute = $false
         $psi.CreateNoWindow = $true
+        # Isolate the detached refresh from the caller's pipes. A refresh
+        # child that inherited the launcher stdout/stderr (for example from a
+        # Node child_process caller with piped stdio) would keep the caller's
+        # pipe open after the launcher exits, so EOF would be delayed until
+        # the refresh finished. Redirect every stream, close our stdin copy
+        # so the child sees immediate EOF, and drain stdout/stderr so the
+        # child can never block on a full pipe.
+        $psi.RedirectStandardInput = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
         $psi.Arguments = ConvertTo-WindowsCommandLine -ArgumentList $refreshArgs
-        [void][System.Diagnostics.Process]::Start($psi)
+        $refreshProc = [System.Diagnostics.Process]::Start($psi)
+        try { $refreshProc.StandardInput.Close() } catch {}
+        [void]$refreshProc.StandardOutput.ReadToEndAsync()
+        [void]$refreshProc.StandardError.ReadToEndAsync()
     } catch {}
 }
 
@@ -273,27 +314,290 @@ function ConvertTo-WindowsCommandLine([string[]]$ArgumentList) {
 }
 
 # -----------------------------------------------------------------------------
-# Helper: Read Version from Binary via execution
+# Helper: bounded PowerShell engine version probe
 # -----------------------------------------------------------------------------
+# Runs '<Path> -NoProfile -Command $PSVersionTable.PSVersion.ToString()' with
+# a bounded total lifetime and returns the first output line on success.
+# Returns $null when the candidate cannot start, exceeds the budget, exits
+# non-zero, or holds EOF past the drain window (held-stdin children get EOF
+# immediately because our stdin copy is closed right after start). Drains
+# begin BEFORE the wait so a noisy-stderr candidate cannot deadlock; the
+# deadline covers wait + drain + cleanup together. On timeout only the
+# directly owned probe PID is killed (pwsh -Command spawns no children for
+# this probe). Readers and process handle are disposed on every path.
+function Get-GrokgodEngineVersion([string]$Path, [int]$TimeoutMs) {
+    $proc = $null
+    # The deadline watch starts BEFORE process setup so Start() cost counts
+    # against the budget too.
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $Path
+        $psi.Arguments = '-NoProfile -Command "$PSVersionTable.PSVersion.ToString()"'
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.RedirectStandardInput = $true
+        $psi.CreateNoWindow = $true
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        try { $proc.StandardInput.Close() } catch {}
+        $outTask = $proc.StandardOutput.ReadToEndAsync()
+        $errTask = $proc.StandardError.ReadToEndAsync()
+        $remaining = $TimeoutMs - [int]$watch.ElapsedMilliseconds
+        if ($remaining -lt 0) { $remaining = 0 }
+        if (-not $proc.WaitForExit($remaining)) {
+            try { $proc.Kill() } catch {}
+            return $null
+        }
+        # Each sequential drain wait recomputes the remaining budget so the
+        # pair can never consume more than the total deadline.
+        $remaining = $TimeoutMs - [int]$watch.ElapsedMilliseconds
+        if ($remaining -lt 0) { $remaining = 0 }
+        $drained = $false
+        try { $drained = $outTask.Wait($remaining) } catch { $drained = $false }
+        $remaining = $TimeoutMs - [int]$watch.ElapsedMilliseconds
+        if ($remaining -lt 0) { $remaining = 0 }
+        try { [void]$errTask.Wait($remaining) } catch {}
+        if (-not $drained) { return $null }
+        if ($proc.ExitCode -ne 0) { return $null }
+        $out = [string]$outTask.Result
+        if (-not $out) { return $null }
+        return (($out -split "`r?`n")[0]).Trim()
+    } catch {
+        return $null
+    } finally {
+        if ($proc) {
+            try { $proc.StandardInput.Dispose() } catch {}
+            try { $proc.StandardOutput.Dispose() } catch {}
+            try { $proc.StandardError.Dispose() } catch {}
+            try { $proc.Dispose() } catch {}
+        }
+    }
+}
+
+# -----------------------------------------------------------------------------
+# Helper: resolve the verified PowerShell 7 engine for child processes
+# -----------------------------------------------------------------------------
+# Every child the shim spawns (updater, detached refresh) must run under the
+# SAME verified PowerShell 7 engine family — never a PSEdition guess and
+# never powershell.exe. Resolution order:
+#   1. POWERSHELL_EXE override: honored ONLY when it names a real pwsh that
+#      provably runs and reports >= 7. An override naming powershell.exe or
+#      any WindowsPowerShell\v1.0 path is a blocking error with remediation
+#      (it would reintroduce the exact 5.1 fallback this shim forbids).
+#   2. Otherwise the currently running engine's absolute path. The gate at
+#      script entry guarantees this process IS PowerShell 7+, so the path is
+#      verified by construction.
+function Resolve-GrokgodEngine {
+    $override = [string]$env:POWERSHELL_EXE
+    if ($override) {
+        $name = [System.IO.Path]::GetFileName($override)
+        if ($name -ieq 'powershell.exe' -or $override -imatch 'WindowsPowerShell\\v1\.0') {
+            throw "POWERSHELL_EXE points at '$override', which is Windows PowerShell 5.1. grokgod requires PowerShell 7 or newer; remove the override or point it at a pwsh.exe (winget install --id Microsoft.PowerShell -e)."
+        }
+        $version = Get-GrokgodEngineVersion -Path $override -TimeoutMs 8000
+        $parsed = $null
+        try { $parsed = [version]$version } catch { $parsed = $null }
+        if ($parsed -and $parsed.Major -ge 7) { return $override }
+        throw "POWERSHELL_EXE override '$override' is not a runnable PowerShell 7+ engine (probe returned '$version'). Fix or remove the override."
+    }
+    $current = $null
+    try { $current = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName } catch { $current = $null }
+    if (-not $current) { $current = [string]$PSHOME + "\pwsh.exe" }
+    return $current
+}
+
+# -----------------------------------------------------------------------------
+# Machine / protocol launch classification
+# -----------------------------------------------------------------------------
+# These forms must reach the patched binary with zero update-check side
+# effects (no cache reads or writes, no cached wrapper notice, no detached
+# network refresh, no network dependency of any kind):
+#   grok --version | -V
+#   grok --help | -h | help
+#   grok models
+#   grok inspect
+#   grok agent stdio
+# A small set of recognized global flags may precede the form (for example
+# `grok -m flash-max agent stdio`); each consumes exactly one value token.
+# Matching is exact per token over the whole remaining argument list: an
+# argument VALUE that merely contains the text "agent stdio" is never
+# classified as a protocol launch.
+function Test-MachineProtocolLaunch([string[]]$argsList) {
+    # Walk a cursor past recognized leading global flags instead of
+    # repeatedly re-slicing a copy of the argument list.
+    $i = 0
+    $count = $argsList.Count
+    while ($i -lt $count) {
+        $t = [string]$argsList[$i]
+        if ($t -eq "--minimal") {
+            $i += 1
+        } elseif ($t -eq "-m" -or $t -eq "--model" -or $t -eq "--agent") {
+            # A value-taking flag with no value is not a clean machine form.
+            if (($i + 2) -gt $count) { return $false }
+            $i += 2
+        } elseif ($t -match '^--model=' -or $t -match '^--agent=') {
+            $i += 1
+        } else {
+            break
+        }
+    }
+
+    $rest = $count - $i
+    if ($rest -eq 1) {
+        $t = [string]$argsList[$i]
+        if ($t -eq "--version" -or $t -eq "-V" -or $t -eq "--help" -or $t -eq "-h" -or
+            $t -eq "help" -or $t -eq "models" -or $t -eq "inspect") {
+            return $true
+        }
+    } elseif ($rest -eq 2) {
+        if ([string]$argsList[$i] -eq "agent" -and [string]$argsList[$i + 1] -eq "stdio") {
+            return $true
+        }
+    }
+    return $false
+}
+
+# -----------------------------------------------------------------------------
+# Helper: Read Version from Binary via execution (bounded probe)
+# -----------------------------------------------------------------------------
+# Probe contract:
+#   - One total budget ($totalBudgetMs, 4000ms) measured from process start:
+#     the 3000ms wait, the post-exit drains, the kill, and handle teardown
+#     each consume only the time remaining in that total. Never unbounded.
+#   - stdout and stderr are drained concurrently via ReadToEndAsync so a
+#     child that saturates one pipe cannot deadlock the probe before the
+#     budget elapses. The candidate's stdin is redirected and closed right
+#     after start so a held-EOF child sees immediate EOF.
+#   - On timeout the kill is supervised and bounded: taskkill runs as an
+#     OWNED helper process whose WaitForExit gets only the remaining
+#     cleanup budget; on helper overrun the helper is killed and the owned
+#     root PID is killed directly as the fallback. Only processes rooted at
+#     the probe PID we started are touched — no CIM enumeration, no foreign
+#     processes.
+#   - Descendant limit (honest): taskkill /T reaches only descendants still
+#     attached to the owned root's tree. A grandchild that detached (own
+#     console, reparented, or outliving a root that already exited) can
+#     survive the tree kill; nothing here enumerates or kills foreign
+#     processes, so such an orphan is left for the OS/caller watchdog.
+#   - A grandchild that inherits the probe pipe and holds EOF open cannot
+#     extend the probe: once the direct child exits, the async drains get
+#     only the time left in the total budget; after that the probe returns
+#     through the normal contract (version unknown -> $null).
+function Stop-OwnedProbeProcess([System.Diagnostics.Process]$proc, [int]$cleanupBudgetMs) {
+    if (-not $proc) { return }
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        if (-not $proc.HasExited) {
+            # Supervised tree kill: taskkill is an owned child bounded by the
+            # remaining cleanup budget, never a synchronous & invocation.
+            $tk = $null
+            try {
+                $tpsi = New-Object System.Diagnostics.ProcessStartInfo
+                $tpsi.FileName = 'taskkill.exe'
+                $tpsi.Arguments = "/T /F /PID $($proc.Id)"
+                $tpsi.UseShellExecute = $false
+                $tpsi.CreateNoWindow = $true
+                $tpsi.RedirectStandardOutput = $true
+                $tpsi.RedirectStandardError = $true
+                $tk = [System.Diagnostics.Process]::Start($tpsi)
+                # Fire-and-forget drains keep the helper's pipes from
+                # blocking it; their content is never used, so nothing here
+                # waits on them past the supervised WaitForExit above.
+                [void]$tk.StandardOutput.ReadToEndAsync()
+                [void]$tk.StandardError.ReadToEndAsync()
+                $remain = $cleanupBudgetMs - [int]$watch.ElapsedMilliseconds
+                if ($remain -gt 0) {
+                    [void]$tk.WaitForExit($remain)
+                } else {
+                    try { $tk.Kill() } catch {}
+                }
+            } catch {
+                # taskkill unavailable or failed to start: the direct
+                # owned-PID kill below is the fallback.
+            } finally {
+                if ($tk) {
+                    try { if (-not $tk.HasExited) { $tk.Kill() } } catch {}
+                    try { $tk.StandardOutput.Dispose() } catch {}
+                    try { $tk.StandardError.Dispose() } catch {}
+                    try { $tk.Dispose() } catch {}
+                }
+            }
+        }
+        if (-not $proc.HasExited) {
+            try { $proc.Kill() } catch {}
+        }
+        $remain = $cleanupBudgetMs - [int]$watch.ElapsedMilliseconds
+        if ($remain -gt 0) {
+            try { [void]$proc.WaitForExit($remain) } catch {}
+        }
+    } catch {}
+}
+
 function Get-BinaryReportedVersion([string]$exePath) {
     if (-not (Test-Path -LiteralPath $exePath)) { return $null }
+    # Total budget from process start: 3000ms wait + 1000ms drain/cleanup
+    # tail. The watch starts BEFORE process setup and every stage below
+    # consumes only the time remaining in the total.
+    $probeWaitMs = 3000
+    $totalBudgetMs = 4000
+    $proc = $null
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = $exePath
         $psi.Arguments = "--version"
         $psi.RedirectStandardOutput = $true
         $psi.RedirectStandardError = $true
+        $psi.RedirectStandardInput = $true
         $psi.UseShellExecute = $false
         $psi.CreateNoWindow = $true
 
-        $proc = [System.Diagnostics.Process]::Start($psi)
-        $out = $proc.StandardOutput.ReadToEnd()
-        $proc.WaitForExit(3000) | Out-Null
-        if ($proc.ExitCode -eq 0) {
-            $line = ($out -split "[\r\n]+") | Where-Object { $_ -match '\S' } | Select-Object -First 1
+        $proc = New-Object System.Diagnostics.Process
+        $proc.StartInfo = $psi
+        [void]$proc.Start()
+        # Immediate EOF for the candidate: a fixture that waits on stdin can
+        # never hold this probe open.
+        try { $proc.StandardInput.Close() } catch {}
+
+        # Begin concurrent drains before the wait so neither pipe can fill.
+        # stderr is drained only to keep the pipe from blocking; its content
+        # is never used, so it is not retained.
+        $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+        [void]$proc.StandardError.ReadToEndAsync()
+
+        $exited = $proc.WaitForExit($probeWaitMs)
+        if (-not $exited) {
+            $remain = $totalBudgetMs - [int]$watch.ElapsedMilliseconds
+            if ($remain -lt 0) { $remain = 0 }
+            Stop-OwnedProbeProcess -proc $proc -cleanupBudgetMs $remain
+            return $null
+        }
+
+        # Direct child exited; the post-exit drain gets only the time left in
+        # the total budget, so a fixture- or grandchild-held pipe cannot
+        # extend the probe. A true Wait already implies IsCompleted; only
+        # fault/cancel need checks.
+        $drainMs = $totalBudgetMs - [int]$watch.ElapsedMilliseconds
+        if ($drainMs -lt 0) { $drainMs = 0 }
+        $outText = $null
+        if ($stdoutTask.Wait($drainMs) -and -not $stdoutTask.IsFaulted -and -not $stdoutTask.IsCanceled) {
+            $outText = $stdoutTask.Result
+        }
+        if ($proc.ExitCode -eq 0 -and $outText -ne $null) {
+            $line = ($outText -split "[\r\n]+") | Where-Object { $_ -match '\S' } | Select-Object -First 1
             if ($line) { return $line.Trim() }
         }
+        return $null
     } catch {}
+    finally {
+        if ($proc) {
+            try { $proc.StandardInput.Dispose() } catch {}
+            try { $proc.StandardOutput.Dispose() } catch {}
+            try { $proc.StandardError.Dispose() } catch {}
+            try { $proc.Dispose() } catch {}
+        }
+    }
     return $null
 }
 
@@ -545,8 +849,12 @@ function Invoke-UpdateCommand([string[]]$argsList) {
         exit 1
     }
 
-    # Execute updater via powershell
-    $pwshExe = if ($PSVersionTable.PSEdition -eq "Core") { "pwsh.exe" } else { "powershell.exe" }
+    # Execute the updater through the SAME verified PowerShell 7 engine this
+    # shim is running under (or a validated POWERSHELL_EXE override). There
+    # is deliberately no PSEdition-based powershell.exe fallback: an
+    # override pointing at Windows PowerShell 5.1 fails right here with an
+    # explicit blocking error instead of downgrading the updater.
+    $pwshExe = Resolve-GrokgodEngine
 
     $updaterArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $updaterPath) + $parsedArgs
 
@@ -557,8 +865,12 @@ function Invoke-UpdateCommand([string[]]$argsList) {
     $psi.Arguments = ConvertTo-WindowsCommandLine -ArgumentList $updaterArgs
 
     $proc = [System.Diagnostics.Process]::Start($psi)
-    $proc.WaitForExit()
-    exit $proc.ExitCode
+    try {
+        $proc.WaitForExit()
+        exit $proc.ExitCode
+    } finally {
+        try { $proc.Dispose() } catch {}
+    }
 }
 
 # -----------------------------------------------------------------------------
@@ -656,7 +968,11 @@ if ($normIdentity -eq "grokgod") {
 # 4. For 'grok':
 # All other arguments, including 'grok sessions ...', go directly to the patched binary
 # with GROK_DISABLE_AUTOUPDATER=1.
-if ($subcommand -ne "cache") {
+# Machine/protocol launches (--version, -V, help forms, models, inspect,
+# agent stdio) bypass the release update check entirely: no cache reads or
+# writes, no cached wrapper notice, no detached network refresh.
+$machineOrProtocol = Test-MachineProtocolLaunch -argsList $cmdArgs
+if ($subcommand -ne "cache" -and -not $machineOrProtocol) {
     Invoke-ReleaseUpdateCheck
 }
 Invoke-PatchedExecutable -argsList $cmdArgs

@@ -1,9 +1,22 @@
 <#
 .SYNOPSIS
-    Launcher generation helper for grokgod Windows installation (Task 3 helper).
+    Launcher generation and PowerShell 7 prerequisite helpers for grokgod
+    Windows installation (Task 3 helper).
 .DESCRIPTION
-    Generates thin .cmd launchers that invoke grok-shim.ps1 with positional identity.
+    Generates thin .cmd launchers that invoke grok-shim.ps1 with positional
+    identity, and resolves a verified runnable PowerShell 7+ engine.
+
+    grokgod requires PowerShell 7 or newer. These helpers never fall back to
+    Windows PowerShell 5.1: Resolve-GrokgodPwsh verifies every candidate by
+    executing it (alias presence alone is not proof of runnability), and the
+    generated launcher prints actionable install guidance and exits 127 when
+    no verified engine exists.
 #>
+
+{{GROKGOD:shared/ps7-version-probe.ps1.part#Get-GrokgodPwshVersion}}
+
+{{GROKGOD:shared/ps7-resolver.ps1.part#Resolve-GrokgodPwsh}}
+
 function New-GrokgodLauncherScript {
     [CmdletBinding()]
     param(
@@ -12,21 +25,65 @@ function New-GrokgodLauncherScript {
         [string]$Identity,
 
         [Parameter(Mandatory = $true)]
-        [string]$ShimPath
+        [string]$ShimPath,
+
+        # Optional absolute path to a Resolve-GrokgodPwsh-verified pwsh.exe.
+        # Baked into the launcher (GROKGOD_POWERSHELL_BAKED) as the preferred
+        # engine; the launcher's runtime verification still rejects it if it
+        # stops being runnable, and discovery then applies. The path is
+        # re-verified here at generation time so an arbitrary or stale value
+        # can never be baked in. Empty = pure discovery launcher.
+        [string]$PwshPath = ""
     )
 
     $normalizedShim = $ShimPath.Trim()
+    $bakedLine = ""
+    $trimmedPwsh = $PwshPath.Trim()
+    if ($trimmedPwsh) {
+        # Bake only a provably runnable engine. An arbitrary or stale path
+        # here would ship a launcher that 127s on first use, so the same
+        # verification the launcher applies at runtime is applied at
+        # generation time.
+        if (-not (Test-Path -LiteralPath $trimmedPwsh)) {
+            throw "PwshPath '$trimmedPwsh' does not exist. Resolve-GrokgodPwsh first, then pass its result."
+        }
+        $bakedVersion = Get-GrokgodPwshVersion -Path $trimmedPwsh
+        $bakedParsed = $null
+        try { $bakedParsed = [version]$bakedVersion } catch { $bakedParsed = $null }
+        if (-not $bakedParsed -or $bakedParsed.Major -lt 7) {
+            throw "PwshPath '$trimmedPwsh' is not a verified runnable PowerShell 7+ engine (probe returned '$bakedVersion')."
+        }
+        $bakedLine = 'set "GROKGOD_POWERSHELL_BAKED=' + $trimmedPwsh + '"'
+    }
+
+    # The probe block is raw cmd text containing $ and backtick characters;
+    # it must ride in a single-quoted here-string so PowerShell never
+    # interpolates it, then be spliced into the launcher template by literal
+    # replacement. Putting the probe inside the expandable template
+    # here-string interpolates $PSVersionTable and silently removes the
+    # for /f usebackq backticks at runtime (observed on msi-1: every probe
+    # stage failed and the launcher exited 127).
+    $probePart = @'
+{{GROKGOD:ps-engine-probe.cmd}}
+'@
+
     $template = @"
 @echo off
-rem grokgod thin launcher for Windows ($Identity)
-setlocal
+rem grokgod thin launcher for Windows ($Identity) - requires PowerShell 7+
+setlocal DisableDelayedExpansion
+$bakedLine
 
-{{GROKGOD:ps-engine-probe.cmd}}
+__GROKGOD_PS7_PROBE__
 
-:powershell_ready
+:ps7_ready
 
+rem Argument transport: DisableDelayedExpansion (set above) preserves "!" in
+rem user tokens; %* is forwarded directly to pwsh -File. Callers that spawn
+rem this launcher through cmd.exe /d /s /c must apply CRT quote/backslash
+rem encoding and then twice CMD-metachar escaping with
+rem windowsVerbatimArguments (see tests/shim/launcher_fixture_driver.js).
 "%POWERSHELL_EXE%" -NoProfile -ExecutionPolicy Bypass -File "$normalizedShim" $Identity %*
 exit /b %ERRORLEVEL%
 "@
-    return $template
+    return ($template.Replace('__GROKGOD_PS7_PROBE__', $probePart))
 }

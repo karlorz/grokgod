@@ -1,27 +1,100 @@
 #@build:strip-header
-# Canonical PowerShell engine selection for the Windows launchers.
+# PowerShell 7 prerequisite probe for the Windows launchers.
 #
 # Shared by src/shim/templates/grok.cmd.template, src/shim/templates/
 # grokgod.cmd.template and src/shim/LauncherHelpers.ps1, which previously
-# carried three hand-maintained copies of this flow. The block ends after the
-# `exit /b 127` line; each consumer supplies its own :powershell_ready label
+# carried three hand-maintained copies of this flow. The block ends after
+# the `exit /b 127` line; each consumer supplies its own :ps7_ready label
 # and exec line, and keeps the blank line between them.
+#
+# grokgod requires PowerShell 7 or newer. There is deliberately no Windows
+# PowerShell (5.1) fallback: a 5.1 engine cannot run the shim reliably and
+# is rejected by the verification step below.
+#
+# Engine selection is deterministic: any inherited POWERSHELL_EXE is
+# cleared at probe start, and only two documented sources are honored,
+# each re-verified at runtime:
+#   1. GROKGOD_POWERSHELL       - explicit per-invocation override.
+#   2. GROKGOD_POWERSHELL_BAKED - absolute path baked at install or fixture
+#                                 generation time from a Resolve-GrokgodPwsh-
+#                                 verified engine (never arbitrary input).
+# Enumeration then walks, in order: %ProgramFiles%\PowerShell\7,
+# %ProgramFiles(x86)%\PowerShell\7, and every pwsh.exe reported by
+# where.exe. Every candidate must start and print major version >= 7; the
+# first verified candidate wins and a failed candidate never short-circuits
+# the rest of the list.
+#
+# Timeout design note: cmd.exe has no wait-with-timeout primitive, so the
+# verification call invokes the candidate directly and without a wrapper
+# timeout. Broken executables and Store alias stubs fail fast at process
+# start; a candidate that hangs outright is pathological, and the caller's
+# own watchdog (test driver timeout, suite process supervisor, or the
+# interactive user) owns that case. A powershell.exe babysitter wrapper was
+# considered and rejected to keep this probe free of any PS5.1 dependency.
 #
 # Do not edit a generated launcher or LauncherHelpers.ps1 to change this
 # behavior. Edit this file and run: node src/installer/build.mjs
 #@build:end-header
+rem --- PowerShell 7 prerequisite: locate and verify a runnable pwsh.exe ---
 set "POWERSHELL_EXE="
-pwsh.exe -NoProfile -Command "exit 0" >nul 2>&1
-if errorlevel 1 goto try_powershell
-set "POWERSHELL_EXE=pwsh.exe"
-goto powershell_ready
+set "PS7_STAGE=override"
+:ps7_next
+if "%PS7_STAGE%"=="override" goto ps7_stage_override
+if "%PS7_STAGE%"=="baked" goto ps7_stage_baked
+if "%PS7_STAGE%"=="pf64" goto ps7_stage_pf64
+if "%PS7_STAGE%"=="pf86" goto ps7_stage_pf86
+goto ps7_stage_path
 
-:try_powershell
-powershell.exe -NoProfile -Command "exit 0" >nul 2>&1
-if errorlevel 1 goto powershell_unavailable
-set "POWERSHELL_EXE=powershell.exe"
-goto powershell_ready
+:ps7_stage_override
+set "PS7_STAGE=baked"
+if defined GROKGOD_POWERSHELL set "POWERSHELL_EXE=%GROKGOD_POWERSHELL%"
+if defined POWERSHELL_EXE goto ps7_verify
+goto ps7_next
 
-:powershell_unavailable
->&2 echo grokgod: no runnable PowerShell engine found (pwsh.exe or powershell.exe)
+:ps7_stage_baked
+set "PS7_STAGE=pf64"
+if defined GROKGOD_POWERSHELL_BAKED set "POWERSHELL_EXE=%GROKGOD_POWERSHELL_BAKED%"
+if defined POWERSHELL_EXE goto ps7_verify
+goto ps7_next
+
+:ps7_stage_pf64
+set "PS7_STAGE=pf86"
+if exist "%ProgramFiles%\PowerShell\7\pwsh.exe" set "POWERSHELL_EXE=%ProgramFiles%\PowerShell\7\pwsh.exe"
+if defined POWERSHELL_EXE goto ps7_verify
+goto ps7_next
+
+:ps7_stage_pf86
+set "PS7_STAGE=path"
+if exist "%ProgramFiles(x86)%\PowerShell\7\pwsh.exe" set "POWERSHELL_EXE=%ProgramFiles(x86)%\PowerShell\7\pwsh.exe"
+if defined POWERSHELL_EXE goto ps7_verify
+goto ps7_next
+
+:ps7_stage_path
+set "PS7_FOUND="
+for /f "usebackq delims=" %%W in (`%SystemRoot%\System32\where.exe pwsh.exe 2^>nul`) do (
+    if not defined PS7_FOUND call :ps7_try_candidate "%%W"
+)
+if defined POWERSHELL_EXE goto ps7_ready
+goto ps7_unavailable
+
+:ps7_verify
+"%POWERSHELL_EXE%" -NoProfile -Command "if ($PSVersionTable.PSVersion.Major -ge 7) { exit 0 } exit 1" >nul 2>nul
+if not errorlevel 1 goto ps7_ready
+rem Candidate failed verification; continue enumeration from the next stage.
+set "POWERSHELL_EXE="
+goto ps7_next
+
+:ps7_try_candidate
+rem %1 = quoted candidate path from the where.exe enumeration. A
+rem subroutine is used so the candidate variable expands per call instead
+rem of at parenthesized-block parse time.
+set "POWERSHELL_EXE=%~1"
+"%POWERSHELL_EXE%" -NoProfile -Command "if ($PSVersionTable.PSVersion.Major -ge 7) { exit 0 } exit 1" >nul 2>nul
+if not errorlevel 1 (set "PS7_FOUND=1") else (set "POWERSHELL_EXE=")
+exit /b 0
+
+:ps7_unavailable
+>&2 echo grokgod: PowerShell 7+ is required but no runnable pwsh.exe was found.
+>&2 echo grokgod: install it with: winget install --id Microsoft.PowerShell -e
+>&2 echo grokgod: then re-run this command.
 exit /b 127

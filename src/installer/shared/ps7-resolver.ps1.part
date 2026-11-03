@@ -1,0 +1,92 @@
+#@build:strip-header
+# Canonical PowerShell 7 engine discovery and selection.
+#
+# Compiled into src/shim/LauncherHelpers.ps1 and install.ps1 by
+# src/installer/templates/* via the build-time
+# {{GROKGOD:shared/ps7-resolver.ps1.part#Resolve-GrokgodPwsh}} placeholder, so the
+# launcher generator and the installer enumerate candidates with exactly the
+# same verified logic. Must stay runnable BEFORE the installer PS7 gate
+# (bootstrap from Windows PowerShell 5.1): no PS7-only syntax. Depends on
+# Get-GrokgodPwshVersion from ps7-version-probe.ps1.part being compiled into
+# the same file first.
+#@build:end-header
+function {{GROKGOD:functionName}} {
+    [CmdletBinding()]
+    param(
+        [int]$ProbeTimeoutMs = 8000
+    )
+
+    # Returns the absolute path of a pwsh.exe that provably starts and
+    # reports major version >= 7, or $null when none is found. Candidates:
+    #   1. standard install locations (real binaries, never Store aliases)
+    #   2. every pwsh.exe reported by where.exe (PATH order)
+    # Every candidate is executed with the bounded probe in the current
+    # context; a Store alias that cannot launch here is rejected, and a
+    # failed candidate never short-circuits the remaining list.
+    $candidates = New-Object System.Collections.Generic.List[string]
+    $std = @()
+    if ($env:ProgramFiles) { $std += (Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe') }
+    if (${env:ProgramFiles(x86)}) { $std += (Join-Path ${env:ProgramFiles(x86)} 'PowerShell\7\pwsh.exe') }
+    foreach ($p in $std) { if (Test-Path -LiteralPath $p) { $candidates.Add($p) } }
+
+    $whereOut = $null
+    $wp = $null
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = 'where.exe'
+        $psi.Arguments = 'pwsh.exe'
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.RedirectStandardInput = $true
+        $psi.CreateNoWindow = $true
+        $wp = [System.Diagnostics.Process]::Start($psi)
+        try { $wp.StandardInput.Close() } catch {}
+        # Same supervision contract as the version probe: concurrent
+        # drains first, bounded total wait, kill only the owned PID.
+        $wOut = $wp.StandardOutput.ReadToEndAsync()
+        $wErr = $wp.StandardError.ReadToEndAsync()
+        if ($wp.WaitForExit(5000)) {
+            if ($wOut.Wait(1000)) { $whereOut = [string]$wOut.Result }
+        } else {
+            try { $wp.Kill() } catch {}
+        }
+        try { [void]$wErr.Wait(1000) } catch {}
+    } catch { $whereOut = $null }
+    finally {
+        if ($wp) {
+            try { $wp.StandardInput.Dispose() } catch {}
+            try { $wp.StandardOutput.Dispose() } catch {}
+            try { $wp.StandardError.Dispose() } catch {}
+            try { $wp.Dispose() } catch {}
+        }
+    }
+    if ($whereOut) {
+        foreach ($line in ($whereOut -split "`r?`n")) {
+            $t = $line.Trim()
+            if ($t -and (Test-Path -LiteralPath $t)) { $candidates.Add($t) }
+        }
+    }
+
+    $seen = @{}
+    foreach ($candidate in $candidates) {
+        $path = $candidate
+        # A Store alias is a reparse point; prefer the packaged real binary.
+        try {
+            $item = Get-Item -LiteralPath $path -ErrorAction Stop
+            if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                $target = $null
+                try { $target = ($item.Target | Select-Object -First 1) } catch { $target = $null }
+                if ($target -and (Test-Path -LiteralPath $target)) { $path = $target }
+            }
+        } catch {}
+        if ($seen.ContainsKey($path.ToLowerInvariant())) { continue }
+        $seen[$path.ToLowerInvariant()] = $true
+        $version = Get-GrokgodPwshVersion -Path $path -TimeoutMs $ProbeTimeoutMs
+        if (-not $version) { continue }
+        $parsed = $null
+        try { $parsed = [version]$version } catch { $parsed = $null }
+        if ($parsed -and $parsed.Major -ge 7) { return $path }
+    }
+    return $null
+}

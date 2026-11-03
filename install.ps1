@@ -33,7 +33,9 @@ param(
     [string]$Prefix = "",
     [switch]$Finalize,
     [string]$FinalizeBaseUrl = "",
-    [string]$FinalizeTag = ""
+    [string]$FinalizeTag = "",
+    [switch]$InstallPowerShell7,
+    [switch]$Apply
 )
 
 # ---------------------------------------------------------------------------
@@ -68,6 +70,333 @@ function Write-Dim($msg)  { [Console]::Out.WriteLine("    $msg") }
 function Write-Step($msg) { [Console]::Out.WriteLine("==> $msg") }
 
 Write-Host "`n  grokgod Transactional Installer (Windows)`n"
+
+# -----------------------------------------------------------------------------
+# 0. PowerShell 7 prerequisite (hard requirement, no Windows PowerShell 5.1)
+# -----------------------------------------------------------------------------
+# grokgod requires PowerShell 7+. Invoking this installer from Windows
+# PowerShell 5.1 must never continue the installation: this gate verifies a
+# runnable pwsh.exe (standard install paths, then PATH candidates, with
+# Store aliases resolved through their reparse target) by executing it with
+# a bounded probe, relaunches this script under it, and only prints
+# actionable install guidance when no runnable engine exists.
+function Get-GrokgodPwshVersion {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [int]$TimeoutMs = 8000
+    )
+
+    # Runs '<Path> -NoProfile -Command $PSVersionTable.PSVersion.ToString()'
+    # with a bounded total lifetime and returns the first output line on
+    # success. Returns $null when the candidate cannot start, exceeds the
+    # budget, exits non-zero, or holds EOF past the drain window.
+    $proc = $null
+    # Deadline measured from BEFORE process setup so Start() counts too.
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $Path
+        $psi.Arguments = '-NoProfile -Command "$PSVersionTable.PSVersion.ToString()"'
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.RedirectStandardInput = $true
+        $psi.CreateNoWindow = $true
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        # Immediate EOF for the candidate: stdin is redirected and closed so
+        # a probe waiting on inherited input can never outlive its budget.
+        try { $proc.StandardInput.Close() } catch {}
+        $outTask = $proc.StandardOutput.ReadToEndAsync()
+        $errTask = $proc.StandardError.ReadToEndAsync()
+        $remainWait = $TimeoutMs - [int]$watch.ElapsedMilliseconds
+        if ($remainWait -lt 0) { $remainWait = 0 }
+        if (-not $proc.WaitForExit($remainWait)) {
+            try { $proc.Kill() } catch {}
+            return $null
+        }
+        # Each sequential drain wait recomputes the remaining budget.
+        $drainMs = $TimeoutMs - [int]$watch.ElapsedMilliseconds
+        if ($drainMs -lt 0) { $drainMs = 0 }
+        $drained = $false
+        try { $drained = $outTask.Wait($drainMs) } catch { $drained = $false }
+        $drainMs = $TimeoutMs - [int]$watch.ElapsedMilliseconds
+        if ($drainMs -lt 0) { $drainMs = 0 }
+        # [void]: an unassigned .Wait() would leak True onto the output stream.
+        try { [void]$errTask.Wait($drainMs) } catch {}
+        if (-not $drained) { return $null }
+        if ($proc.ExitCode -ne 0) { return $null }
+        $out = [string]$outTask.Result
+        if (-not $out) { return $null }
+        return (($out -split "`r?`n")[0]).Trim()
+    } catch {
+        return $null
+    } finally {
+        if ($proc) {
+            try { $proc.StandardInput.Dispose() } catch {}
+            try { $proc.StandardOutput.Dispose() } catch {}
+            try { $proc.StandardError.Dispose() } catch {}
+            try { $proc.Dispose() } catch {}
+        }
+    }
+}
+
+function Resolve-GrokgodPwsh {
+    [CmdletBinding()]
+    param(
+        [int]$ProbeTimeoutMs = 8000
+    )
+
+    # Returns the absolute path of a pwsh.exe that provably starts and
+    # reports major version >= 7, or $null when none is found. Candidates:
+    #   1. standard install locations (real binaries, never Store aliases)
+    #   2. every pwsh.exe reported by where.exe (PATH order)
+    # Every candidate is executed with the bounded probe in the current
+    # context; a Store alias that cannot launch here is rejected, and a
+    # failed candidate never short-circuits the remaining list.
+    $candidates = New-Object System.Collections.Generic.List[string]
+    $std = @()
+    if ($env:ProgramFiles) { $std += (Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe') }
+    if (${env:ProgramFiles(x86)}) { $std += (Join-Path ${env:ProgramFiles(x86)} 'PowerShell\7\pwsh.exe') }
+    foreach ($p in $std) { if (Test-Path -LiteralPath $p) { $candidates.Add($p) } }
+
+    $whereOut = $null
+    $wp = $null
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = 'where.exe'
+        $psi.Arguments = 'pwsh.exe'
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.RedirectStandardInput = $true
+        $psi.CreateNoWindow = $true
+        $wp = [System.Diagnostics.Process]::Start($psi)
+        try { $wp.StandardInput.Close() } catch {}
+        # Same supervision contract as the version probe: concurrent
+        # drains first, bounded total wait, kill only the owned PID.
+        $wOut = $wp.StandardOutput.ReadToEndAsync()
+        $wErr = $wp.StandardError.ReadToEndAsync()
+        if ($wp.WaitForExit(5000)) {
+            if ($wOut.Wait(1000)) { $whereOut = [string]$wOut.Result }
+        } else {
+            try { $wp.Kill() } catch {}
+        }
+        try { [void]$wErr.Wait(1000) } catch {}
+    } catch { $whereOut = $null }
+    finally {
+        if ($wp) {
+            try { $wp.StandardInput.Dispose() } catch {}
+            try { $wp.StandardOutput.Dispose() } catch {}
+            try { $wp.StandardError.Dispose() } catch {}
+            try { $wp.Dispose() } catch {}
+        }
+    }
+    if ($whereOut) {
+        foreach ($line in ($whereOut -split "`r?`n")) {
+            $t = $line.Trim()
+            if ($t -and (Test-Path -LiteralPath $t)) { $candidates.Add($t) }
+        }
+    }
+
+    $seen = @{}
+    foreach ($candidate in $candidates) {
+        $path = $candidate
+        # A Store alias is a reparse point; prefer the packaged real binary.
+        try {
+            $item = Get-Item -LiteralPath $path -ErrorAction Stop
+            if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                $target = $null
+                try { $target = ($item.Target | Select-Object -First 1) } catch { $target = $null }
+                if ($target -and (Test-Path -LiteralPath $target)) { $path = $target }
+            }
+        } catch {}
+        if ($seen.ContainsKey($path.ToLowerInvariant())) { continue }
+        $seen[$path.ToLowerInvariant()] = $true
+        $version = Get-GrokgodPwshVersion -Path $path -TimeoutMs $ProbeTimeoutMs
+        if (-not $version) { continue }
+        $parsed = $null
+        try { $parsed = [version]$version } catch { $parsed = $null }
+        if ($parsed -and $parsed.Major -ge 7) { return $path }
+    }
+    return $null
+}
+
+# Quotes one argument the way CommandLineToArgvW expects: bare when safe,
+# double-quoted otherwise, with embedded quotes and trailing backslashes
+# escaped so values containing spaces - and empty tokens - survive the
+# second parse by the relaunched pwsh.
+function ConvertTo-GrokgodNativeArg {
+    param([AllowEmptyString()][string]$Value)
+    if ($Value -ne '' -and $Value -notmatch '[ "]') { return $Value }
+    $escaped = $Value -replace '(\\*)"', '$1$1\"'
+    if ($escaped.EndsWith('\')) { $escaped = $escaped.Substring(0, $escaped.Length - 1) + '\\' }
+    return '"' + $escaped + '"'
+}
+
+# Bounded, owned-only process-tree termination. Synchronous `& taskkill` is
+# NOT used anywhere: the helper itself is an owned child process supervised
+# against the REMAINING cleanup budget (measured by the caller's stopwatch),
+# with a direct kill of the owned root PID as the fallback when the helper
+# overruns or fails to start. Only the tree rooted at the PID the caller
+# started is touched -- no CIM enumeration, no foreign processes. Honest
+# descendant limit: taskkill /T reaches only descendants still attached to
+# the owned root; a detached/reparented grandchild can survive and is left
+# for the OS or the caller's watchdog.
+function Stop-GrokgodOwnedProcessTree([System.Diagnostics.Process]$proc, [System.Diagnostics.Stopwatch]$watch, [int]$totalBudgetMs) {
+    if (-not $proc) { return }
+    try {
+        if (-not $proc.HasExited) {
+            $tk = $null
+            try {
+                $tpsi = New-Object System.Diagnostics.ProcessStartInfo
+                $tpsi.FileName = 'taskkill.exe'
+                $tpsi.Arguments = "/T /F /PID $($proc.Id)"
+                $tpsi.UseShellExecute = $false
+                $tpsi.CreateNoWindow = $true
+                $tpsi.RedirectStandardOutput = $true
+                $tpsi.RedirectStandardError = $true
+                $tk = [System.Diagnostics.Process]::Start($tpsi)
+                # Fire-and-forget drains keep the helper's pipes from
+                # blocking it; their content is never used, so nothing here
+                # waits on them past the supervised WaitForExit.
+                [void]$tk.StandardOutput.ReadToEndAsync()
+                [void]$tk.StandardError.ReadToEndAsync()
+                $remain = $totalBudgetMs - [int]$watch.ElapsedMilliseconds
+                if ($remain -gt 0) {
+                    [void]$tk.WaitForExit($remain)
+                } else {
+                    try { $tk.Kill() } catch {}
+                }
+            } catch {
+                # taskkill unavailable or failed to start: direct owned-PID
+                # kill below is the fallback.
+            } finally {
+                if ($tk) {
+                    try { if (-not $tk.HasExited) { $tk.Kill() } } catch {}
+                    try { $tk.StandardOutput.Dispose() } catch {}
+                    try { $tk.StandardError.Dispose() } catch {}
+                    try { $tk.Dispose() } catch {}
+                }
+            }
+        }
+        if (-not $proc.HasExited) {
+            try { $proc.Kill() } catch {}
+        }
+        $remain = $totalBudgetMs - [int]$watch.ElapsedMilliseconds
+        if ($remain -gt 0) {
+            try { [void]$proc.WaitForExit($remain) } catch {}
+        }
+    } catch {}
+}
+
+# Explicit helper: install/select PowerShell 7 for grokgod. Without -Apply
+# this prints the exact plan and changes nothing; -Apply runs the winget
+# command when available. Live installation remains the user's choice.
+function Invoke-GrokgodPowerShell7Setup {
+    # Runs under any engine version: this is the one helper permitted before
+    # the PowerShell 7 gate. Returns 0 on success (or already-installed),
+    # 1 when the requested install path failed, so failures never surface as
+    # a misleading exit 0.
+    param([switch]$Apply)
+    $existing = Resolve-GrokgodPwsh
+    if ($existing) {
+        Write-OK "PowerShell 7 is already installed and runnable: $existing"
+        Write-GrokgodWindowsTerminalGuidance
+        return 0
+    }
+    Write-Host "  PowerShell 7 is required for grokgod and was not found."
+    Write-Host "  Install it with (elevated prompt):"
+    Write-Host "    winget install --id Microsoft.PowerShell -e"
+    Write-Host "  Or download the MSI: https://github.com/PowerShell/PowerShell/releases"
+    if (-not $Apply) {
+        Write-Host "  Re-run with -InstallPowerShell7 -Apply to run the winget command."
+        Write-GrokgodWindowsTerminalGuidance
+        return 0
+    }
+    if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
+        Write-Err "winget.exe is not available; install PowerShell 7 manually using the links above."
+        return 1
+    }
+    Write-Step "Running: winget install --id Microsoft.PowerShell -e"
+    & winget.exe install --id Microsoft.PowerShell -e --accept-package-agreements --accept-source-agreements
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "winget exited with code $LASTEXITCODE; see the output above."
+        return 1
+    }
+    $after = Resolve-GrokgodPwsh
+    if ($after) {
+        Write-OK "PowerShell 7 is now runnable: $after"
+        Write-GrokgodWindowsTerminalGuidance
+        return 0
+    }
+    Write-Err "PowerShell 7 still not runnable after winget; install manually using the links above."
+    return 1
+}
+
+# Manual Windows Terminal guidance (opt-in; changes nothing on the host).
+# settings.json is JSONC with user formatting and comments, so the installer
+# deliberately does not mutate it: the user applies these steps only if
+# wanted, and every existing setting is preserved by construction.
+function Write-GrokgodWindowsTerminalGuidance {
+    $grokgodHome = if ($env:GROKGOD_HOME) { $env:GROKGOD_HOME } else { Join-Path $env:USERPROFILE ".grokgod" }
+    $grokgodCmd = Join-Path $grokgodHome "bin\grok.cmd"
+    Write-Host ""
+    Write-Host "  Optional - launch grokgod from Windows Terminal (manual; your settings are preserved):"
+    Write-Host "    1. Windows Terminal settings (Ctrl+,) -> Startup -> Default profile -> choose PowerShell."
+    Write-Host "    2. To add a dedicated profile: Profiles -> Add new profile -> Command line:"
+    Write-Host "         `"$grokgodCmd`""
+    Write-Host "    3. Save. grokgod never replaces powershell.exe or changes machine-wide shell/SSH defaults."
+}
+
+# Explicit prerequisite/setup dispatch runs BEFORE the version gate: under
+# Windows PowerShell 5.1 the ONLY installer actions permitted before the
+# rejection are this helper and printed guidance. All normal installation
+# mutations stay behind the verified PowerShell 7 engine below.
+if ($InstallPowerShell7) {
+    $setupExit = Invoke-GrokgodPowerShell7Setup -Apply:$Apply
+    exit $setupExit
+}
+
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    Write-Host "  This script requires PowerShell 7 or newer; this host runs Windows PowerShell $($PSVersionTable.PSVersion)."
+    $verifiedPwsh = Resolve-GrokgodPwsh
+    if ($verifiedPwsh) {
+        if (-not $PSCommandPath) {
+            Write-Host "  This session has no script file (for example irm '|' iex), so the installer cannot relaunch itself."
+            Write-Host "  Save this installer as install.ps1, then run:"
+            Write-Host "    `"$verifiedPwsh`" -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 <your parameters>"
+            Write-Host "  No files were installed or modified."
+            exit 1
+        }
+        Write-Host "  Relaunching under $verifiedPwsh ..."
+        # Bound named parameters are NOT in $args; relay them explicitly so a
+        # relaunch keeps -Prefix, -Version, switches, and friends. Each token
+        # is CommandLineToArgvW-quoted so spaced prefixes and empty values
+        # survive; the child's exit code is this process's exit code.
+        $relaunchTokens = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath)
+        foreach ($paramName in $PSBoundParameters.Keys) {
+            if ($paramName -in @('InstallPowerShell7', 'Apply')) { continue }
+            $paramValue = $PSBoundParameters[$paramName]
+            if ($paramValue -is [switch]) {
+                if ($paramValue.IsPresent) { $relaunchTokens += "-${paramName}" } else { $relaunchTokens += "-${paramName}:`$false" }
+            } else {
+                $relaunchTokens += "-$paramName"
+                $relaunchTokens += ([string]$paramValue)
+            }
+        }
+        $relaunchTokens += $args
+        $relaunchLine = ($relaunchTokens | ForEach-Object { ConvertTo-GrokgodNativeArg $_ }) -join ' '
+        $relaunch = Start-Process -FilePath $verifiedPwsh -ArgumentList $relaunchLine -Wait -PassThru
+        exit $relaunch.ExitCode
+    }
+    Write-Host "  Install PowerShell 7 (requires an elevated prompt), then re-run this script:"
+    Write-Host "    winget install --id Microsoft.PowerShell -e"
+    Write-GrokgodWindowsTerminalGuidance
+    Write-Host "  No files were installed or modified."
+    exit 1
+}
 
 # -----------------------------------------------------------------------------
 # 1. Architecture Check (Reject ARM64 before any network access)
@@ -1125,8 +1454,10 @@ if ($LocalReleaseVerified) {
                     Assert-NotOfficialGrok $fastGrokCmd
                     Assert-NotOfficialGrok $fastGrokgodCmd
 
-                    $fastGrokContent = New-GrokgodLauncherScript -Identity "grok" -ShimPath $fastInstalledShimPs1
-                    $fastGrokgodContent = New-GrokgodLauncherScript -Identity "grokgod" -ShimPath $fastInstalledShimPs1
+                    $fastVerifiedPwsh = $null
+                    try { $fastVerifiedPwsh = Resolve-GrokgodPwsh } catch { $fastVerifiedPwsh = $null }
+                    $fastGrokContent = New-GrokgodLauncherScript -Identity "grok" -ShimPath $fastInstalledShimPs1 -PwshPath $fastVerifiedPwsh
+                    $fastGrokgodContent = New-GrokgodLauncherScript -Identity "grokgod" -ShimPath $fastInstalledShimPs1 -PwshPath $fastVerifiedPwsh
                     Set-Content -LiteralPath $fastGrokCmd -Value $fastGrokContent -Encoding ASCII
                     Set-Content -LiteralPath $fastGrokgodCmd -Value $fastGrokgodContent -Encoding ASCII
                     Write-OK "Regenerated command launchers: $fastGrokCmd and $fastGrokgodCmd"
@@ -1197,29 +1528,94 @@ try {
     }
     Write-OK "Checksum verified: $ActualHash"
 
-    # Preflight candidate execution: run --version before ANY live mutation
+    # Preflight candidate execution: run --version before ANY live mutation.
+    # One total budget ($preflightTotalMs, 5000ms) measured from process
+    # start covers the wait, both drains, the kill, and handle teardown --
+    # each stage consumes only the time remaining in it, so a hanging
+    # candidate, a held-EOF pipe, or a stuck kill helper can never make this
+    # path unbounded. The kill is the shared bounded helper
+    # (Stop-GrokgodOwnedProcessTree): an owned taskkill supervised against
+    # the remaining budget, direct owned-PID fallback, no foreign processes.
+    # Fail-closed: a non-zero exit, an empty version line, or an undrained
+    # (held-EOF) stdout rejects the candidate right here -- the throw lands
+    # in the outer catch, which releases the install lock and cleans the
+    # temp dir, so the binary is never promoted.
     Write-Step "Running candidate preflight verification ($TARGET_ASSET --version)..."
     $candidateVer = ""
+    $proc = $null
     try {
+        $preflightWaitMs = 4500
+        $preflightTotalMs = 5000
+        # Deadline measured from BEFORE process setup so Start() counts too.
+        $watch = [System.Diagnostics.Stopwatch]::StartNew()
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = $DownloadedExe
         $psi.Arguments = "--version"
         $psi.RedirectStandardOutput = $true
         $psi.RedirectStandardError  = $true
+        $psi.RedirectStandardInput  = $true
         $psi.UseShellExecute = $false
         $psi.CreateNoWindow = $true
 
-        $proc = [System.Diagnostics.Process]::Start($psi)
-        $out = $proc.StandardOutput.ReadToEnd()
-        $err = $proc.StandardError.ReadToEnd()
-        $proc.WaitForExit(5000) | Out-Null
-        if ($proc.ExitCode -eq 0) {
-            $candidateVer = ($out -split "[\r\n]+") | Where-Object { $_ -match '\S' } | Select-Object -First 1
-        } else {
-            throw "Preflight failed: candidate exited with code $($proc.ExitCode). StdErr: $err"
+        $proc = New-Object System.Diagnostics.Process
+        $proc.StartInfo = $psi
+        [void]$proc.Start()
+        # Immediate EOF for the candidate: stdin is redirected and closed so
+        # a candidate waiting on inherited input can never hold the preflight.
+        try { $proc.StandardInput.Close() } catch {}
+        $outTask = $proc.StandardOutput.ReadToEndAsync()
+        $errTask = $proc.StandardError.ReadToEndAsync()
+        $remainWait = $preflightTotalMs - [int]$watch.ElapsedMilliseconds
+        if ($remainWait -lt 0) { $remainWait = 0 }
+        if ($remainWait -gt $preflightWaitMs) { $remainWait = $preflightWaitMs }
+        $exited = $proc.WaitForExit($remainWait)
+        if (-not $exited) {
+            Stop-GrokgodOwnedProcessTree -proc $proc -watch $watch -totalBudgetMs $preflightTotalMs
+            throw "Preflight timed out after $preflightWaitMs ms: candidate did not exit."
+        }
+        # Each sequential drain wait recomputes the remaining budget, so a
+        # pipe held open by a lingering fixture child cannot extend the
+        # preflight. A true Wait already implies IsCompleted; only
+        # fault/cancel need checks.
+        $drainMs = $preflightTotalMs - [int]$watch.ElapsedMilliseconds
+        if ($drainMs -lt 0) { $drainMs = 0 }
+        $outDrained = $false
+        $out = $null
+        if ($outTask.Wait($drainMs) -and -not $outTask.IsFaulted -and -not $outTask.IsCanceled) {
+            $out = $outTask.Result
+            $outDrained = $true
+        }
+        $drainMs = $preflightTotalMs - [int]$watch.ElapsedMilliseconds
+        if ($drainMs -lt 0) { $drainMs = 0 }
+        $err = ""
+        if ($errTask.Wait($drainMs) -and -not $errTask.IsFaulted -and -not $errTask.IsCanceled) {
+            $err = [string]$errTask.Result
+        }
+        # Read the exit code before disposing the handle: once released,
+        # ExitCode is no longer readable (renders empty / throws).
+        $exitCode = $null
+        try { $exitCode = $proc.ExitCode } catch {}
+        if ($exitCode -ne 0) {
+            throw "Preflight failed: candidate exited with code $exitCode. StdErr: $err"
+        }
+        if (-not $outDrained) {
+            throw "Preflight failed: candidate stdout did not reach EOF within the remaining budget (held pipe); candidate rejected."
+        }
+        $candidateVer = ($out -split "[\r\n]+") | Where-Object { $_ -match '\S' } | Select-Object -First 1
+        if (-not $candidateVer) {
+            throw "Preflight failed: candidate exited 0 but produced no version output; candidate rejected."
         }
     } catch {
         throw "Preflight failed to execute candidate: $_"
+    } finally {
+        # Dispose the process handle and stream readers on every path
+        # (success, timeout, and exception alike).
+        if ($proc) {
+            try { $proc.StandardInput.Dispose() } catch {}
+            try { $proc.StandardOutput.Dispose() } catch {}
+            try { $proc.StandardError.Dispose() } catch {}
+            try { $proc.Dispose() } catch {}
+        }
     }
 
     Write-OK "Preflight verified candidate binary: $candidateVer"
@@ -1589,8 +1985,10 @@ try {
     Assert-NotOfficialGrok $grokCmdPath
     Assert-NotOfficialGrok $grokgodCmdPath
 
-    $grokCmdContent = New-GrokgodLauncherScript -Identity "grok" -ShimPath $installedShimPs1
-    $grokgodCmdContent = New-GrokgodLauncherScript -Identity "grokgod" -ShimPath $installedShimPs1
+    $verifiedPwsh = $null
+    try { $verifiedPwsh = Resolve-GrokgodPwsh } catch { $verifiedPwsh = $null }
+    $grokCmdContent = New-GrokgodLauncherScript -Identity "grok" -ShimPath $installedShimPs1 -PwshPath $verifiedPwsh
+    $grokgodCmdContent = New-GrokgodLauncherScript -Identity "grokgod" -ShimPath $installedShimPs1 -PwshPath $verifiedPwsh
 
     Set-Content -LiteralPath $grokCmdPath -Value $grokCmdContent -Encoding ASCII
     Tx-Log "Wrote launcher $grokCmdPath"
@@ -1685,7 +2083,9 @@ MODE=release
         $installerChanged = $postInstalledSelfHash -and ($priorInstalledSelfHash -ne $postInstalledSelfHash)
         if ($installerChanged) {
             Write-Step "Installer updated; invoking post-update convergence finalize..."
-            $childShell = if ($PSVersionTable.PSEdition -eq "Core") { "pwsh.exe" } else { "powershell.exe" }
+            # Always the verified PowerShell 7 engine that is running this
+            # installer; never a PS5.1 fallback path.
+            $childShell = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
             $finArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $installedSelf, "-Finalize", "-FinalizeBaseUrl", $BaseUrl)
             if ($Prefix) {
                 $finArgs += @("-Prefix", $Prefix)

@@ -56,14 +56,16 @@ def main():
     with open(SHIM_PS1, "r", encoding="utf-8") as f:
         shim_src = f.read()
 
-    # 2. PowerShell 5.1 & 7 compatibility check
-    check("#Requires -Version 5.1" in shim_src, "Declares #Requires -Version 5.1")
+    # 2. Engine floor: the shim requires PowerShell 7 itself (the launcher
+    # guarantees a verified PS7 engine; direct 5.1 entry is rejected at
+    # parse time by #Requires and again by the runtime gate).
+    check("#Requires -Version 7.0" in shim_src, "Declares #Requires -Version 7.0 (parse-time PS7 floor)")
+    check("requires PowerShell 7 or newer" in shim_src, "Runtime gate rejects PS<7 before any side effect with remediation")
     check("Set-StrictMode -Version Latest" in shim_src, "Enforces strict mode")
-    # Disallow PS 7-only operators that break PS 5.1 (e.g. ternary ?:, null-coalescing ??)
     has_ternary = re.search(r'(\$\w+\s*\?\s*[^:]+\s*:\s*[^;\r\n]+)', shim_src)
     has_null_coalesce = re.search(r'\?\?', shim_src)
-    check(not has_ternary, "No PowerShell 7 ternary operator (?:) used (PS 5.1 compat)")
-    check(not has_null_coalesce, "No PowerShell 7 null-coalescing operator (??) used (PS 5.1 compat)")
+    check(not has_ternary, "No PowerShell 7 ternary operator (?:) used (portable syntax floor)")
+    check(not has_null_coalesce, "No PowerShell 7 null-coalescing operator (??) used (portable syntax floor)")
     check("[CmdletBinding()]" not in shim_src, "Avoids [CmdletBinding()] to eliminate ParameterBindingException on dashed args")
 
     # 3. Explicit Positional Identity Handling and Launcher templates
@@ -76,7 +78,9 @@ def main():
     check("cmdArgs.Length" in shim_src, "Uses robust Length property on typed array")
     check("$script:DispatcherScriptPath" in shim_src or "$DispatcherScriptPath" in shim_src, "Captures script-scope DispatcherScriptPath")
     check("$MyInvocation.MyCommand.Path" not in shim_src, "Avoids function-local MyInvocation.MyCommand.Path")
-    check('PSEdition -eq "Core"' in shim_src and "powershell.exe" in shim_src and "pwsh.exe" in shim_src, "Selects updater host engine explicitly via PSEdition (pwsh.exe vs powershell.exe)")
+    check("Resolve-GrokgodEngine" in shim_src, "Updater/refresh child engine resolves through Resolve-GrokgodEngine (verified PS7)")
+    check('$pwshExe = if ($PSVersionTable.PSEdition' not in shim_src, "No PSEdition-based powershell.exe fallback in engine selection")
+    check("WindowsPowerShell" in shim_src and "POWERSHELL_EXE" in shim_src, "POWERSHELL_EXE override is validated and 5.1 paths rejected with remediation")
 
     # Verify native shim test fixture checks
     native_shim_test_path = os.path.join(REPO_ROOT, "tests", "shim", "test_shim_windows.ps1")
@@ -86,6 +90,32 @@ def main():
         check("mockExeHash = (Get-FileHash" in native_shim_src, "Native shim test computes actual mockExeHash for healthy stamp")
         check("MockSkewOfficial" in native_shim_src, "Native shim test creates distinct MockSkewOfficial fixture for version skew test")
         check("$isolatedProfile" in native_shim_src and "$env:USERPROFILE  = $isolatedProfile" in native_shim_src, "Native shim test isolates USERPROFILE to prevent host candidate skew")
+        check('"ProgramFiles"' in native_shim_src and '"ProgramFiles(x86)"' in native_shim_src,
+              "Native group-9 isolates both ProgramFiles roots in the child env only")
+        check("SKIP: broken-engine" not in native_shim_src and "SKIP: broken-engine case" not in native_shim_src,
+              "Native group-9 does not skip broken-engine on host standard PS7")
+        check("GROKGOD_ARGV_SENTINEL" in native_shim_src,
+              "Native argv cases include a sentinel token that must never execute")
+
+    driver_js_path = os.path.join(REPO_ROOT, "tests", "shim", "launcher_fixture_driver.js")
+    if os.path.isfile(driver_js_path):
+        with open(driver_js_path, "r", encoding="utf-8") as df:
+            driver_src = df.read()
+        check("windowsVerbatimArguments: true" in driver_src,
+              "Fixture driver uses windowsVerbatimArguments")
+        check("arg.replace(meta, '^$1')" in driver_src and driver_src.count("arg.replace(meta") >= 2,
+              "Fixture driver applies CMD-metachar escaping twice after CRT quoting")
+        check("GROKGOD_LAUNCHER_TAIL" not in driver_src,
+              "Fixture driver does not depend on env-tail transport")
+
+    probe_part_path = os.path.join(REPO_ROOT, "src", "installer", "shared", "ps-engine-probe.cmd.part")
+    if os.path.isfile(probe_part_path):
+        with open(probe_part_path, "r", encoding="utf-8") as pf:
+            probe_part = pf.read()
+        check("cmd.exe has no wait-with-timeout primitive" in probe_part,
+              "Engine probe documents the hanging-candidate CMD limitation")
+        check("powershell.exe babysitter wrapper was" in probe_part and "rejected" in probe_part,
+              "Engine probe rejects a powershell.exe babysitter rather than claiming a production bound")
 
     grok_cmd_content = open(GROK_CMD_TPL).read()
     grokgod_cmd_content = open(GROKGOD_CMD_TPL).read()
@@ -99,39 +129,43 @@ def main():
     }
     for launcher_name, launcher_src in launcher_sources.items():
         check('set "POWERSHELL_EXE="' in launcher_src,
-              f"{launcher_name} clears POWERSHELL_EXE before probing")
-        check('pwsh.exe -NoProfile -Command "exit 0" >nul 2>&1' in launcher_src,
-              f"{launcher_name} execute-probes pwsh.exe")
-        check('powershell.exe -NoProfile -Command "exit 0" >nul 2>&1' in launcher_src,
-              f"{launcher_name} execute-probes powershell.exe")
-        check("if errorlevel 1 goto try_powershell" in launcher_src,
-              f"{launcher_name} falls back when pwsh.exe is unavailable or fails")
-        check("if errorlevel 1 goto powershell_unavailable" in launcher_src,
-              f"{launcher_name} rejects an unavailable or failing fallback engine")
-        pwsh_probe = launcher_src.index('pwsh.exe -NoProfile -Command "exit 0" >nul 2>&1')
-        fallback = launcher_src.index(":try_powershell")
-        powershell_probe = launcher_src.index('powershell.exe -NoProfile -Command "exit 0" >nul 2>&1')
-        ready = launcher_src.index(":powershell_ready")
-        check(pwsh_probe < fallback < powershell_probe < ready,
-              f"{launcher_name} keeps probes, fallback, and launch flow ordered")
-        check(launcher_src.count("if errorlevel 1 goto try_powershell") == 1,
-              f"{launcher_name} falls back when the pwsh probe fails")
-        check(launcher_src.count("if errorlevel 1 goto powershell_unavailable") == 1,
-              f"{launcher_name} fails when the powershell probe fails")
-        check(">&2 echo grokgod: no runnable PowerShell engine found" in launcher_src,
-              f"{launcher_name} reports engine failure on stderr")
+              f"{launcher_name} clears any inherited POWERSHELL_EXE before selection")
+        check('GROKGOD_POWERSHELL_BAKED' in launcher_src,
+              f"{launcher_name} honors only the install-time baked verified engine")
+        check('defined GROKGOD_POWERSHELL ' in launcher_src,
+              f"{launcher_name} honors the documented explicit override")
+        check('$PSVersionTable.PSVersion.Major -ge 7' in launcher_src,
+              f"{launcher_name} execute-verifies every candidate requires major >= 7")
+        check("powershell.exe" not in launcher_src,
+              f"{launcher_name} has no Windows PowerShell 5.1 fallback path")
+        check("setlocal DisableDelayedExpansion" in launcher_src,
+              f"{launcher_name} disables delayed expansion so '!' in user tokens is preserved")
+        check("GROKGOD_LAUNCHER_TAIL" not in launcher_src and "__grokgod_launcher_tail" not in launcher_src,
+              f"{launcher_name} does not use the raw-env tail transport")
+        check(":ps7_ready" in launcher_src and ":powershell_ready" not in launcher_src,
+              f"{launcher_name} uses the ps7_ready launch label")
+        check("PowerShell 7+ is required" in launcher_src,
+              f"{launcher_name} prints the PS7 prerequisite on stderr")
+        check("winget install --id Microsoft.PowerShell" in launcher_src,
+              f"{launcher_name} prints actionable PS7 install guidance")
         check("exit /b 127" in launcher_src,
               f"{launcher_name} returns 127 when no engine is runnable")
+        check("%SystemRoot%\\System32\\where.exe" in launcher_src,
+              f"{launcher_name} enumerates PATH candidates via an absolute where.exe")
         check("if %ERRORLEVEL%" not in launcher_src and "if \"%ERRORLEVEL%\"" not in launcher_src,
               f"{launcher_name} avoids unsafe parse-time ERRORLEVEL conditionals")
         check("exit /b %ERRORLEVEL%" in launcher_src,
               f"{launcher_name} propagates the child exit code exactly")
 
-    # Verify templates and helper use positional identity without -- script delimiter
-    check('grok %*' in grok_cmd_content and '-Identity' not in grok_cmd_content and '-- %*' not in grok_cmd_content, "grok.cmd.template passes positional 'grok %*' without named -Identity or '--'")
-    check('grokgod %*' in grokgod_cmd_content and '-Identity' not in grokgod_cmd_content and '-- %*' not in grokgod_cmd_content, "grokgod.cmd.template passes positional 'grokgod %*' without named -Identity or '--'")
-    check('$Identity %*' in launcher_helpers_content and '-Identity' not in launcher_helpers_content and '-- %*' not in launcher_helpers_content, "LauncherHelpers passes positional '$Identity %*' without named -Identity or '--'")
+    # Verify templates and helper pass positional identity then %* (no named
+    # -Identity, no '--' delimiter). Direct %* forwarding is the proven
+    # native transport; callers apply CRT+CMD escaping before cmd.exe /s /c.
+    check('grok %*' in grok_cmd_content and '-Identity' not in grok_cmd_content and '-- %*' not in grok_cmd_content, "grok.cmd.template passes positional identity then %* without named -Identity or '--'")
+    check('grokgod %*' in grokgod_cmd_content and '-Identity' not in grokgod_cmd_content and '-- %*' not in grokgod_cmd_content, "grokgod.cmd.template passes positional identity then %* without named -Identity or '--'")
+    check('$Identity %*' in launcher_helpers_content and '-Identity' not in launcher_helpers_content and '-- %*' not in launcher_helpers_content, "LauncherHelpers passes positional identity then %* without named -Identity or '--'")
     check("New-GrokgodLauncherScript" in launcher_helpers_content, "LauncherHelpers provides New-GrokgodLauncherScript helper")
+    check("$probePart = @'" in launcher_helpers_content,
+          "LauncherHelpers carries the probe in a single-quoted here-string (no runtime interpolation of $ or backticks)")
 
     # 4. Command Matrix & TUI protection
     check("GROK_DISABLE_AUTOUPDATER" in shim_src, "Sets GROK_DISABLE_AUTOUPDATER=1 for patched executable")
@@ -161,7 +195,66 @@ def main():
         "[Console]::Error.WriteLine($notice)",
     ))
     check(notice_contract, "Uses exact update notice stderr contract")
-    check('if ($subcommand -ne "cache")' in shim_src, "Suppresses notice for administrative cache command")
+    check('if ($subcommand -ne "cache" -and -not $machineOrProtocol)' in shim_src,
+          "Suppresses notice for administrative cache command and machine/protocol launches")
+    check("$machineOrProtocol = Test-MachineProtocolLaunch -argsList $cmdArgs" in shim_src,
+          "Classifies machine/protocol launches before the update check")
+
+    # Machine/protocol bypass contract: exact per-token forms, no substring
+    # matching over joined arguments, no cache or network side effects.
+    check("function Test-MachineProtocolLaunch" in shim_src,
+          "Implements Test-MachineProtocolLaunch classifier")
+    for token_fragment in ('-eq "--version"', '-eq "-V"', '-eq "--help"', '-eq "-h"',
+                           '-eq "help"', '-eq "models"', '-eq "inspect"'):
+        check(token_fragment in shim_src, f"Classifier recognizes exact token {token_fragment}")
+    check('$argsList[$i] -eq "agent" -and [string]$argsList[$i + 1] -eq "stdio"' in shim_src,
+          "Classifier recognizes exact 'agent stdio' token pair")
+    check('-join $cmdArgs' not in shim_src and '-join $argsList' not in shim_src,
+          "Classifier never substring-matches a joined argument string")
+    check(shim_src.count("Test-MachineProtocolLaunch") >= 2,
+          "Classifier is defined and invoked")
+    dispatch_pos = shim_src.find("$machineOrProtocol = Test-MachineProtocolLaunch")
+    update_check_pos = shim_src.find("Invoke-ReleaseUpdateCheck", dispatch_pos)
+    passthrough_pos = shim_src.find("Invoke-PatchedExecutable -argsList $cmdArgs", dispatch_pos)
+    check(-1 < dispatch_pos < update_check_pos < passthrough_pos,
+          "Machine/protocol classification happens before update check and passthrough")
+
+    # Bounded status probe contract: one total budget covers wait + drains +
+    # kill + teardown; the kill is a supervised owned taskkill helper, never
+    # a synchronous invocation; candidate stdin is redirected and closed.
+    check("function Get-BinaryReportedVersion" in shim_src, "Implements bounded version probe")
+    check("$probeWaitMs = 3000" in shim_src, "Probe wait preserves the intended 3000ms")
+    check("$totalBudgetMs = 4000" in shim_src, "Probe total budget covers wait + drains + cleanup")
+    check("ReadToEndAsync" in shim_src, "Probe drains stdout/stderr concurrently")
+    check("$proc.WaitForExit($probeWaitMs)" in shim_src,
+          "Probe waits with budget before any blocking read")
+    check("function Stop-OwnedProbeProcess" in shim_src,
+          "Probe terminates only owned process via Stop-OwnedProbeProcess")
+    check("'taskkill.exe'" in shim_src and "/T /F /PID" in shim_src,
+          "Probe terminates the owned process tree via taskkill /T rooted at the probe PID")
+    check("& taskkill.exe" not in shim_src,
+          "No synchronous taskkill anywhere in the shim (supervised owned helper only)")
+    check("$psi.RedirectStandardInput = $true" in shim_src,
+          "Probes redirect candidate stdin and close it for immediate EOF")
+    check("ConvertFrom-WindowsCommandLine" not in shim_src,
+          "Shim does not re-split a raw-env tail; launchers forward %* into $args")
+    check("GROKGOD_LAUNCHER_TAIL" not in shim_src and "__grokgod_launcher_tail" not in shim_src,
+          "Shim has no launcher-tail marker or env-tail branch")
+    check("$proc.Kill()" in shim_src, "Probe kills the owned process on timeout")
+
+    # Detached update-refresh stdio isolation: the refresh child must not
+    # inherit the caller's pipes (which would delay the caller's EOF).
+    refresh_pos = shim_src.find("function Start-UpdateCacheRefresh")
+    refresh_end = shim_src.find("# ---", refresh_pos + 10)
+    refresh_src = shim_src[refresh_pos:refresh_end]
+    check("$psi.RedirectStandardInput = $true" in refresh_src
+          and "$psi.RedirectStandardOutput = $true" in refresh_src
+          and "$psi.RedirectStandardError = $true" in refresh_src,
+          "Detached refresh child stdio is redirected, not inherited")
+    check("StandardInput.Close()" in refresh_src,
+          "Detached refresh stdin is closed so the child sees EOF")
+    check("ReadToEndAsync" in refresh_src,
+          "Detached refresh stdout/stderr are drained so pipes cannot fill")
 
     # 5. Argument preservation and escaping rules
     check("ConvertTo-WindowsCommandLine" in shim_src, "Centralizes Windows native command-line argument quoting")
@@ -279,10 +372,11 @@ def main():
             steps = win_job.get("steps", [])
             runs = [s.get("run", "") for s in steps]
             combined_runs = "\n".join(runs)
-            check("powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\\shim\\test_shim_windows.ps1" in combined_runs, "test-windows runs shim suite with powershell.exe")
-            check("powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\\install\\test_install_windows.ps1" in combined_runs, "test-windows runs install suite with powershell.exe")
+            check("powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\\shim\\test_shim_windows.ps1" not in combined_runs, "test-windows no longer runs the shim suite under powershell.exe (PS7 only)")
+            check("powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\\install\\test_install_windows.ps1" not in combined_runs, "test-windows no longer runs the install suite under powershell.exe (PS7 only)")
             check("pwsh.exe -NoProfile -ExecutionPolicy Bypass -File tests\\shim\\test_shim_windows.ps1" in combined_runs, "test-windows runs shim suite with pwsh.exe")
             check("pwsh.exe -NoProfile -ExecutionPolicy Bypass -File tests\\install\\test_install_windows.ps1" in combined_runs, "test-windows runs install suite with pwsh.exe")
+            check("powershell.exe -NoProfile -ExecutionPolicy Bypass -File install.ps1 -InstallPowerShell7" in combined_runs, "test-windows exercises only the narrow PS5.1 prerequisite helper")
             check("if errorlevel 1 exit /b 1" in combined_runs, "test-windows propagates failures with exit /b 1 on errorlevel")
 
     # 9. Verify native test suite engine alignment & malformed stamp coverage
@@ -290,8 +384,61 @@ def main():
     if os.path.isfile(native_shim_test_path):
         with open(native_shim_test_path, "r", encoding="utf-8") as sf:
             native_shim_src = sf.read()
-        check("PSEdition" in native_shim_src and "powershell.exe" in native_shim_src and "pwsh.exe" in native_shim_src, "Native shim test aligns child engine with host PSEdition")
+        check("This suite requires PowerShell 7" in native_shim_src, "Native shim suite hard-requires a PS7 host")
+        check("Direct PS5.1 shim invocation is rejected" in native_shim_src, "Native shim suite exercises the narrow direct-5.1 rejection")
+        check("$pwshExe = if ($verifiedPwsh)" in native_shim_src, "Native shim suite child engine is the verified pwsh only")
         check("MALFORMED_STAMP" in native_shim_src, "Native shim test verifies degraded health on malformed stamp")
+
+    # 9b. Deterministic full-launcher fixture coverage (native suite + driver)
+    driver_js_path = os.path.join(REPO_ROOT, "tests", "shim", "launcher_fixture_driver.js")
+    check(os.path.isfile(driver_js_path), "Shared launcher fixture driver exists")
+    if os.path.isfile(driver_js_path):
+        with open(driver_js_path, "r", encoding="utf-8") as df:
+            driver_src = df.read()
+        check("child_process" in driver_src, "Driver launches through Node child_process")
+        check("stdio: ['pipe', 'pipe', 'pipe']" in driver_src, "Driver pins the piped stdio topology")
+        check("timedOut" in driver_src and "taskkill.exe" in driver_src and "/T" in driver_src,
+              "Driver watchdog kills the fixture-owned process tree on timeout")
+        check("windowsVerbatimArguments" in driver_src,
+              "Driver passes the pre-quoted /c line verbatim (no Node re-quoting)")
+        check("replace(/(\\\\*)\"/g" in driver_src and "arg.replace(meta" in driver_src,
+              "Driver applies proven CRT quote/backslash encoding then twice CMD-metachar escaping")
+        check("closeMs" in driver_src and "exitMs" in driver_src,
+              "Driver records both exit and close/EOF timings")
+    if os.path.isfile(native_shim_test_path):
+        with open(native_shim_test_path, "r", encoding="utf-8") as sf:
+            native_shim_src = sf.read()
+        check("GROKGOD_MOCK_MODE" in native_shim_src,
+              "Native shim mock exe selects fixture modes via environment")
+        for mode_fragment in ('"echo"', '"protocol"', '"hang"', '"noisy-stderr"',
+                              '"sleepy-child"', '"held-eof"', '"failure"', '"fixture-hold-pipe"'):
+            check(mode_fragment in native_shim_src,
+                  f"Native shim mock exe implements mode {mode_fragment}")
+        check("FIXTURE-STDERR-MARKER" in native_shim_src, "Echo fixture emits a distinct stderr marker")
+        check("New-GrokgodLauncherScript" in native_shim_src,
+              "Native suite generates launchers with New-GrokgodLauncherScript")
+        check("Invoke-NodeLauncherFixture" in native_shim_src,
+              "Native suite launches fixtures through the Node driver")
+        check("Get-FixtureMockProcesses" in native_shim_src and 'ExecutablePath = ' in native_shim_src,
+              "Native suite records fixture ownership by executable path")
+        check("-- Testing Bounded Status Probe" in native_shim_src,
+              "Native suite covers the bounded status probe fixtures")
+        check("-- Testing Full-Launcher Process Fixtures" in native_shim_src,
+              "Native suite covers full-launcher process fixtures")
+        check("-- Testing Machine/Protocol Launch Bypass" in native_shim_src,
+              "Native suite covers machine/protocol bypass")
+        check("Detached Refresh Must Not Hold the Caller's EOF" in native_shim_src,
+              "Native suite covers detached refresh EOF isolation")
+        check("-- Testing PowerShell 7 Prerequisite" in native_shim_src,
+              "Native suite covers the PowerShell 7 prerequisite gate")
+        check("MockFailingEngine" in native_shim_src,
+              "Native suite compiles a failing fake engine for broken-candidate tests")
+        check("PowerShell 7\\+ is required" in native_shim_src,
+              "Native suite asserts actionable exit-127 stderr")
+        check("please agent stdio now" in native_shim_src,
+              "Native suite asserts values containing 'agent stdio' stay ordinary")
+        check("taskkill" in driver_src if os.path.isfile(driver_js_path) else False,
+              "Driver cleans fixture-owned trees with taskkill")
 
     print("\n===============================================")
     print(f"Total Passed: {passes}")
