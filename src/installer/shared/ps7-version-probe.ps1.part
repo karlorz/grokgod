@@ -12,10 +12,12 @@
 # Deadline contract: the stopwatch starts BEFORE process setup, so Start()
 # cost counts against the budget; every sequential drain wait recomputes the
 # remaining budget, so wait + stdout drain + stderr drain + kill together
-# can never exceed the total. Candidate stdin is redirected and closed
-# immediately (held-stdin candidates get EOF). On timeout only the directly
-# owned probe PID is killed (pwsh -Command spawns no children for this
-# probe). Readers and the process handle are disposed on every path.
+# can never exceed the total. Both stdout and stderr must reach EOF or the
+# probe returns null (a descendant holding only stderr is still failure).
+# Candidate stdin is redirected and closed immediately (held-stdin
+# candidates get EOF). On timeout only the directly owned probe PID is
+# killed (pwsh -Command spawns no children for this probe). Readers and the
+# process handle are disposed on every path.
 #@build:end-header
 function {{GROKGOD:functionName}} {
     [CmdletBinding()]
@@ -54,15 +56,17 @@ function {{GROKGOD:functionName}} {
             return $null
         }
         # Each sequential drain wait recomputes the remaining budget.
+        # Both pipes must reach EOF: a descendant that holds only stderr
+        # is still a held-EOF failure even when stdout already completed.
         $drainMs = $TimeoutMs - [int]$watch.ElapsedMilliseconds
         if ($drainMs -lt 0) { $drainMs = 0 }
-        $drained = $false
-        try { $drained = $outTask.Wait($drainMs) } catch { $drained = $false }
+        $outDrained = $false
+        try { $outDrained = $outTask.Wait($drainMs) } catch { $outDrained = $false }
         $drainMs = $TimeoutMs - [int]$watch.ElapsedMilliseconds
         if ($drainMs -lt 0) { $drainMs = 0 }
-        # [void]: an unassigned .Wait() would leak True onto the output stream.
-        try { [void]$errTask.Wait($drainMs) } catch {}
-        if (-not $drained) { return $null }
+        $errDrained = $false
+        try { $errDrained = $errTask.Wait($drainMs) } catch { $errDrained = $false }
+        if (-not $outDrained -or -not $errDrained) { return $null }
         if ($proc.ExitCode -ne 0) { return $null }
         $out = [string]$outTask.Result
         if (-not $out) { return $null }

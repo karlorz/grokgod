@@ -1448,9 +1448,11 @@ try {
         }
         $drainMs = $preflightTotalMs - [int]$watch.ElapsedMilliseconds
         if ($drainMs -lt 0) { $drainMs = 0 }
+        $errDrained = $false
         $err = ""
         if ($errTask.Wait($drainMs) -and -not $errTask.IsFaulted -and -not $errTask.IsCanceled) {
             $err = [string]$errTask.Result
+            $errDrained = $true
         }
         # Read the exit code before disposing the handle: once released,
         # ExitCode is no longer readable (renders empty / throws).
@@ -1459,8 +1461,8 @@ try {
         if ($exitCode -ne 0) {
             throw "Preflight failed: candidate exited with code $exitCode. StdErr: $err"
         }
-        if (-not $outDrained) {
-            throw "Preflight failed: candidate stdout did not reach EOF within the remaining budget (held pipe); candidate rejected."
+        if (-not $outDrained -or -not $errDrained) {
+            throw "Preflight failed: candidate stdout/stderr did not reach EOF within the remaining budget (held pipe); candidate rejected."
         }
         $candidateVer = ($out -split "[\r\n]+") | Where-Object { $_ -match '\S' } | Select-Object -First 1
         if (-not $candidateVer) {

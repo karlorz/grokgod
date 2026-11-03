@@ -96,6 +96,8 @@ def main():
               "Native group-9 does not skip broken-engine on host standard PS7")
         check("GROKGOD_ARGV_SENTINEL" in native_shim_src,
               "Native argv cases include a sentinel token that must never execute")
+        check("held-stderr-eof" in native_shim_src and "Get-GrokgodPwshVersion returns null when stderr EOF is held" in native_shim_src,
+              "Native suite covers stderr-held-EOF for the status probe and Get-GrokgodPwshVersion")
 
     driver_js_path = os.path.join(REPO_ROOT, "tests", "shim", "launcher_fixture_driver.js")
     if os.path.isfile(driver_js_path):
@@ -236,6 +238,8 @@ def main():
           "No synchronous taskkill anywhere in the shim (supervised owned helper only)")
     check("$psi.RedirectStandardInput = $true" in shim_src,
           "Probes redirect candidate stdin and close it for immediate EOF")
+    check("$errDrained" in shim_src and "-not $outDrained -or -not $errDrained" in shim_src,
+          "Probes fail-close when either stdout or stderr drain is incomplete")
     check("ConvertFrom-WindowsCommandLine" not in shim_src,
           "Shim does not re-split a raw-env tail; launchers forward %* into $args")
     check("GROKGOD_LAUNCHER_TAIL" not in shim_src and "__grokgod_launcher_tail" not in shim_src,
@@ -411,7 +415,8 @@ def main():
         check("GROKGOD_MOCK_MODE" in native_shim_src,
               "Native shim mock exe selects fixture modes via environment")
         for mode_fragment in ('"echo"', '"protocol"', '"hang"', '"noisy-stderr"',
-                              '"sleepy-child"', '"held-eof"', '"failure"', '"fixture-hold-pipe"'):
+                              '"sleepy-child"', '"held-eof"', '"held-stderr-eof"',
+                              '"failure"', '"fixture-hold-pipe"'):
             check(mode_fragment in native_shim_src,
                   f"Native shim mock exe implements mode {mode_fragment}")
         check("FIXTURE-STDERR-MARKER" in native_shim_src, "Echo fixture emits a distinct stderr marker")

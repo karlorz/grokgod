@@ -350,15 +350,17 @@ function Get-GrokgodEngineVersion([string]$Path, [int]$TimeoutMs) {
             return $null
         }
         # Each sequential drain wait recomputes the remaining budget so the
-        # pair can never consume more than the total deadline.
+        # pair can never consume more than the total deadline. Both pipes
+        # must reach EOF: a descendant holding only stderr is still failure.
         $remaining = $TimeoutMs - [int]$watch.ElapsedMilliseconds
         if ($remaining -lt 0) { $remaining = 0 }
-        $drained = $false
-        try { $drained = $outTask.Wait($remaining) } catch { $drained = $false }
+        $outDrained = $false
+        try { $outDrained = $outTask.Wait($remaining) } catch { $outDrained = $false }
         $remaining = $TimeoutMs - [int]$watch.ElapsedMilliseconds
         if ($remaining -lt 0) { $remaining = 0 }
-        try { [void]$errTask.Wait($remaining) } catch {}
-        if (-not $drained) { return $null }
+        $errDrained = $false
+        try { $errDrained = $errTask.Wait($remaining) } catch { $errDrained = $false }
+        if (-not $outDrained -or -not $errDrained) { return $null }
         if ($proc.ExitCode -ne 0) { return $null }
         $out = [string]$outTask.Result
         if (-not $out) { return $null }
@@ -561,10 +563,10 @@ function Get-BinaryReportedVersion([string]$exePath) {
         try { $proc.StandardInput.Close() } catch {}
 
         # Begin concurrent drains before the wait so neither pipe can fill.
-        # stderr is drained only to keep the pipe from blocking; its content
-        # is never used, so it is not retained.
+        # stderr content is unused, but drain completion is required: a
+        # descendant that holds only stderr is still a held-EOF failure.
         $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
-        [void]$proc.StandardError.ReadToEndAsync()
+        $stderrTask = $proc.StandardError.ReadToEndAsync()
 
         $exited = $proc.WaitForExit($probeWaitMs)
         if (-not $exited) {
@@ -574,16 +576,23 @@ function Get-BinaryReportedVersion([string]$exePath) {
             return $null
         }
 
-        # Direct child exited; the post-exit drain gets only the time left in
-        # the total budget, so a fixture- or grandchild-held pipe cannot
+        # Direct child exited; each sequential drain wait recomputes the
+        # remaining budget so a fixture- or grandchild-held pipe cannot
         # extend the probe. A true Wait already implies IsCompleted; only
         # fault/cancel need checks.
         $drainMs = $totalBudgetMs - [int]$watch.ElapsedMilliseconds
         if ($drainMs -lt 0) { $drainMs = 0 }
+        $outDrained = $false
         $outText = $null
         if ($stdoutTask.Wait($drainMs) -and -not $stdoutTask.IsFaulted -and -not $stdoutTask.IsCanceled) {
             $outText = $stdoutTask.Result
+            $outDrained = $true
         }
+        $drainMs = $totalBudgetMs - [int]$watch.ElapsedMilliseconds
+        if ($drainMs -lt 0) { $drainMs = 0 }
+        $errDrained = $false
+        try { $errDrained = $stderrTask.Wait($drainMs) -and -not $stderrTask.IsFaulted -and -not $stderrTask.IsCanceled } catch { $errDrained = $false }
+        if (-not $outDrained -or -not $errDrained) { return $null }
         if ($proc.ExitCode -eq 0 -and $outText -ne $null) {
             $line = ($outText -split "[\r\n]+") | Where-Object { $_ -match '\S' } | Select-Object -First 1
             if ($line) { return $line.Trim() }

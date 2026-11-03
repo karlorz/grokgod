@@ -71,3 +71,19 @@ Run on identical source bytes (this checkpoint SHA) in MSI-1 `%TEMP%` only and l
 - No `patches/` or Rust edits, no Docker, no secrets, no live T3/PATH changes, no worker push/PR/merge/tag.
 - Generated artifacts produced only via `node src/installer/build.mjs`.
 - Current T3 direct binary + `GROK_DISABLE_AUTOUPDATER=1` setup is preserved (not modified this turn).
+
+## Follow-up: stderr-held EOF fail-closed (source hashes)
+
+Both stdout and stderr must complete before a version/candidate is accepted. `errTask.Wait` return is no longer discarded. `where.exe` enumeration uses one 5000ms remaining budget.
+
+- `src/installer/shared/ps7-version-probe.ps1.part` `b1801472db1809a409c22063680976d08821774adf17c3d0e38a9b4de6cd2f88`
+- `src/installer/shared/ps7-resolver.ps1.part` `c33f752906b78b3cb5851ead364c3deb279217c7dd2f0feb02c60adae5b6eff4`
+- `src/shim/grok-shim.ps1` `4fc077aaa236226e22a5ba327b72931075598bbf169995a8a9111925c747300b`
+- `src/installer/templates/install.ps1.in` `14c08e8f025ec4065bdfe0dc38771e91036e411a5c3b32f0aa149849046c369d`
+- `install.ps1` `025d969c0e197871de82d3311e10e58ad2f08eda0c3fe7e31e63dbe0958d5632`
+- `src/shim/LauncherHelpers.ps1` `c33ebcee22ddca4c2c771d30d7ea272611668691483ee55e8895846a9c3a6b6b`
+- `tests/shim/test_shim_windows.ps1` `e1c5e5682a194b7b3cac317ed3dd37b76048d9499e46162637a4f8d9f113d972`
+- `tests/shim/test_shim_windows.py` `3c768a3c94254c692f770ec07fa99ed7a416df55bc6ece3200a03551e58cf150`
+- `tests/install/test_install_windows.py` `24d8e69e202e0543c8d4e8c196333050c5b0a7297baa46c3230a19781080159a`
+
+Static on these bytes: build 6/6, cut 6/6, generated-installers 72/0, shim py 231/0, install py 219/0. Native still pending.

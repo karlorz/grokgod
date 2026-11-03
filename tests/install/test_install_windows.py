@@ -187,6 +187,10 @@ def main():
           "Preflight rejects an exit-0 candidate with an empty version line")
     check("did not reach EOF within the remaining budget" in src,
           "Preflight rejects a held-EOF stdout drain instead of accepting it")
+    check("$errDrained" in src and "-not $outDrained -or -not $errDrained" in src,
+          "Preflight fail-closes when either stdout or stderr drain is incomplete")
+    check("$whereBudgetMs = 5000" in src,
+          "where.exe enumeration uses one 5000ms remaining-budget, not 5000+1000+1000")
     check("$psi.RedirectStandardInput = $true" in src,
           "Installer probes redirect child stdin and close it for immediate EOF")
 

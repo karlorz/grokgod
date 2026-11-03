@@ -117,15 +117,17 @@ function Get-GrokgodPwshVersion {
             return $null
         }
         # Each sequential drain wait recomputes the remaining budget.
+        # Both pipes must reach EOF: a descendant that holds only stderr
+        # is still a held-EOF failure even when stdout already completed.
         $drainMs = $TimeoutMs - [int]$watch.ElapsedMilliseconds
         if ($drainMs -lt 0) { $drainMs = 0 }
-        $drained = $false
-        try { $drained = $outTask.Wait($drainMs) } catch { $drained = $false }
+        $outDrained = $false
+        try { $outDrained = $outTask.Wait($drainMs) } catch { $outDrained = $false }
         $drainMs = $TimeoutMs - [int]$watch.ElapsedMilliseconds
         if ($drainMs -lt 0) { $drainMs = 0 }
-        # [void]: an unassigned .Wait() would leak True onto the output stream.
-        try { [void]$errTask.Wait($drainMs) } catch {}
-        if (-not $drained) { return $null }
+        $errDrained = $false
+        try { $errDrained = $errTask.Wait($drainMs) } catch { $errDrained = $false }
+        if (-not $outDrained -or -not $errDrained) { return $null }
         if ($proc.ExitCode -ne 0) { return $null }
         $out = [string]$outTask.Result
         if (-not $out) { return $null }
@@ -174,16 +176,24 @@ function Resolve-GrokgodPwsh {
         $psi.CreateNoWindow = $true
         $wp = [System.Diagnostics.Process]::Start($psi)
         try { $wp.StandardInput.Close() } catch {}
-        # Same supervision contract as the version probe: concurrent
-        # drains first, bounded total wait, kill only the owned PID.
+        # One 5000ms budget covers WaitForExit + both drains + kill. Each
+        # wait recomputes remaining time; this is not 5000+1000+1000.
+        $whereBudgetMs = 5000
+        $whereWatch = [System.Diagnostics.Stopwatch]::StartNew()
         $wOut = $wp.StandardOutput.ReadToEndAsync()
         $wErr = $wp.StandardError.ReadToEndAsync()
-        if ($wp.WaitForExit(5000)) {
-            if ($wOut.Wait(1000)) { $whereOut = [string]$wOut.Result }
+        $remain = $whereBudgetMs - [int]$whereWatch.ElapsedMilliseconds
+        if ($remain -lt 0) { $remain = 0 }
+        if ($wp.WaitForExit($remain)) {
+            $remain = $whereBudgetMs - [int]$whereWatch.ElapsedMilliseconds
+            if ($remain -lt 0) { $remain = 0 }
+            if ($wOut.Wait($remain)) { $whereOut = [string]$wOut.Result }
         } else {
             try { $wp.Kill() } catch {}
         }
-        try { [void]$wErr.Wait(1000) } catch {}
+        $remain = $whereBudgetMs - [int]$whereWatch.ElapsedMilliseconds
+        if ($remain -lt 0) { $remain = 0 }
+        try { [void]$wErr.Wait($remain) } catch {}
     } catch { $whereOut = $null }
     finally {
         if ($wp) {
@@ -1587,9 +1597,11 @@ try {
         }
         $drainMs = $preflightTotalMs - [int]$watch.ElapsedMilliseconds
         if ($drainMs -lt 0) { $drainMs = 0 }
+        $errDrained = $false
         $err = ""
         if ($errTask.Wait($drainMs) -and -not $errTask.IsFaulted -and -not $errTask.IsCanceled) {
             $err = [string]$errTask.Result
+            $errDrained = $true
         }
         # Read the exit code before disposing the handle: once released,
         # ExitCode is no longer readable (renders empty / throws).
@@ -1598,8 +1610,8 @@ try {
         if ($exitCode -ne 0) {
             throw "Preflight failed: candidate exited with code $exitCode. StdErr: $err"
         }
-        if (-not $outDrained) {
-            throw "Preflight failed: candidate stdout did not reach EOF within the remaining budget (held pipe); candidate rejected."
+        if (-not $outDrained -or -not $errDrained) {
+            throw "Preflight failed: candidate stdout/stderr did not reach EOF within the remaining budget (held pipe); candidate rejected."
         }
         $candidateVer = ($out -split "[\r\n]+") | Where-Object { $_ -match '\S' } | Select-Object -First 1
         if (-not $candidateVer) {

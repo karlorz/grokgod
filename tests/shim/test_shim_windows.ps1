@@ -164,15 +164,23 @@ public class MockGrok {
             return 0;
         }
 
-        if (mode == "sleepy-child" || mode == "held-eof") {
+        if (mode == "sleepy-child" || mode == "held-eof" || mode == "held-stderr-eof") {
             Console.Out.WriteLine("grok 1.0.6 (48271133)");
             Console.Out.Flush();
-            int holdSeconds = (mode == "held-eof") ? 120 : 5;
+            int holdSeconds = (mode == "sleepy-child") ? 5 : 120;
             var child = new System.Diagnostics.Process();
             child.StartInfo.FileName = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
             child.StartInfo.Arguments = "fixture-hold-pipe " + holdSeconds;
             child.StartInfo.UseShellExecute = false;
+            if (mode == "held-stderr-eof") {
+                // Keep stdout free to EOF; only stderr stays inherited.
+                child.StartInfo.RedirectStandardOutput = true;
+                child.StartInfo.RedirectStandardInput = true;
+            }
             child.Start();
+            if (mode == "held-stderr-eof") {
+                try { child.StandardInput.Close(); } catch {}
+            }
             return 0;
         }
 
@@ -799,6 +807,15 @@ exit 0
     $killed = Stop-FixtureMockProcesses
     Assert-Condition (@(Get-FixtureMockProcesses).Count -eq 0) "Probe held-eof fixture cleanup leaves no surviving fixture process"
 
+    # 5.8 stderr-only held EOF: stdout delivers a version line, a descendant
+    # holds stderr. Fail-closed (null version), bounded.
+    Stop-FixtureMockProcesses | Out-Null
+    $r = Invoke-ShimStatusJson -ExtraEnv @{ "GROKGOD_MOCK_MODE" = "held-stderr-eof" }
+    Assert-Condition ($r.ElapsedMs -lt 10000) "Probe held-stderr-eof returns bounded ($($r.ElapsedMs)ms)"
+    Assert-Condition ($r.Version -eq $null) "Probe held-stderr-eof reports null version (stderr drain incomplete)"
+    $killed = Stop-FixtureMockProcesses
+    Assert-Condition (@(Get-FixtureMockProcesses).Count -eq 0) "Probe held-stderr-eof fixture cleanup leaves no surviving fixture process"
+
     # -------------------------------------------------------------------------
     # Test Group 6: Full-Launcher Process Fixtures via Node child_process
     # -------------------------------------------------------------------------
@@ -1403,6 +1420,57 @@ public class MockOldEngine {
         $res = Invoke-LauncherWithPath -cmdPath $discoveryLauncher -childPath $pwshDir -ArgTokens @("--version") -ExtraEnv $engineEnv
         Assert-Condition ($res.ExitCode -eq 0 -and $res.StdOut -match "grok 1\.0\.6") "PATH discovery finds verified pwsh when it is not under PowerShell\7"
     }
+
+    # 9.5 Get-GrokgodPwshVersion fail-closes when stdout completes but a
+    # descendant holds stderr EOF.
+    $heldSrc = @"
+using System;
+using System.Diagnostics;
+using System.Threading;
+public class MockHeldStderrEngine {
+    public static int Main(string[] args) {
+        if (args.Length > 0 && args[0] == "hold") {
+            Thread.Sleep(120000);
+            return 0;
+        }
+        Console.Out.WriteLine("7.4.6");
+        Console.Out.Flush();
+        var child = new Process();
+        child.StartInfo.FileName = Process.GetCurrentProcess().MainModule.FileName;
+        child.StartInfo.Arguments = "hold";
+        child.StartInfo.UseShellExecute = false;
+        child.StartInfo.RedirectStandardOutput = true;
+        child.StartInfo.RedirectStandardInput = true;
+        child.Start();
+        try { child.StandardInput.Close(); } catch {}
+        return 0;
+    }
+}
+"@
+    $heldCs = Join-Path $testDir "MockHeldStderrEngine.cs"
+    Set-Content -LiteralPath $heldCs -Value $heldSrc -Encoding UTF8
+    $heldExe = Join-Path $testDir "MockHeldStderrEngine.exe"
+    if ($cscExe) {
+        $compileHeld = Start-Process -FilePath $cscExe -ArgumentList @("/nologo", "/target:exe", "`"/out:$heldExe`"", "`"$heldCs`"") -NoNewWindow -Wait -PassThru
+        if ($compileHeld.ExitCode -ne 0) { throw "Failed to compile MockHeldStderrEngine.cs" }
+    } else {
+        $cp5 = New-Object System.CodeDom.Compiler.CompilerParameters
+        $cp5.GenerateExecutable = $true
+        $cp5.OutputAssembly = $heldExe
+        $cscp5 = New-Object Microsoft.CSharp.CSharpCodeProvider
+        $cr5 = $cscp5.CompileAssemblyFromSource($cp5, $heldSrc)
+        if ($cr5.Errors.Count -gt 0) { throw $cr5.Errors[0].ErrorText }
+    }
+    $heldSw = [System.Diagnostics.Stopwatch]::StartNew()
+    $heldVer = Get-GrokgodPwshVersion -Path $heldExe -TimeoutMs 3000
+    $heldSw.Stop()
+    Assert-Condition ($heldVer -eq $null) "Get-GrokgodPwshVersion returns null when stderr EOF is held"
+    Assert-Condition ($heldSw.ElapsedMilliseconds -lt 8000) "Get-GrokgodPwshVersion stderr-held case is bounded ($($heldSw.ElapsedMilliseconds)ms)"
+    try {
+        Get-CimInstance -ClassName Win32_Process -Filter "ExecutablePath = '$($heldExe.Replace('\','\\'))'" -ErrorAction SilentlyContinue | ForEach-Object {
+            try { (Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue).Kill() } catch {}
+        }
+    } catch {}
 
 } finally {
     if ($origUserProfile) { $env:USERPROFILE = $origUserProfile }
