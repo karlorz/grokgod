@@ -4,19 +4,19 @@
 
 - **Base (unchanged parent):** `4e082afa1dcb7e3ba14f81bd52696c922bf3997c`
 - **Branch:** `windows-t3-process-integration`
-- **Current code commit:** `b6b46922874074c42b7987d690ff5a7c4bea4d79` (local; root owns push/CI/release)
-- **Archive sha256** (`git archive --format=tar.gz HEAD`): `4517acf827b14f9fde67841c5a41508e62b4e0c8cae7d3d8c94c02ba194d08b0`
+- **Current code commit:** `ee14caacf2e30ef2f57d710314edcdc0838c9152` (local; root owns push/CI/release)
+- **Archive sha256** (`git archive --format=tar.gz HEAD`): `940ce4ed207edd13a18304e7de3012ab9013b034f41bcb30131d9b0b3b399058`
 - **Native host:** MSI-1, `%TEMP%` fixtures only, packaged PowerShell 7.6.9
   (`C:\Program Files\WindowsApps\Microsoft.PowerShell_7.6.9.0_x64__8wekyb3d8bbwe\pwsh.exe`).
 - **Native status:** focused PS7 smoke PASS (12/12) and bound-missing guard
   smoke PASS (13/13). The eb2a3f1 full battery passed 180/0 shim, 226/0
   install, 1175.5 ms median; it is historical because eb2a3f1 lacked the
-  bound-missing guard. A full battery on b6b4692 is **pending root review**;
+  bound-missing guard. A full battery on ee14caa is **pending root review**;
   no completion is claimed for it here.
 - **No release / no deploy / no push:** nothing was pushed, tagged, published,
   installed, or merged from this worktree.
 
-## Static results on b6b4692
+## Static results on ee14caa
 
 | Check | Result |
 | --- | --- |
@@ -108,10 +108,10 @@ watchdog (test driver, suite supervisor, or interactive user) owns a
 pathological hanging `pwsh.exe` candidate. No production bound is claimed for
 that case.
 
-## Key file sha256 on b6b4692
+## Key file sha256 on ee14caa
 
-- `install.ps1` `0d60925a07844db739043eee6dac6e88a267555f336199f570208b08c04a7fff`
-- `src/shim/grok-shim.ps1` `9ab5156598987813a6c1f6072378721f93f97797569d8f2c10627ef276ac49dd`
+- `install.ps1` `3f785639bab11b580300cacd2c1149ddf5ed01c02b28a83d415ef2b9358add70`
+- `src/shim/grok-shim.ps1` `20bc9d665cbe9c4707554121985aa3a6cc04b9084c863e9b75e6c8104acf9d95`
 - `src/shim/LauncherHelpers.ps1` `69e224dc6b38f4bc1288c16c4ad2f2f212feb2b012d9faf7b4d70bece6116f9a`
 - `src/shim/templates/grok.cmd.template` `f84176a9cd84a5aa01e3d041efb1b09cf38adcfb8a61d3fb368c51413c3ed389`
 - `src/shim/templates/grokgod.cmd.template` `546cd2897a15f41f894e482abd92c13ee701b78703023530efac4c63adbce96e`
@@ -130,9 +130,11 @@ that case.
    inherit flags around its own `Process.Start` and kills on an incomplete
    drain.
 3. **Bounded candidate ownership.** Kill-on-close job assigned while the
-   candidate is suspended; retained process handle; streams before resume;
-   job transfer after readers; fail-closed pipe-inherit clearing. No CIM, no
-   tree-enumeration kill fallback.
+   candidate is suspended; the Process wrapper's handle is retained before
+   resume; streams are built before resume; job ownership transfers after
+   every reader exists; pipe-inherit clearing is fail-closed. The temporary
+   `NativeProcessHandle` field is removed; `Process.Kill()` is the sole kill
+   path. No CIM, no tree-enumeration kill fallback.
 4. **Unicode launchers.** ASCII absolute shim paths bind directly (cross-drive
    safe, `%` doubled). Non-ASCII absolute paths bind a decoded ASCII
    `%~dp0`-relative suffix from `LauncherDirectory`; an unrepresentable suffix
@@ -142,7 +144,8 @@ that case.
 5. **Bound-missing guard.** The generated launcher exits 64 with an ASCII
    stderr diagnostic when the bound shim file is missing. It does not fall
    through to co-located, `GROKGOD_HOME`, `USERPROFILE`, or bare-name
-   discovery. Native decoy proof is above.
+   discovery. The committed native regression covers both `grok` and
+   `grokgod` identities with co-located and default decoys.
 5. **Test contracts.** Test 16 asserts `Prefix\grokgod\bin\grokgod.exe`; Test
    15 survivor checks use recorded mock PIDs with plain-array counts; the
    merged 2>&1 case has an isolated home.
