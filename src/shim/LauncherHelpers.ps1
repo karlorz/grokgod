@@ -234,16 +234,23 @@ function New-GrokgodLauncherScript {
     }
     $fullShim = [System.IO.Path]::GetFullPath($normalizedShim)
     $shimBindLine = ""
-    if ($LauncherDirectory) {
+    if ($fullShim -notmatch '[^\x00-\x7F]') {
+        # ASCII absolute path: bind it directly. This also works when the
+        # launcher directory is on another drive.
+        $shimBindLine = 'set "GROKGOD_SHIM_PATH=' + ($fullShim.Replace('%', '%%')) + '"'
+    } elseif (-not $LauncherDirectory) {
+        throw "ShimPath contains non-ASCII characters; pass -LauncherDirectory so the launcher binds a %~dp0-relative ASCII path."
+    } else {
         $fullLaunch = [System.IO.Path]::GetFullPath($LauncherDirectory.Trim())
         if (-not (Test-Path -LiteralPath $fullLaunch)) {
             throw "LauncherDirectory '$LauncherDirectory' does not exist."
         }
         $fromUri = New-Object System.Uri (($fullLaunch.TrimEnd('\', '/') + '\'))
         $toUri = New-Object System.Uri $fullShim
-        # Keep the percent-encoded relative form: it is ASCII on disk and
-        # pwsh -File resolves %XX escapes. Percent signs are doubled for cmd.
-        $rel = $fromUri.MakeRelativeUri($toUri).OriginalString.Replace('/', '\')
+        # Decode back to a real filesystem path: cmd "if exist" and pwsh
+        # -File do not URI-decode. Only an ASCII relative suffix is safe;
+        # arbitrary Unicode components fail closed instead of decoy fallback.
+        $rel = [Uri]::UnescapeDataString($fromUri.MakeRelativeUri($toUri).OriginalString).Replace('/', '\')
         if ([string]::IsNullOrWhiteSpace($rel) -or $rel.Contains(':')) {
             throw "ShimPath is not relative to LauncherDirectory; refusing silent discovery fallthrough."
         }
@@ -251,10 +258,6 @@ function New-GrokgodLauncherScript {
             throw "Relative shim path from LauncherDirectory is not ASCII; refusing silent discovery fallthrough."
         }
         $shimBindLine = 'set "GROKGOD_SHIM_PATH=%~dp0' + ($rel.Replace('%', '%%')) + '"'
-    } elseif ($fullShim -notmatch '[^\x00-\x7F]') {
-        $shimBindLine = 'set "GROKGOD_SHIM_PATH=' + ($fullShim.Replace('%', '%%')) + '"'
-    } else {
-        throw "ShimPath contains non-ASCII characters; pass -LauncherDirectory so the launcher binds a %~dp0-relative ASCII path."
     }
     $bakedLine = ""
     $trimmedPwsh = $PwshPath.Trim()

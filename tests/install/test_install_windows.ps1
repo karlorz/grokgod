@@ -1071,7 +1071,6 @@ try {
         function Get-InstallDriverEnv([string]$mode) {
             $m = @{
                 "GROKGOD_HOME" = $stageHome
-                "GROKGOD_BIN" = $installedExe
                 "GROKGOD_UPDATE_CHECK_DISABLE" = "1"
                 "USERPROFILE" = $testUserProfile
             }

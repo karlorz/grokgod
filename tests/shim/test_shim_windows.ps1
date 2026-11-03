@@ -865,7 +865,7 @@ exit 0
     # provider spawns). Discovery-only launcher when unresolvable.
     $bakedPwsh = ""
     if ($verifiedPwsh) { $bakedPwsh = $verifiedPwsh }
-    Set-Content -LiteralPath $grokLauncher -Value (New-GrokgodLauncherScript -Identity grok -ShimPath $resolvedShim -PwshPath $bakedPwsh -LauncherDirectory $launcherDir) -Encoding ASCII
+    Set-Content -LiteralPath $grokLauncher -Value (New-GrokgodLauncherScript -Identity grok -ShimPath $resolvedShim -PwshPath $bakedPwsh) -Encoding ASCII
     if ($verifiedPwsh) {
         Write-Host "  Launcher engine: $verifiedPwsh (verified)"
     } else {
@@ -1465,7 +1465,7 @@ public class MockFailingEngine {
     # Discovery-only launcher: group 9.1/9.2/9.4 must not inherit a baked
     # engine from the group-6 launcher, or isolation would never 127.
     $discoveryLauncher = Join-Path $launcherDir "grok-discovery.cmd"
-    Set-Content -LiteralPath $discoveryLauncher -Value (New-GrokgodLauncherScript -Identity grok -ShimPath $resolvedShim -LauncherDirectory $launcherDir) -Encoding ASCII
+    Set-Content -LiteralPath $discoveryLauncher -Value (New-GrokgodLauncherScript -Identity grok -ShimPath $resolvedShim) -Encoding ASCII
 
     $oldEngineSrc = @"
 using System;
@@ -1544,7 +1544,7 @@ public class MockOldEngine {
     # provider-spawn case).
     if ($verifiedPwsh) {
         $bakedLauncher = Join-Path $launcherDir "grok-baked.cmd"
-        Set-Content -LiteralPath $bakedLauncher -Value (New-GrokgodLauncherScript -Identity grok -ShimPath $resolvedShim -PwshPath $verifiedPwsh -LauncherDirectory $launcherDir) -Encoding ASCII
+        Set-Content -LiteralPath $bakedLauncher -Value (New-GrokgodLauncherScript -Identity grok -ShimPath $resolvedShim -PwshPath $verifiedPwsh) -Encoding ASCII
         $res = Invoke-LauncherWithPath -cmdPath $bakedLauncher -childPath $system32Only -ArgTokens @("--version") -ExtraEnv $engineEnv -WorkingDirectory $emptyPathDir
         Assert-Condition ($res.ExitCode -eq 0 -and $res.StdOut -match "grok 1\.0\.6") "Baked verified pwsh works with pwsh-free PATH"
     } else {
