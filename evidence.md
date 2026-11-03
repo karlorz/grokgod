@@ -4,25 +4,51 @@
 
 - **Base (unchanged parent):** `4e082afa1dcb7e3ba14f81bd52696c922bf3997c`
 - **Branch:** `windows-t3-process-integration`
-- **Current commit:** `9b7e4384baa53cfe7b92a7393589170b70becc32` (local; root owns push/CI/release)
-- **Archive sha256** (`git archive --format=tar.gz HEAD`): `dcf13307868915909b65449ef819e5ee54132c33fabaa11507951c257f928653`
+- **Current code commit:** `b6b46922874074c42b7987d690ff5a7c4bea4d79` (local; root owns push/CI/release)
+- **Archive sha256** (`git archive --format=tar.gz HEAD`): `4517acf827b14f9fde67841c5a41508e62b4e0c8cae7d3d8c94c02ba194d08b0`
 - **Native host:** MSI-1, `%TEMP%` fixtures only, packaged PowerShell 7.6.9
   (`C:\Program Files\WindowsApps\Microsoft.PowerShell_7.6.9.0_x64__8wekyb3d8bbwe\pwsh.exe`).
-- **Native status:** focused PS7 smoke PASS (12/12). The full same-SHA
-  shim + install + measure battery is **pending root review of this revision**;
+- **Native status:** focused PS7 smoke PASS (12/12) and bound-missing guard
+  smoke PASS (13/13). The eb2a3f1 full battery passed 180/0 shim, 226/0
+  install, 1175.5 ms median; it is historical because eb2a3f1 lacked the
+  bound-missing guard. A full battery on b6b4692 is **pending root review**;
   no completion is claimed for it here.
 - **No release / no deploy / no push:** nothing was pushed, tagged, published,
   installed, or merged from this worktree.
 
-## Static results on 9b7e438
+## Static results on b6b4692
 
 | Check | Result |
 | --- | --- |
 | `node src/installer/build.mjs --check` | 6/6 ok |
 | `node src/installer/cut.mjs --check` | 6/6 ok |
 | `tests/installer/test_generated_installers.py` | 72 pass / 0 fail |
-| `tests/shim/test_shim_windows.py` | 253 pass / 0 fail |
+| `tests/shim/test_shim_windows.py` | 255 pass / 0 fail |
 | `tests/install/test_install_windows.py` | 242 pass / 0 fail |
+
+## Bound-missing shim guard (native PASS)
+
+The generated launcher always binds `GROKGOD_SHIM_PATH` (ASCII absolute, or a
+decoded ASCII `%~dp0`-relative path). If that exact file is missing, the
+launcher writes an ASCII stderr diagnostic and exits 64 before any discovery.
+It has no co-located, `GROKGOD_HOME`, `USERPROFILE`, or bare-name fallback.
+
+Native PS7 proof with a Unicode prefix, a relative suffix containing a space
+and literal `%`, a co-located decoy, and a default-profile decoy:
+
+| Case | Result |
+| --- | --- |
+| Bound shim removed | exit 64, `bound shim not found`, no `DECOY-` output |
+| Bound shim present | exit 0, `BOUND-SHIM-OK`, no `DECOY-` output |
+| Launcher text | `%~dp0` bind, `if not exist` guard, no HOME/USERPROFILE fallback |
+
+## Historical eb2a3f1 full battery (superseded by the guard)
+
+| Suite | Result |
+| --- | --- |
+| Shim | 180 pass / 0 fail |
+| Install | 226 pass / 0 fail |
+| Measure | 5/5 valid, full-launcher median 1175.5 ms |
 
 ## Native PS7 smoke on 9b7e438 (PASS)
 
@@ -82,11 +108,11 @@ watchdog (test driver, suite supervisor, or interactive user) owns a
 pathological hanging `pwsh.exe` candidate. No production bound is claimed for
 that case.
 
-## Key file sha256 on 9b7e438
+## Key file sha256 on b6b4692
 
 - `install.ps1` `0d60925a07844db739043eee6dac6e88a267555f336199f570208b08c04a7fff`
 - `src/shim/grok-shim.ps1` `9ab5156598987813a6c1f6072378721f93f97797569d8f2c10627ef276ac49dd`
-- `src/shim/LauncherHelpers.ps1` `7561ca91370e1c9fca605903f7631e853ae1549e56e751696bfc2a1a03976846`
+- `src/shim/LauncherHelpers.ps1` `69e224dc6b38f4bc1288c16c4ad2f2f212feb2b012d9faf7b4d70bece6116f9a`
 - `src/shim/templates/grok.cmd.template` `f84176a9cd84a5aa01e3d041efb1b09cf38adcfb8a61d3fb368c51413c3ed389`
 - `src/shim/templates/grokgod.cmd.template` `546cd2897a15f41f894e482abd92c13ee701b78703023530efac4c63adbce96e`
 - `src/installer/shared/ps7-version-probe.ps1.part` `aca3cd1aed4346cfcea018cf49231f235cd3d39ec62d065514b4c267568cd914`
@@ -113,6 +139,10 @@ that case.
    throws instead of falling through to discovery. The installer and fast path
    pass the real `BinDir`. Test 14 drives the installed `Prefix\bin\grok.cmd`
    with `GROKGOD_BIN` and `GROKGOD_SHIM_PATH` removed.
+5. **Bound-missing guard.** The generated launcher exits 64 with an ASCII
+   stderr diagnostic when the bound shim file is missing. It does not fall
+   through to co-located, `GROKGOD_HOME`, `USERPROFILE`, or bare-name
+   discovery. Native decoy proof is above.
 5. **Test contracts.** Test 16 asserts `Prefix\grokgod\bin\grokgod.exe`; Test
    15 survivor checks use recorded mock PIDs with plain-array counts; the
    merged 2>&1 case has an isolated home.
