@@ -1,9 +1,22 @@
 <#
 .SYNOPSIS
-    Launcher generation helper for grokgod Windows installation (Task 3 helper).
+    Launcher generation and PowerShell 7 prerequisite helpers for grokgod
+    Windows installation (Task 3 helper).
 .DESCRIPTION
-    Generates thin .cmd launchers that invoke grok-shim.ps1 with positional identity.
+    Generates thin .cmd launchers that invoke grok-shim.ps1 with positional
+    identity, and resolves a verified runnable PowerShell 7+ engine.
+
+    grokgod requires PowerShell 7 or newer. These helpers never fall back to
+    Windows PowerShell 5.1: Resolve-GrokgodPwsh verifies every candidate by
+    executing it (alias presence alone is not proof of runnability), and the
+    generated launcher prints actionable install guidance and exits 127 when
+    no verified engine exists.
 #>
+
+{{GROKGOD:shared/ps7-version-probe.ps1.part#Get-GrokgodPwshVersion}}
+
+{{GROKGOD:shared/ps7-resolver.ps1.part#Resolve-GrokgodPwsh}}
+
 function New-GrokgodLauncherScript {
     [CmdletBinding()]
     param(
@@ -12,21 +25,113 @@ function New-GrokgodLauncherScript {
         [string]$Identity,
 
         [Parameter(Mandatory = $true)]
-        [string]$ShimPath
+        [string]$ShimPath,
+
+        # Optional absolute path to a Resolve-GrokgodPwsh-verified pwsh.exe.
+        # Baked into the launcher (GROKGOD_POWERSHELL_BAKED) as the preferred
+        # engine; the launcher's runtime verification still rejects it if it
+        # stops being runnable, and discovery then applies. The path is
+        # re-verified here at generation time so an arbitrary or stale value
+        # can never be baked in. Empty = pure discovery launcher.
+        [string]$PwshPath = "",
+
+        # Directory that will hold the generated .cmd. Used to bind an ASCII
+        # %~dp0-relative GROKGOD_SHIM_PATH so Unicode absolute shim paths are
+        # never written into the ASCII launcher file.
+        [string]$LauncherDirectory = ""
     )
 
     $normalizedShim = $ShimPath.Trim()
+    if (-not (Test-Path -LiteralPath $normalizedShim)) {
+        throw "ShimPath '$normalizedShim' does not exist."
+    }
+    $fullShim = [System.IO.Path]::GetFullPath($normalizedShim)
+    $shimBindLine = ""
+    if ($fullShim -notmatch '[^\x00-\x7F]') {
+        # ASCII absolute path: bind it directly. This also works when the
+        # launcher directory is on another drive.
+        $shimBindLine = 'set "GROKGOD_SHIM_PATH=' + ($fullShim.Replace('%', '%%')) + '"'
+    } elseif (-not $LauncherDirectory) {
+        throw "ShimPath contains non-ASCII characters; pass -LauncherDirectory so the launcher binds a %~dp0-relative ASCII path."
+    } else {
+        $fullLaunch = [System.IO.Path]::GetFullPath($LauncherDirectory.Trim())
+        if (-not (Test-Path -LiteralPath $fullLaunch)) {
+            throw "LauncherDirectory '$LauncherDirectory' does not exist."
+        }
+        $fromUri = New-Object System.Uri (($fullLaunch.TrimEnd('\', '/') + '\'))
+        $toUri = New-Object System.Uri $fullShim
+        # Decode back to a real filesystem path: cmd "if exist" and pwsh
+        # -File do not URI-decode. Only an ASCII relative suffix is safe;
+        # arbitrary Unicode components fail closed instead of decoy fallback.
+        $rel = [Uri]::UnescapeDataString($fromUri.MakeRelativeUri($toUri).OriginalString).Replace('/', '\')
+        if ([string]::IsNullOrWhiteSpace($rel) -or $rel.Contains(':')) {
+            throw "ShimPath is not relative to LauncherDirectory; refusing silent discovery fallthrough."
+        }
+        if ($rel -match '[^\x00-\x7F]') {
+            throw "Relative shim path from LauncherDirectory is not ASCII; refusing silent discovery fallthrough."
+        }
+        $shimBindLine = 'set "GROKGOD_SHIM_PATH=%~dp0' + ($rel.Replace('%', '%%')) + '"'
+    }
+    $bakedLine = ""
+    $trimmedPwsh = $PwshPath.Trim()
+    if ($trimmedPwsh) {
+        # Bake only a provably runnable engine. An arbitrary or stale path
+        # here would ship a launcher that 127s on first use, so the same
+        # verification the launcher applies at runtime is applied at
+        # generation time. Non-ASCII engine paths stay out of the ASCII
+        # launcher file; discovery and GROKGOD_POWERSHELL cover those hosts.
+        if ($trimmedPwsh -match '[^\x00-\x7F]') {
+            $trimmedPwsh = ""
+        }
+        if ($trimmedPwsh) {
+            if (-not (Test-Path -LiteralPath $trimmedPwsh)) {
+                throw "PwshPath '$trimmedPwsh' does not exist. Resolve-GrokgodPwsh first, then pass its result."
+            }
+            $bakedVersion = Get-GrokgodPwshVersion -Path $trimmedPwsh
+            $bakedParsed = $null
+            try { $bakedParsed = [version]$bakedVersion } catch { $bakedParsed = $null }
+            if (-not $bakedParsed -or $bakedParsed.Major -lt 7) {
+                throw "PwshPath '$trimmedPwsh' is not a verified runnable PowerShell 7+ engine (probe returned '$bakedVersion')."
+            }
+            $bakedLine = 'set "GROKGOD_POWERSHELL_BAKED=' + ($trimmedPwsh.Replace('%', '%%')) + '"'
+        }
+    }
+
+    # The probe block is raw cmd text containing $ and backtick characters;
+    # it must ride in a single-quoted here-string so PowerShell never
+    # interpolates it, then be spliced into the launcher template by literal
+    # replacement. Putting the probe inside the expandable template
+    # here-string interpolates $PSVersionTable and silently removes the
+    # for /f usebackq backticks at runtime (observed on msi-1: every probe
+    # stage failed and the launcher exited 127).
+    $probePart = @'
+{{GROKGOD:ps-engine-probe.cmd}}
+'@
+
     $template = @"
 @echo off
-rem grokgod thin launcher for Windows ($Identity)
-setlocal
+rem grokgod thin launcher for Windows ($Identity) - requires PowerShell 7+
+setlocal DisableDelayedExpansion
+$bakedLine
+$shimBindLine
+if not exist "%GROKGOD_SHIM_PATH%" (
+    echo grokgod: bound shim not found: "%GROKGOD_SHIM_PATH%" 1>&2
+    echo grokgod: refusing co-located/default discovery for an explicit binding. 1>&2
+    exit /b 64
+)
+:shim_ready
 
-{{GROKGOD:ps-engine-probe.cmd}}
+__GROKGOD_PS7_PROBE__
 
-:powershell_ready
+:ps7_ready
 
-"%POWERSHELL_EXE%" -NoProfile -ExecutionPolicy Bypass -File "$normalizedShim" $Identity %*
+rem Argument transport: DisableDelayedExpansion (set above) preserves "!" in
+rem user tokens; %* is forwarded directly to pwsh -File. Callers that spawn
+rem this launcher through cmd.exe /d /s /c must apply CRT quote/backslash
+rem encoding and then twice CMD-metachar escaping with
+rem windowsVerbatimArguments (see tests/shim/launcher_fixture_driver.js).
+"%POWERSHELL_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%GROKGOD_SHIM_PATH%" $Identity %*
 exit /b %ERRORLEVEL%
 "@
-    return $template
+    return ($template.Replace('__GROKGOD_PS7_PROBE__', $probePart))
 }

@@ -1,0 +1,122 @@
+#@build:strip-header
+# Canonical bounded PowerShell engine version probe.
+#
+# Compiled into src/shim/LauncherHelpers.ps1 and install.ps1 by
+# src/installer/templates/* via the build-time
+# {{GROKGOD:shared/ps7-version-probe.ps1.part#Get-GrokgodPwshVersion}} placeholder,
+# so the launcher generator and the installer verify engine candidates with
+# exactly the same bounded logic. This probe must stay runnable BEFORE the
+# installer PS7 gate (bootstrap from Windows PowerShell 5.1), so it
+# deliberately uses no PS7-only syntax.
+#
+# Deadline contract: the stopwatch starts BEFORE process setup, so Start()
+# cost counts against the budget; every sequential drain wait recomputes the
+# remaining budget, so wait + stdout drain + stderr drain + kill together
+# can never exceed the total. Both stdout and stderr must reach EOF or the
+# probe returns null (a descendant holding only stderr is still failure).
+# Candidate stdin is redirected and closed immediately (held-stdin
+# candidates get EOF). On timeout only the directly owned probe PID is
+# killed (pwsh -Command spawns no children for this probe). Readers and the
+# process handle are disposed on every path.
+#@build:end-header
+function {{GROKGOD:functionName}} {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [int]$TimeoutMs = 8000
+    )
+
+    # Runs '<Path> -NoProfile -Command $PSVersionTable.PSVersion.ToString()'
+    # with a bounded total lifetime and returns the first output line on
+    # success. Returns $null when the candidate cannot start, exceeds the
+    # budget, exits non-zero, or holds EOF past the drain window.
+    $proc = $null
+    # Deadline measured from BEFORE process setup so Start() counts too.
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $Path
+        $psi.Arguments = '-NoProfile -Command "$PSVersionTable.PSVersion.ToString()"'
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.RedirectStandardInput = $true
+        $psi.CreateNoWindow = $true
+        if (-not ('GrokgodProbeStdio' -as [type])) {
+            Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class GrokgodProbeStdio {
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool SetHandleInformation(IntPtr hObject, uint dwMask, uint dwFlags);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool GetHandleInformation(IntPtr hObject, out uint lpdwFlags);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr GetStdHandle(int nStdHandle);
+    public const uint HANDLE_FLAG_INHERIT = 0x00000001;
+}
+"@
+        }
+        $savedStdio = New-Object System.Collections.Generic.List[object]
+        $seenStdio = @{}
+        foreach ($n in @(-10, -11, -12)) {
+            $h = [GrokgodProbeStdio]::GetStdHandle($n)
+            if ($h -eq [IntPtr]::Zero -or $h -eq [IntPtr]::new(-1)) { continue }
+            $key = $h.ToInt64()
+            if ($seenStdio.ContainsKey($key)) { continue }
+            $flags = [uint32]0
+            if (-not [GrokgodProbeStdio]::GetHandleInformation($h, [ref]$flags)) { continue }
+            if (-not [GrokgodProbeStdio]::SetHandleInformation($h, [GrokgodProbeStdio]::HANDLE_FLAG_INHERIT, 0)) { continue }
+            $seenStdio[$key] = $true
+            [void]$savedStdio.Add([pscustomobject]@{ Handle = $h; Flags = $flags })
+        }
+        try {
+            $proc = [System.Diagnostics.Process]::Start($psi)
+        } finally {
+            foreach ($item in $savedStdio) {
+                $bit = $item.Flags -band [GrokgodProbeStdio]::HANDLE_FLAG_INHERIT
+                [void][GrokgodProbeStdio]::SetHandleInformation($item.Handle, [GrokgodProbeStdio]::HANDLE_FLAG_INHERIT, $bit)
+            }
+        }
+        # Immediate EOF for the candidate: stdin is redirected and closed so
+        # a probe waiting on inherited input can never outlive its budget.
+        try { $proc.StandardInput.Close() } catch {}
+        $outTask = $proc.StandardOutput.ReadToEndAsync()
+        $errTask = $proc.StandardError.ReadToEndAsync()
+        $remainWait = $TimeoutMs - [int]$watch.ElapsedMilliseconds
+        if ($remainWait -lt 0) { $remainWait = 0 }
+        if (-not $proc.WaitForExit($remainWait)) {
+            try { $proc.Kill() } catch {}
+            return $null
+        }
+        # Each sequential drain wait recomputes the remaining budget.
+        # Both pipes must reach EOF: a descendant that holds only stderr
+        # is still a held-EOF failure even when stdout already completed.
+        $drainMs = $TimeoutMs - [int]$watch.ElapsedMilliseconds
+        if ($drainMs -lt 0) { $drainMs = 0 }
+        $outDrained = $false
+        try { $outDrained = $outTask.Wait($drainMs) } catch { $outDrained = $false }
+        $drainMs = $TimeoutMs - [int]$watch.ElapsedMilliseconds
+        if ($drainMs -lt 0) { $drainMs = 0 }
+        $errDrained = $false
+        try { $errDrained = $errTask.Wait($drainMs) } catch { $errDrained = $false }
+        if (-not $outDrained -or -not $errDrained) {
+            try { $proc.Kill() } catch {}
+            return $null
+        }
+        if ($proc.ExitCode -ne 0) { return $null }
+        $out = [string]$outTask.Result
+        if (-not $out) { return $null }
+        return (($out -split "`r?`n")[0]).Trim()
+    } catch {
+        return $null
+    } finally {
+        if ($proc) {
+            try { $proc.StandardInput.Dispose() } catch {}
+            try { $proc.StandardOutput.Dispose() } catch {}
+            try { $proc.StandardError.Dispose() } catch {}
+            try { $proc.Dispose() } catch {}
+        }
+    }
+}

@@ -24,7 +24,7 @@ import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { renderTemplate } from './build.mjs';
+import { readPart, renderTemplate } from './build.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..', '..');
@@ -139,6 +139,10 @@ const CUTS = [
         '$REPO_DEFAULT    = "{{GROKGOD:githubRepoSlug}}"', label);
       text = replaceOnce(text, `$TARGET_ASSET    = "${constants.windowsTargetAsset}"`,
         '$TARGET_ASSET    = "{{GROKGOD:windowsTargetAsset}}"', label);
+      text = cutFunction(text, 'function Get-GrokgodPwshVersion {',
+        'Get-GrokgodPwshVersion', 'ps7-version-probe.ps1.part');
+      text = cutFunction(text, 'function Resolve-GrokgodPwsh {',
+        'Resolve-GrokgodPwsh', 'ps7-resolver.ps1.part');
       return { template: text, expected: original };
     },
   },
@@ -171,16 +175,32 @@ const CUTS = [
   {
     output: 'templates/LauncherHelpers.ps1.in',
     input: 'src/shim/LauncherHelpers.ps1',
-    cut: cutEngineProbe,
+    cut: cutLauncherHelpers,
   },
 ];
 
+// LauncherHelpers carries the engine probe inside a single-quoted
+// here-string AND the two shared PS7 resolver functions at top level, so
+// its cut composes the probe cut with both function cuts.
+function cutLauncherHelpers(original, label) {
+  const probeCut = cutEngineProbe(original, label);
+  let text = cutFunction(probeCut.template, 'function Get-GrokgodPwshVersion {',
+    'Get-GrokgodPwshVersion', 'ps7-version-probe.ps1.part');
+  text = cutFunction(text, 'function Resolve-GrokgodPwsh {',
+    'Resolve-GrokgodPwsh', 'ps7-resolver.ps1.part');
+  return { template: text, expected: probeCut.expected };
+}
+
 function cutEngineProbe(original, label) {
-  const start = original.indexOf('set "POWERSHELL_EXE="');
-  const end = original.indexOf('\n\n:powershell_ready', start);
-  if (start === -1 || end === -1) throw new Error(`${label}: engine probe region not found`);
+  // The artifact carries the probe block verbatim (top level in the .cmd
+  // templates, inside a single-quoted here-string in LauncherHelpers.ps1).
+  // Matching the whole part keeps the cut the exact inverse of the build
+  // splice regardless of how the surrounding consumer is shaped.
+  const probe = readPart('ps-engine-probe.cmd.part');
+  const start = original.indexOf(probe);
+  if (start === -1) throw new Error(`${label}: engine probe region not found`);
   return {
-    template: `${original.slice(0, start)}${PS_PROBE_MARKER}${original.slice(end)}`,
+    template: `${original.slice(0, start)}${PS_PROBE_MARKER}${original.slice(start + probe.length)}`,
     expected: original,
   };
 }

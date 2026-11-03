@@ -197,6 +197,51 @@ def main():
         "the hand-sync comments above the signature copies are gone",
     )
 
+    with open(BUILD_MJS, "r", encoding="utf-8") as handle:
+        build_src = handle.read()
+    check(
+        r"#([A-Za-z_][A-Za-z0-9_-]*)" in build_src,
+        "build.mjs shared-include regex accepts hyphenated PowerShell function names",
+    )
+
+    with open(os.path.join(REPO_ROOT, "install.ps1"), "r", encoding="utf-8") as handle:
+        install_ps1_for_shared = handle.read()
+    with open(os.path.join(REPO_ROOT, "src", "shim", "LauncherHelpers.ps1"),
+              "r", encoding="utf-8") as handle:
+        helpers_text = handle.read()
+    ps7_probe_body = shared_body("ps7-version-probe.ps1.part")
+    ps7_resolver_body = shared_body("ps7-resolver.ps1.part")
+    check(
+        function_body(install_ps1_for_shared, "function Get-GrokgodPwshVersion {")
+        == function_body(ps7_probe_body, "function SHARED {"),
+        "install.ps1 Get-GrokgodPwshVersion body is the shared source (lossless merge)",
+    )
+    check(
+        function_body(helpers_text, "function Get-GrokgodPwshVersion {")
+        == function_body(ps7_probe_body, "function SHARED {"),
+        "LauncherHelpers.ps1 Get-GrokgodPwshVersion body is the shared source (lossless merge)",
+    )
+    check(
+        function_body(install_ps1_for_shared, "function Resolve-GrokgodPwsh {")
+        == function_body(ps7_resolver_body, "function SHARED {"),
+        "install.ps1 Resolve-GrokgodPwsh body is the shared source (lossless merge)",
+    )
+    check(
+        function_body(helpers_text, "function Resolve-GrokgodPwsh {")
+        == function_body(ps7_resolver_body, "function SHARED {"),
+        "LauncherHelpers.ps1 Resolve-GrokgodPwsh body is the shared source (lossless merge)",
+    )
+    check(
+        function_body(install_ps1_for_shared, "function Get-GrokgodPwshVersion {")
+        == function_body(helpers_text, "function Get-GrokgodPwshVersion {"),
+        "install.ps1 and LauncherHelpers.ps1 agree on Get-GrokgodPwshVersion",
+    )
+    check(
+        function_body(install_ps1_for_shared, "function Resolve-GrokgodPwsh {")
+        == function_body(helpers_text, "function Resolve-GrokgodPwsh {"),
+        "install.ps1 and LauncherHelpers.ps1 agree on Resolve-GrokgodPwsh",
+    )
+
     # --- 6. constants come from constants.json ---------------------------
     import json
     with open(CONSTANTS, "r", encoding="utf-8") as handle:

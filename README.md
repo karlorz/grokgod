@@ -14,9 +14,25 @@ curl -fsSL https://github.com/karlorz/grokgod/releases/latest/download/install.s
 
 ### Windows (PowerShell - EXPERIMENTAL)
 
+**PowerShell 7 is required.** The launchers, shim, and installer all require a
+verified runnable `pwsh.exe` (major version >= 7); there is deliberately no
+Windows PowerShell 5.1 fallback. A Store/WindowsApps `pwsh.exe` alias works
+only after the launcher's runtime probe executes it successfully — alias
+presence alone is never trusted.
+
 ```powershell
 irm https://github.com/karlorz/grokgod/releases/latest/download/install.ps1 | iex
 ```
+
+Invoking the installer from Windows PowerShell 5.1 never continues the
+installation: it relaunches itself under a verified `pwsh.exe` when one
+exists, otherwise it prints `winget install --id Microsoft.PowerShell -e`
+guidance and exits without touching the system. `-InstallPowerShell7` runs
+the explicit prerequisite helper (prints the plan; `-Apply` additionally
+runs the winget command with your consent). Windows Terminal integration is
+manual by design — the installer prints Settings guidance and never edits
+`settings.json`; nothing replaces `powershell.exe` or changes machine-wide
+shell/SSH defaults.
 
 ### Build from Source
 
@@ -269,7 +285,9 @@ is reported as invalid in `manifestDetail` and otherwise ignored.
 
 ### Windows Dispatcher & Command Matrix
 
-On Windows, `grok.cmd` and `grokgod.cmd` forward commands with positional identity to `src/shim/grok-shim.ps1` (e.g. `"%POWERSHELL_EXE%" ... -File "grok-shim.ps1" grok %*`):
+On Windows, `grok.cmd` and `grokgod.cmd` use `setlocal DisableDelayedExpansion` and forward commands with positional identity plus `%*` to `src/shim/grok-shim.ps1` (e.g. `"%POWERSHELL_EXE%" ... -File "grok-shim.ps1" grok %*`). The shim consumes those tokens from `$args`. Callers that spawn the launcher through `cmd.exe /d /s /c` (including a T3-style Node `child_process` with `windowsVerbatimArguments: true`) apply CRT quote/backslash encoding and then twice CMD-metachar escaping so spaces, empty tokens, trailing backslashes, metacharacters, embedded quotes, supplementary Unicode, and literal `%VAR%` round-trip; a raw `%*` expansion without that caller encoding lets cmd re-parse and execute metacharacters.
+
+The shim itself requires PowerShell 7 (`#Requires -Version 7.0` plus a runtime gate before any config/cache/status/update side effect); a direct invocation under Windows PowerShell 5.1 is rejected with the install guidance. Every child the shim spawns (updater, detached update refresh) runs under the same verified engine that invoked it — a `POWERSHELL_EXE` override naming `powershell.exe` is a blocking error, and any other override must pass a bounded `--version` probe reporting >= 7. The status and installer preflight probes are deadline-bounded end to end (one total budget covers wait, concurrent drains, supervised owned-only kill, and handle teardown), and probe children get immediate EOF via redirected, closed stdin.
 - `grok update [allowed args]` -> invokes installed updater (`install.ps1`). Allowed flags: `--version <tag>`, `--no-upgrade`, `--force`. Rejects `--uninstall`, prefix modifications, and unrecognized arguments.
 - `grok status [--json]` / `grokgod status [--json]` -> wrapper status inspection (never launches TUI).
 - `grok [args]` (including `grok sessions ...`) -> passes through arguments unchanged to the patched `grokgod.exe` with `GROK_DISABLE_AUTOUPDATER=1`.
@@ -291,9 +309,83 @@ On Windows, `grok.cmd` and `grokgod.cmd` forward commands with positional identi
 
 Corrupt states (e.g. missing patched binary, hash mismatch) return a non-zero exit code while maintaining valid, well-formed JSON.
 
+### Windows T3 (Terminal Three) integration
+
+T3 can drive Grok Build on Windows through a custom provider entry. Paths
+below are placeholders — substitute your own absolute paths before running
+anything. Nothing here changes global PATH or replaces existing binaries,
+so rolling back is a T3 settings change, not a system change.
+
+**Provider setup.** In T3 open **Settings -> Providers -> Grok** and create or
+edit a provider for this machine:
+
+- **Environment**: pick the T3 environment that matches your Windows session.
+- **Command**: point directly at the patched engine binary, e.g.
+  `%USERPROFILE%\.grokgod\bin\grokgod.exe` (replace with your grokgod home).
+  Direct execution is used instead of the `grok.cmd` wrapper so T3's
+  process/pipe topology talks straight to the engine.
+- **Provider environment variables**: set `GROK_DISABLE_AUTOUPDATER=1`.
+  The `grok.cmd`/`grok-shim.ps1` wrapper normally sets this before every
+  launch to stop the engine from self-updating over the patched binary. A
+  direct path bypasses that wrapper, so the provider must preserve the
+  protection explicitly; without it the engine can replace the patched
+  binary and the persist patchset is lost on the next upgrade cycle.
+
+**Refresh and verify.** After saving, refresh the provider in T3 and check:
+status shows **Available**; the reported version matches the grokgod
+release/patchset you installed (`grokgod status`, or `grok --version` through
+the wrapper); the models list loads; and a session starts and answers through
+the ACP/`agent stdio` path. If any step fails, inspect without dumping
+credentials:
+
+```powershell
+Get-Command grok -All          # every grok on PATH, in resolution order
+where.exe grok                 # same, from cmd
+```
+
+```sh
+type -a grok                   # Git Bash view of PATH resolution
+```
+
+`grok status --json` / `grokgod status --json` report health without
+launching the TUI; keep the stamp/binary fields to yourself if you paste
+output anywhere.
+
+**Version vocabulary.** Three different version strings are in play and they
+mean different things:
+
+1. **Grokgod release/patchset version** — the wrapper release, e.g. `v1.0.55`
+   (`grokgod status` `VERSION`/`PATCHSET`). This is what `grok update`
+   upgrades.
+2. **Bundled engine version** — the upstream Grok Build version the patched
+   binary was built from. T3's provider verification reports this version:
+   it runs the engine with `--version` and reads the bundled engine string
+   (e.g. `grok 1.0.45 (2bdd1d6)`), which is the wrapper/shim version vocabulary
+   only in the sense that the wrapper relays it unmodified.
+3. **Official engine version** — the separately installed official
+   `grok.exe`, if present. The Windows status report lists it under
+   `officialBinary*`; a skew versus the patched binary is reported as
+   `degraded` with an explanation, not an error.
+
+**Rollback.** In T3, restore your previous provider binary/environment
+selection (or delete the Grok provider). Because the integration never touched
+global PATH or replaced any binaries, no system-level undo is needed; the
+previous configuration keeps working as before.
+
+**Incident notes (2026-11).** On one Windows host the baseline wrapper-mediated
+T3 provider timed out during provider verification — the timeout selected the
+wrapper process (`grok.cmd` -> engine probe -> `grok-shim.ps1` -> engine) as
+the hanging unit. The *direct-path launcher* (point T3 at the engine binary
+directly and set `GROK_DISABLE_AUTOUPDATER=1` explicitly) is the verified
+mitigation documented above. The original timeout trigger inside the wrapper
+chain on that host remains unresolved. A separate defect in the Windows status
+probe — an unbounded pipe read that could hang `grok status` when the binary
+never closed its output — was found and fixed during the same investigation;
+it is independent of the T3 timeout and is covered by bounded-probe tests.
+
 ### Windows Transactional Installer (`install.ps1`)
 
-The Windows installer provides transactional install, update, and uninstall semantics for Windows x64 (`PowerShell 5.1` and `PowerShell 7` compatible):
+The Windows installer provides transactional install, update, and uninstall semantics for Windows x64 (**PowerShell 7+ only** — invoked from Windows PowerShell 5.1 it relaunches under a verified `pwsh.exe` or prints prerequisite guidance and installs nothing):
 - **Platform Check**: Fails closed immediately on Windows ARM64 before any network access (Windows x64 only).
 - **Prefix Safety**: Rejects `-Prefix` values that overlap the official `.grok` tree (`%USERPROFILE%\.grok` or child/parent directories).
 - **Official Grok Invariant**: Never opens for write, renames, replaces, or deletes official `%USERPROFILE%\.grok\bin\grok.exe`.

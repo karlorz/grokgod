@@ -1,36 +1,109 @@
 @echo off
 rem grokgod thin launcher for Windows (grokgod)
-setlocal
+setlocal DisableDelayedExpansion
+if defined GROKGOD_SHIM_PATH if exist "%GROKGOD_SHIM_PATH%" goto shim_ready
 set "GROKGOD_SHIM_DIR=%~dp0"
 if exist "%GROKGOD_SHIM_DIR%grok-shim.ps1" (
     set "GROKGOD_SHIM_PATH=%GROKGOD_SHIM_DIR%grok-shim.ps1"
-) else if exist "%GROKGOD_SHIM_DIR%..\grokgod\src\shim\grok-shim.ps1" (
-    set "GROKGOD_SHIM_PATH=%GROKGOD_SHIM_DIR%..\grokgod\src\shim\grok-shim.ps1"
-) else if exist "%USERPROFILE%\.grokgod\src\shim\grok-shim.ps1" (
-    set "GROKGOD_SHIM_PATH=%USERPROFILE%\.grokgod\src\shim\grok-shim.ps1"
-) else if exist "%USERPROFILE%\.grokgod\grok-shim.ps1" (
-    set "GROKGOD_SHIM_PATH=%USERPROFILE%\.grokgod\grok-shim.ps1"
-) else (
-    set "GROKGOD_SHIM_PATH=grok-shim.ps1"
+    goto shim_ready
 )
+if exist "%GROKGOD_SHIM_DIR%..\grokgod\shim\grok-shim.ps1" (
+    set "GROKGOD_SHIM_PATH=%GROKGOD_SHIM_DIR%..\grokgod\shim\grok-shim.ps1"
+    goto shim_ready
+)
+if defined GROKGOD_HOME if exist "%GROKGOD_HOME%\shim\grok-shim.ps1" (
+    set "GROKGOD_SHIM_PATH=%GROKGOD_HOME%\shim\grok-shim.ps1"
+    goto shim_ready
+)
+if exist "%USERPROFILE%\.grokgod\shim\grok-shim.ps1" (
+    set "GROKGOD_SHIM_PATH=%USERPROFILE%\.grokgod\shim\grok-shim.ps1"
+    goto shim_ready
+)
+if exist "%GROKGOD_SHIM_DIR%..\grokgod\src\shim\grok-shim.ps1" (
+    set "GROKGOD_SHIM_PATH=%GROKGOD_SHIM_DIR%..\grokgod\src\shim\grok-shim.ps1"
+    goto shim_ready
+)
+if exist "%USERPROFILE%\.grokgod\src\shim\grok-shim.ps1" (
+    set "GROKGOD_SHIM_PATH=%USERPROFILE%\.grokgod\src\shim\grok-shim.ps1"
+    goto shim_ready
+)
+if exist "%USERPROFILE%\.grokgod\grok-shim.ps1" (
+    set "GROKGOD_SHIM_PATH=%USERPROFILE%\.grokgod\grok-shim.ps1"
+    goto shim_ready
+)
+set "GROKGOD_SHIM_PATH=grok-shim.ps1"
+:shim_ready
 
+rem --- PowerShell 7 prerequisite: locate and verify a runnable pwsh.exe ---
 set "POWERSHELL_EXE="
-pwsh.exe -NoProfile -Command "exit 0" >nul 2>&1
-if errorlevel 1 goto try_powershell
-set "POWERSHELL_EXE=pwsh.exe"
-goto powershell_ready
+set "PS7_STAGE=override"
+:ps7_next
+if "%PS7_STAGE%"=="override" goto ps7_stage_override
+if "%PS7_STAGE%"=="baked" goto ps7_stage_baked
+if "%PS7_STAGE%"=="pf64" goto ps7_stage_pf64
+if "%PS7_STAGE%"=="pf86" goto ps7_stage_pf86
+goto ps7_stage_path
 
-:try_powershell
-powershell.exe -NoProfile -Command "exit 0" >nul 2>&1
-if errorlevel 1 goto powershell_unavailable
-set "POWERSHELL_EXE=powershell.exe"
-goto powershell_ready
+:ps7_stage_override
+set "PS7_STAGE=baked"
+if defined GROKGOD_POWERSHELL set "POWERSHELL_EXE=%GROKGOD_POWERSHELL%"
+if defined POWERSHELL_EXE goto ps7_verify
+goto ps7_next
 
-:powershell_unavailable
->&2 echo grokgod: no runnable PowerShell engine found (pwsh.exe or powershell.exe)
+:ps7_stage_baked
+set "PS7_STAGE=pf64"
+if defined GROKGOD_POWERSHELL_BAKED set "POWERSHELL_EXE=%GROKGOD_POWERSHELL_BAKED%"
+if defined POWERSHELL_EXE goto ps7_verify
+goto ps7_next
+
+:ps7_stage_pf64
+set "PS7_STAGE=pf86"
+if exist "%ProgramFiles%\PowerShell\7\pwsh.exe" set "POWERSHELL_EXE=%ProgramFiles%\PowerShell\7\pwsh.exe"
+if defined POWERSHELL_EXE goto ps7_verify
+goto ps7_next
+
+:ps7_stage_pf86
+set "PS7_STAGE=path"
+if exist "%ProgramFiles(x86)%\PowerShell\7\pwsh.exe" set "POWERSHELL_EXE=%ProgramFiles(x86)%\PowerShell\7\pwsh.exe"
+if defined POWERSHELL_EXE goto ps7_verify
+goto ps7_next
+
+:ps7_stage_path
+set "PS7_FOUND="
+for /f "usebackq delims=" %%W in (`%SystemRoot%\System32\where.exe pwsh.exe 2^>nul`) do (
+    if not defined PS7_FOUND call :ps7_try_candidate "%%W"
+)
+if defined POWERSHELL_EXE goto ps7_ready
+goto ps7_unavailable
+
+:ps7_verify
+"%POWERSHELL_EXE%" -NoProfile -Command "if ($PSVersionTable.PSVersion.Major -ge 7) { exit 0 } exit 1" >nul 2>nul
+if not errorlevel 1 goto ps7_ready
+rem Candidate failed verification; continue enumeration from the next stage.
+set "POWERSHELL_EXE="
+goto ps7_next
+
+:ps7_try_candidate
+rem %1 = quoted candidate path from the where.exe enumeration. A
+rem subroutine is used so the candidate variable expands per call instead
+rem of at parenthesized-block parse time.
+set "POWERSHELL_EXE=%~1"
+"%POWERSHELL_EXE%" -NoProfile -Command "if ($PSVersionTable.PSVersion.Major -ge 7) { exit 0 } exit 1" >nul 2>nul
+if not errorlevel 1 (set "PS7_FOUND=1") else (set "POWERSHELL_EXE=")
+exit /b 0
+
+:ps7_unavailable
+>&2 echo grokgod: PowerShell 7+ is required but no runnable pwsh.exe was found.
+>&2 echo grokgod: install it with: winget install --id Microsoft.PowerShell -e
+>&2 echo grokgod: then re-run this command.
 exit /b 127
 
-:powershell_ready
+:ps7_ready
 
+rem Argument transport: DisableDelayedExpansion (set above) preserves "!" in
+rem user tokens; %* is forwarded directly to pwsh -File. Callers that spawn
+rem this launcher through cmd.exe /d /s /c must apply CRT quote/backslash
+rem encoding and then twice CMD-metachar escaping with
+rem windowsVerbatimArguments (see tests/shim/launcher_fixture_driver.js).
 "%POWERSHELL_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%GROKGOD_SHIM_PATH%" grokgod %*
 exit /b %ERRORLEVEL%

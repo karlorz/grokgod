@@ -36,7 +36,7 @@ const STRIP_HEADER_BEGIN = '#@build:strip-header';
 const STRIP_HEADER_END = '#@build:end-header';
 const FUNCTION_NAME_MARKER = '{{GROKGOD:functionName}}';
 const SHARED_INCLUDE_RE =
-  /\{\{GROKGOD:shared\/([A-Za-z0-9._-]+)#([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
+  /\{\{GROKGOD:shared\/([A-Za-z0-9._-]+)#([A-Za-z_][A-Za-z0-9_-]*)\}\}/g;
 const PS_PROBE_MARKER = '{{GROKGOD:ps-engine-probe.cmd}}';
 
 /**

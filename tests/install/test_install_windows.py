@@ -65,13 +65,15 @@ def main():
     with open(INSTALL_PS1, "r", encoding="utf-8") as f:
         src = f.read()
 
-    # 1. Compatibility & Strict Mode
-    check("#Requires -Version 5.1" in src, "Declares #Requires -Version 5.1")
+    # 1. Engine syntax floor & Strict Mode (PS5.1 parse floor is deliberate:
+    # the installer may be INVOKED from 5.1 for bootstrap-only relaunch into
+    # PS7; every mutation path sits behind the runtime PS7 gate)
+    check("#Requires -Version 5.1" in src, "Declares #Requires -Version 5.1 so the 5.1 bootstrap entry can parse")
     check("Set-StrictMode -Version Latest" in src, "Enforces strict mode")
     has_ternary = re.search(r'(\$\w+\s*\?\s*[^:]+\s*:\s*[^;\r\n]+)', src)
     has_null_coalesce = re.search(r'\?\?', src)
-    check(not has_ternary, "No PowerShell 7 ternary operator (?:) used (PS 5.1 compat)")
-    check(not has_null_coalesce, "No PowerShell 7 null-coalescing operator (??) used (PS 5.1 compat)")
+    check(not has_ternary, "No PowerShell 7 ternary operator (?:) used (portable syntax floor)")
+    check(not has_null_coalesce, "No PowerShell 7 null-coalescing operator (??) used (portable syntax floor)")
 
     # 2. Safe Console output / mojibake prevention
     check("OutputEncoding" in src, "Configures Console OutputEncoding safely")
@@ -90,6 +92,33 @@ def main():
         check("$Finalize" in pblock, "Param $Finalize present")
         check("$FinalizeBaseUrl" in pblock, "Param $FinalizeBaseUrl present")
         check("$FinalizeTag" in pblock, "Param $FinalizeTag present")
+        check("$InstallPowerShell7" in pblock, "Param $InstallPowerShell7 present (explicit PS7 setup helper)")
+        check("$Apply" in pblock, "Param $Apply present (consent gate for the helper)")
+        check("$SetWindowsTerminalProfile" not in pblock, "No Windows Terminal mutation param (manual guidance route only)")
+
+    # 3b. PowerShell 7 prerequisite gate (hard requirement, no PS5.1 fallback)
+    check("This script requires PowerShell 7 or newer" in src, "Gate states the PS7 prerequisite")
+    helper_dispatch_pos = src.find("if ($InstallPowerShell7) {")
+    gate_pos = src.find("if ($PSVersionTable.PSVersion.Major -lt 7) {")
+    check(-1 < helper_dispatch_pos < gate_pos,
+          "Setup helper dispatch runs BEFORE the version gate (usable from PS5.1)")
+    check("$PSBoundParameters.Keys" in src,
+          "PS<7 relaunch relays bound named parameters (not just $args)")
+    check("ConvertTo-GrokgodNativeArg" in src,
+          "Relaunch tokens are CommandLineToArgvW-quoted (spaced prefixes survive)")
+    check("has no script file" in src and "$PSCommandPath" in src,
+          "irm|iex sessions get explicit guidance instead of an empty -File launch")
+    check("exit $relaunch.ExitCode" in src, "Relaunched child exit code propagates")
+    check("Write-GrokgodWindowsTerminalGuidance" in src,
+          "Installer prints manual Windows Terminal guidance")
+    check("PowerShell (pwsh.exe)" in src and "Windows PowerShell 5.1" in src,
+          "Windows Terminal guidance names pwsh.exe and rejects Windows PowerShell 5.1")
+    check('Join-Path $grokgodHome "bin\\grok.cmd"' not in src,
+          "Windows Terminal guidance does not invent a ~/.grokgod/bin launcher path")
+    check("Set-GrokgodWindowsTerminalProfile" not in src,
+          "No settings.json mutation helper")
+    check("GetCurrentProcess().MainModule.FileName" in src,
+          "Post-update finalize relaunches under the current verified PS7 engine")
 
     # 4. Architecture check: rejects ARM64 before any network access
     arch_pos = src.find("PROCESSOR_ARCHITECTURE")
@@ -140,12 +169,46 @@ def main():
     check("Skipping binary/checksum download and candidate preflight" in fast_hit_src, "Fast-path success message names skipped verified work")
     check("Release-InstallLock" in fast_hit_src and "exit 0" in fast_hit_src, "Fast-path hit releases lock and exits successfully")
 
-    # 8. Candidate Preflight Verification
+    # 8. Candidate Preflight Verification (fail-closed, deadline-bounded)
     preflight_pos = src.find("--version")
     move_pos = src.find("Move-Item -LiteralPath $CandidateSibling -Destination $TargetExe")
     check(preflight_pos != -1, "Runs candidate --version")
     check(preflight_pos < move_pos, "Candidate preflight runs BEFORE live target mutation")
     check("Preflight verified candidate binary" in src, "Reports preflight verification success")
+    check("$preflightTotalMs = 5000" in src, "Preflight has one total 5000ms budget covering wait + drains + cleanup")
+    check("Stop-GrokgodOwnedProcessTree" in src, "Preflight kill uses the bounded owned-process cleanup helper")
+    check("Wait(250)" not in src, "No unconditional 250ms drain wait outside the remaining budget")
+    check("function Get-GrokgodPwshVersion" in src, "Installer embeds canonical Get-GrokgodPwshVersion")
+    check("GrokgodProbeStdio" in src,
+          "Shared PS7 version probe clears stdio inherit flags around Process.Start")
+    check("function Resolve-GrokgodPwsh" in src, "Installer embeds canonical Resolve-GrokgodPwsh")
+    check("Get-VerifiedPwsh7Path" not in src, "Installer does not keep a duplicated Get-VerifiedPwsh7Path")
+    preflight_budget_pos = src.find("$preflightWaitMs = 4500")
+    preflight_watch_pos = src.find("Stopwatch]::StartNew()", preflight_budget_pos)
+    preflight_start_pos = src.find("Start-GrokgodJobGatedProcess $psi", preflight_budget_pos)
+    check(-1 < preflight_watch_pos < preflight_start_pos,
+          "Preflight stopwatch starts before Process.Start")
+    check("warning: failed to restore stdio inherit flag" in src,
+          "Installer inherit helper warns on SetHandleInformation restore failure like the shim")
+    check("JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE" in src,
+          "Preflight uses a kill-on-close job so exited-root descendants are reaped")
+    check("Kill(true)" not in src, "Installer does not call Process.Kill(true) tree enumeration")
+    check("TerminateJobObject" not in src, "Installer does not TerminateJobObject as a kill fallback")
+    check("LauncherDirectory" in src, "Installer passes LauncherDirectory when generating cmd launchers")
+    check("CREATE_SUSPENDED" in src and "AssignProcessToJobObject" in src,
+          "Candidate is assigned to the job while still suspended")
+    check("Get-CimInstance" not in src, "Installer production code does not enumerate CIM processes")
+    check("& taskkill.exe" not in src, "No synchronous taskkill anywhere in the installer")
+    check("candidate exited 0 but produced no version output" in src,
+          "Preflight rejects an exit-0 candidate with an empty version line")
+    check("did not reach EOF within the remaining budget" in src,
+          "Preflight rejects a held-EOF stdout drain instead of accepting it")
+    check("$errDrained" in src and "-not $outDrained -or -not $errDrained" in src,
+          "Preflight fail-closes when either stdout or stderr drain is incomplete")
+    check("$whereBudgetMs = 5000" in src,
+          "where.exe enumeration uses one 5000ms remaining-budget, not 5000+1000+1000")
+    check("$psi.RedirectStandardInput = $true" in src,
+          "Installer probes redirect child stdin and close it for immediate EOF")
 
     # 9. Sibling Staging & Rollback Engine
     check("CandidateSibling" in src, "Stages candidate as sibling on destination volume")
@@ -297,7 +360,8 @@ def main():
         check("currently running or locked" in install_test_src, "Native install test verifies locked executable fail-closed policy")
         check("Installed updater succeeds with hidden checkout" in install_test_src, "Native install test verifies updater self-containment with hidden checkout")
         check(install_test_src.count("$mockDailyMinimalHash *daily-minimal.md") >= 4, "Native install test keeps daily-minimal.md in initial and rewritten SHA256SUMS")
-        check("HostShell" in install_test_src and "PSEdition" in install_test_src, "Native install test aligns child runner with host PSEdition")
+        check("HostShell" in install_test_src and "pwsh.exe" in install_test_src, "Native install test child runner is pwsh.exe only (PS7 host required)")
+        check("powershell.exe" in install_test_src and "-InstallPowerShell7" in install_test_src, "Native install test keeps only the narrow powershell.exe gate/bootstrap tests")
         check('$serverPsi.FileName = $HostShell' in install_test_src, "Native install test launches mock server with HostShell")
         check("Combined" in install_test_src, "Native install test uses combined output for robust stderr matching")
         check("request.log" in install_test_src, "Native install test records mock HTTP requests")
@@ -318,6 +382,39 @@ def main():
         check(test_13_count == 1, f"Native install test contains exactly one Test 13 heading (found {test_13_count})")
         check("Test 12: Post-Update Convergence" in install_test_src, "Native install test includes Test 12 for post-update convergence")
         check("Test 13: Suggested config profile content-filter table-scoped merge" in install_test_src, "Native install test includes Test 13 for table-scoped scalar merging")
+        check("Test 14: Full-launcher process fixtures" in install_test_src, "Native install test includes Test 14 for full-launcher process fixtures")
+        test_14_count = len(re.findall(r'Write-Host\s+"Test 14:', install_test_src))
+        check(test_14_count == 1, f"Native install test contains exactly one Test 14 heading (found {test_14_count})")
+        check("Test 15b: Bounded candidate preflight (held-eof stdout)" in install_test_src,
+              "Native install test covers preflight held-eof stdout descendant")
+        check("Test 15c: Bounded candidate preflight (held-stderr-eof)" in install_test_src,
+              "Native install test covers preflight held-stderr-eof descendant")
+        check("Preflight held-eof: no live mutation / no promotion" in install_test_src,
+              "Native install held-eof asserts no promotion")
+        check("ReadToEndAsync" in install_test_src and "TimeoutMs" in install_test_src,
+              "Invoke-InstallerProcess drains concurrently with a whole-caller timeout")
+        check("grokgod\\bin\\grokgod.exe" in install_test_src,
+              "Native install Test 16 asserts Prefix\\grokgod\\bin\\grokgod.exe")
+        check("Get-LoggedMockPids" in install_test_src and "Get-AliveLoggedMockProcesses" in install_test_src,
+              "Native install preflight survivor checks use recorded mock PIDs")
+        check("@(Get-AliveLoggedMockProcesses).Count" in install_test_src,
+              "Alive-PID collection is wrapped so StrictMode empty returns have Count")
+        check("return $alive.ToArray()" in install_test_src and "return ,$alive.ToArray()" not in install_test_src,
+              "Alive-PID helper returns a plain ToArray() without a unary comma wrap")
+        check("Plain ToArray empty + @() Count is 0" in install_test_src,
+              "Native install proves empty/one/multiple @() Count on plain ToArray()")
+        check('Join-Path $targetBin "grok.cmd"' in install_test_src,
+              "Test 14 uses the installed Prefix\\bin\\grok.cmd")
+        check('"GROKGOD_SHIM_PATH" = $installedShimForFixture' not in install_test_src,
+              "Test 14 does not override GROKGOD_SHIM_PATH")
+        check("GROKGOD_MOCK_MODE" in install_test_src, "Native install mock exe selects fixture modes via environment")
+        for mode_fragment in ('"echo"', '"protocol"', '"hang"', '"noisy-stderr"',
+                              '"held-eof"', '"held-stderr-eof"', '"failure"',
+                              '"fixture-hold-pipe"'):
+            check(mode_fragment in install_test_src, f"Native install mock exe implements mode {mode_fragment}")
+        check("launcher_fixture_driver.js" in install_test_src, "Native install test reuses the shared launcher fixture driver")
+        check("New-GrokgodLauncherScript" in install_test_src, "Native install test generates launchers from installed LauncherHelpers")
+        check("Get-InstallFixtureProcesses" in install_test_src, "Native install test records fixture process ownership")
         check("Missing content-filter defaults action to retry_then_error" in install_test_src, "Native install test asserts missing section seeds retry_then_error action")
         check("Missing content-filter defaults max_retries to 3" in install_test_src, "Native install test asserts missing section seeds max_retries 3")
         check("Config contains exactly one [compat.content_filter] section" in install_test_src, "Native install test asserts exactly one content-filter section added")
@@ -340,7 +437,7 @@ def main():
         with open(NATIVE_SHIM_TEST, "r", encoding="utf-8") as f:
             shim_test_src = f.read()
         check("grokgod test ünicode" in shim_test_src, "Native shim test uses fixture path with spaces and Unicode")
-        check("hostShell" in shim_test_src and "PSEdition" in shim_test_src, "Native shim test aligns child runner with host PSEdition")
+        check("$pwshExe = if ($verifiedPwsh)" in shim_test_src and "This suite requires PowerShell 7" in shim_test_src, "Native shim test requires a PS7 host and verified pwsh child runner")
 
     # 28. Suggested Profile & Skip-Download Runtime Convergence
     check("Merge-PlanModeConfig" in src, "Defines Merge-PlanModeConfig")

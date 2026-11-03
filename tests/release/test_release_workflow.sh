@@ -254,7 +254,7 @@ windows_job = content.index("  test-windows:")
 checkout = content.index("      - name: Checkout", windows_job)
 byte_check = content.index("      - name: Verify patch files use LF bytes", checkout)
 native_tests = content.index(
-    "      - name: Run Windows Dispatcher and Installer Suites (Windows PowerShell 5.1)",
+    "      - name: Run Windows Dispatcher and Installer Suites (PowerShell 7)",
     byte_check,
 )
 assert checkout < byte_check < native_tests, "Windows patch-byte verification must run immediately after checkout"
