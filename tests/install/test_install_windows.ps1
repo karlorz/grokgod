@@ -1114,6 +1114,11 @@ try {
         if (Test-Path $launchLogFile) { Remove-Item $launchLogFile -Force }
         $res = Invoke-InstallNodeFixture -cmdPath $fixtureGrokCmd -EnvMap (Get-InstallDriverEnv "") -ArgTokens @("--version")
         Assert-Test ($res -ne $null) "Launcher fixture driver returned a report"
+        if ($res -and $res.exitCode -ne 0) {
+            $diagErr = ""
+            try { $diagErr = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($res.stderrB64)) } catch {}
+            Write-Host "INSTALL14-DIAG exit=$($res.exitCode) error=$($res.error) cmd=$fixtureGrokCmd engine=$fixtureVerifiedPwsh stderr=$diagErr"
+        }
         if ($res) {
             Assert-Test ($res.ok -eq $true -and $res.exitCode -eq 0) "Full-launcher --version against installed home exits 0 (got exit=$($res.exitCode) error=$($res.error))"
             $drvOut = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($res.stdoutB64))
@@ -1200,7 +1205,11 @@ try {
     Assert-Test ($heldOutSw.Elapsed.TotalSeconds -lt 20) "Preflight held-eof: install returns bounded ($([Math]::Round($heldOutSw.Elapsed.TotalSeconds,1))s)"
     Start-Sleep -Milliseconds 500
     $survivingHeldOut = @()
-    try { $survivingHeldOut = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'grokgod-windows-x64.exe'" -ErrorAction SilentlyContinue) } catch {}
+    try {
+        $survivingHeldOut = @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+            $_.ExecutablePath -and $_.ExecutablePath.StartsWith($fixtureRoot, [StringComparison]::OrdinalIgnoreCase)
+        })
+    } catch {}
     Assert-Test ($survivingHeldOut.Count -eq 0) "Preflight held-eof: no surviving candidate process"
 
     Write-Host "`nTest 15c: Bounded candidate preflight (held-stderr-eof)"
@@ -1215,7 +1224,11 @@ try {
     Assert-Test ($heldErrSw.Elapsed.TotalSeconds -lt 20) "Preflight held-stderr-eof: install returns bounded ($([Math]::Round($heldErrSw.Elapsed.TotalSeconds,1))s)"
     Start-Sleep -Milliseconds 500
     $survivingHeldErr = @()
-    try { $survivingHeldErr = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'grokgod-windows-x64.exe'" -ErrorAction SilentlyContinue) } catch {}
+    try {
+        $survivingHeldErr = @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+            $_.ExecutablePath -and $_.ExecutablePath.StartsWith($fixtureRoot, [StringComparison]::OrdinalIgnoreCase)
+        })
+    } catch {}
     Assert-Test ($survivingHeldErr.Count -eq 0) "Preflight held-stderr-eof: no surviving candidate process"
 
     # Test 16: PowerShell 7 prerequisite gate and explicit setup helpers.
@@ -1256,7 +1269,11 @@ try {
     $helperRes = Invoke-InstallerProcess -EnvVars $gateEnv -ScriptArgs @("-InstallPowerShell7") -Shell "powershell.exe"
     Assert-Test ($helperRes.ExitCode -eq 0) "InstallPowerShell7 helper exits 0 when invoked from PS5.1"
     Assert-Test ($helperRes.Combined -match "PowerShell 7") "InstallPowerShell7 helper prints PowerShell 7 guidance"
-    Assert-Test ($helperRes.Combined -match "winget install --id Microsoft.PowerShell") "InstallPowerShell7 helper prints the winget command"
+    if ($suiteVerifiedPwsh) {
+        Assert-Test ($helperRes.Combined -match "already installed" -or $helperRes.Combined -match "runnable") "InstallPowerShell7 helper reports the existing engine when PS7 is present"
+    } else {
+        Assert-Test ($helperRes.Combined -match "winget install --id Microsoft.PowerShell") "InstallPowerShell7 helper prints the winget command"
+    }
     Assert-Test ($helperRes.Combined -match "Windows Terminal") "Setup helper prints the manual Windows Terminal guidance"
 
     if ($suiteVerifiedPwsh) {

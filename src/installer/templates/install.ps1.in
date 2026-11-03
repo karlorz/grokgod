@@ -197,6 +197,19 @@ function Stop-GrokgodOwnedProcessTree([System.Diagnostics.Process]$proc, [System
         if ($remain -gt 0) {
             try { [void]$proc.WaitForExit($remain) } catch {}
         }
+        # Owned-by-path: after the root exits, /T on a dead PID may not
+        # reap reparented descendants. Kill remaining processes whose
+        # ExecutablePath is the candidate we started (not a global name).
+        $ownedPath = $null
+        try { $ownedPath = [string]$proc.StartInfo.FileName } catch { $ownedPath = $null }
+        if ($ownedPath) {
+            $wql = $ownedPath.Replace('\', '\\').Replace("'", "''")
+            try {
+                Get-CimInstance -ClassName Win32_Process -Filter "ExecutablePath = '$wql'" -ErrorAction SilentlyContinue | ForEach-Object {
+                    try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+                }
+            } catch {}
+        }
     } catch {}
 }
 
@@ -297,8 +310,15 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
         }
         $relaunchTokens += $args
         $relaunchLine = ($relaunchTokens | ForEach-Object { ConvertTo-GrokgodNativeArg $_ }) -join ' '
-        $relaunch = Start-Process -FilePath $verifiedPwsh -ArgumentList $relaunchLine -Wait -PassThru
-        exit $relaunch.ExitCode
+        $relaunchPsi = New-Object System.Diagnostics.ProcessStartInfo
+        $relaunchPsi.FileName = $verifiedPwsh
+        $relaunchPsi.Arguments = $relaunchLine
+        $relaunchPsi.UseShellExecute = $false
+        $relaunchProc = [System.Diagnostics.Process]::Start($relaunchPsi)
+        $relaunchProc.WaitForExit()
+        $relaunchCode = $relaunchProc.ExitCode
+        try { $relaunchProc.Dispose() } catch {}
+        exit $relaunchCode
     }
     Write-Host "  Install PowerShell 7 (requires an elevated prompt), then re-run this script:"
     Write-Host "    winget install --id Microsoft.PowerShell -e"

@@ -108,7 +108,7 @@ def main():
           "Relaunch tokens are CommandLineToArgvW-quoted (spaced prefixes survive)")
     check("has no script file" in src and "$PSCommandPath" in src,
           "irm|iex sessions get explicit guidance instead of an empty -File launch")
-    check("exit $relaunch.ExitCode" in src, "Relaunched child exit code propagates")
+    check("exit $relaunchCode" in src, "Relaunched child exit code propagates")
     check("Write-GrokgodWindowsTerminalGuidance" in src,
           "Installer prints manual Windows Terminal guidance")
     check("Set-GrokgodWindowsTerminalProfile" not in src,
