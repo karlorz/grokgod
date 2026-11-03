@@ -260,6 +260,8 @@ def main():
           "Probe wait is the intended 3000ms capped by remaining total budget")
     check("function Stop-OwnedProbeProcess" in shim_src,
           "Probe terminates only owned process via Stop-OwnedProbeProcess")
+    check("/T /F /PID $ownedPid" in shim_src,
+          "Probe tree kill uses the recorded PID even after the root has exited")
     check("'taskkill.exe'" in shim_src and "/T /F /PID" in shim_src,
           "Probe terminates the owned process tree via taskkill /T rooted at the probe PID")
     check("& taskkill.exe" not in shim_src,

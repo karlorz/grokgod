@@ -550,24 +550,23 @@ function Test-MachineProtocolLaunch([string[]]$argsList) {
 #     through the normal contract (version unknown -> $null).
 function Stop-OwnedProbeProcess([System.Diagnostics.Process]$proc, [int]$cleanupBudgetMs) {
     if (-not $proc) { return }
+    $ownedPid = 0
+    try { $ownedPid = $proc.Id } catch { $ownedPid = 0 }
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
     try {
-        if (-not $proc.HasExited) {
-            # Supervised tree kill: taskkill is an owned child bounded by the
-            # remaining cleanup budget, never a synchronous & invocation.
+        # Always /T the recorded PID. The probe root may already have
+        # exited while a descendant still holds redirected pipes.
+        if ($ownedPid -gt 0) {
             $tk = $null
             try {
                 $tpsi = New-Object System.Diagnostics.ProcessStartInfo
                 $tpsi.FileName = 'taskkill.exe'
-                $tpsi.Arguments = "/T /F /PID $($proc.Id)"
+                $tpsi.Arguments = "/T /F /PID $ownedPid"
                 $tpsi.UseShellExecute = $false
                 $tpsi.CreateNoWindow = $true
                 $tpsi.RedirectStandardOutput = $true
                 $tpsi.RedirectStandardError = $true
                 $tk = Start-GrokgodIsolatedProcess $tpsi
-                # Fire-and-forget drains keep the helper's pipes from
-                # blocking it; their content is never used, so nothing here
-                # waits on them past the supervised WaitForExit above.
                 [void]$tk.StandardOutput.ReadToEndAsync()
                 [void]$tk.StandardError.ReadToEndAsync()
                 $remain = $cleanupBudgetMs - [int]$watch.ElapsedMilliseconds
@@ -577,8 +576,6 @@ function Stop-OwnedProbeProcess([System.Diagnostics.Process]$proc, [int]$cleanup
                     try { $tk.Kill() } catch {}
                 }
             } catch {
-                # taskkill unavailable or failed to start: the direct
-                # owned-PID kill below is the fallback.
             } finally {
                 if ($tk) {
                     try { if (-not $tk.HasExited) { $tk.Kill() } } catch {}
@@ -658,7 +655,12 @@ function Get-BinaryReportedVersion([string]$exePath) {
         if ($drainMs -lt 0) { $drainMs = 0 }
         $errDrained = $false
         try { $errDrained = $stderrTask.Wait($drainMs) -and -not $stderrTask.IsFaulted -and -not $stderrTask.IsCanceled } catch { $errDrained = $false }
-        if (-not $outDrained -or -not $errDrained) { return $null }
+        if (-not $outDrained -or -not $errDrained) {
+            $remain = $totalBudgetMs - [int]$watch.ElapsedMilliseconds
+            if ($remain -lt 0) { $remain = 0 }
+            Stop-OwnedProbeProcess -proc $proc -cleanupBudgetMs $remain
+            return $null
+        }
         if ($proc.ExitCode -eq 0 -and $outText -ne $null) {
             $line = ($outText -split "[\r\n]+") | Where-Object { $_ -match '\S' } | Select-Object -First 1
             if ($line) { return $line.Trim() }

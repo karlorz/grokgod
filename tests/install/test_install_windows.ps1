@@ -80,7 +80,7 @@ $HostShell = (Get-Command pwsh.exe -ErrorAction Stop).Source
 Write-Host "Host PowerShell Edition: $($PSVersionTable.PSEdition) ($($PSVersionTable.PSVersion))"
 Write-Host "Child Process Engine:    $HostShell"
 
-function Invoke-InstallerProcess([hashtable]$EnvVars, [string[]]$ScriptArgs, [string]$ScriptPath = "", [string]$Shell = "") {
+function Invoke-InstallerProcess([hashtable]$EnvVars, [string[]]$ScriptArgs, [string]$ScriptPath = "", [string]$Shell = "", [int]$TimeoutMs = 180000) {
     $pwsh = if ($Shell) { $Shell } else { $script:HostShell }
     $targetScript = if ($ScriptPath) { $ScriptPath } else { $InstallScriptPath }
     $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -109,18 +109,52 @@ function Invoke-InstallerProcess([hashtable]$EnvVars, [string[]]$ScriptArgs, [st
         $psi.EnvironmentVariables[$k] = [string]$EnvVars[$k]
     }
 
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $proc = [System.Diagnostics.Process]::Start($psi)
-    $stdout = $proc.StandardOutput.ReadToEnd()
-    $stderr = $proc.StandardError.ReadToEnd()
-    $proc.WaitForExit()
-
+    $outTask = $proc.StandardOutput.ReadToEndAsync()
+    $errTask = $proc.StandardError.ReadToEndAsync()
+    $exited = $proc.WaitForExit($TimeoutMs)
+    if (-not $exited) {
+        try { & taskkill.exe /T /F /PID $proc.Id 2>$null | Out-Null } catch {}
+        try { $proc.Kill() } catch {}
+    }
+    $drainMs = $TimeoutMs - [int]$sw.ElapsedMilliseconds
+    if ($drainMs -lt 0) { $drainMs = 0 }
+    $outDone = $false
+    try { $outDone = $outTask.Wait($drainMs) } catch { $outDone = $false }
+    $drainMs = $TimeoutMs - [int]$sw.ElapsedMilliseconds
+    if ($drainMs -lt 0) { $drainMs = 0 }
+    $errDone = $false
+    try { $errDone = $errTask.Wait($drainMs) } catch { $errDone = $false }
+    if (-not $outDone -or -not $errDone) {
+        try { & taskkill.exe /T /F /PID $proc.Id 2>$null | Out-Null } catch {}
+        $drainMs = $TimeoutMs - [int]$sw.ElapsedMilliseconds
+        if ($drainMs -lt 0) { $drainMs = 0 }
+        try { $outDone = $outTask.Wait($drainMs) } catch {}
+        $drainMs = $TimeoutMs - [int]$sw.ElapsedMilliseconds
+        if ($drainMs -lt 0) { $drainMs = 0 }
+        try { $errDone = $errTask.Wait($drainMs) } catch {}
+    }
+    $stdout = ""
+    if ($outDone -and -not $outTask.IsFaulted -and -not $outTask.IsCanceled) { $stdout = [string]$outTask.Result }
+    $stderr = ""
+    if ($errDone -and -not $errTask.IsFaulted -and -not $errTask.IsCanceled) { $stderr = [string]$errTask.Result }
+    $exitCode = $null
+    try { if ($proc.HasExited) { $exitCode = $proc.ExitCode } } catch {}
+    try { $proc.StandardOutput.Dispose() } catch {}
+    try { $proc.StandardError.Dispose() } catch {}
+    try { $proc.Dispose() } catch {}
+    $sw.Stop()
     $combined = ($stdout + "`n" + $stderr).Trim()
 
     return [PSCustomObject]@{
-        ExitCode = $proc.ExitCode
+        ExitCode = $exitCode
         StdOut   = $stdout
         StdErr   = $stderr
         Combined = $combined
+        ElapsedMs = $sw.ElapsedMilliseconds
+        TimedOut = (-not $exited -or -not $outDone -or -not $errDone)
+        DrainComplete = ($outDone -and $errDone)
     }
 }
 
@@ -1138,7 +1172,7 @@ try {
     $hangPrefix = Join-Path $fixtureRoot "hang_prefix"
     New-Item -ItemType Directory -Force -Path $hangPrefix | Out-Null
     $hangSw = [System.Diagnostics.Stopwatch]::StartNew()
-    $resHang = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile; "GROKGOD_MOCK_MODE" = "hang" } -ScriptArgs @("-Prefix", $hangPrefix)
+    $resHang = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile; "GROKGOD_MOCK_MODE" = "hang" } -ScriptArgs @("-Prefix", $hangPrefix) -TimeoutMs 25000
     $hangSw.Stop()
     Assert-Test ($resHang.ExitCode -ne 0) "Preflight hang: installer fails closed"
     Assert-Test ($resHang.Combined -match 'Preflight timed out') "Preflight hang: bounded timeout is reported"
@@ -1158,7 +1192,7 @@ try {
     $heldOutPrefix = Join-Path $fixtureRoot "held_eof_prefix"
     New-Item -ItemType Directory -Force -Path $heldOutPrefix | Out-Null
     $heldOutSw = [System.Diagnostics.Stopwatch]::StartNew()
-    $resHeldOut = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile; "GROKGOD_MOCK_MODE" = "held-eof" } -ScriptArgs @("-Prefix", $heldOutPrefix)
+    $resHeldOut = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile; "GROKGOD_MOCK_MODE" = "held-eof" } -ScriptArgs @("-Prefix", $heldOutPrefix) -TimeoutMs 25000
     $heldOutSw.Stop()
     Assert-Test ($resHeldOut.ExitCode -ne 0) "Preflight held-eof: installer fails closed"
     Assert-Test ($resHeldOut.Combined -match 'did not reach EOF') "Preflight held-eof: held pipe is reported"
@@ -1173,7 +1207,7 @@ try {
     $heldErrPrefix = Join-Path $fixtureRoot "held_stderr_prefix"
     New-Item -ItemType Directory -Force -Path $heldErrPrefix | Out-Null
     $heldErrSw = [System.Diagnostics.Stopwatch]::StartNew()
-    $resHeldErr = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile; "GROKGOD_MOCK_MODE" = "held-stderr-eof" } -ScriptArgs @("-Prefix", $heldErrPrefix)
+    $resHeldErr = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile; "GROKGOD_MOCK_MODE" = "held-stderr-eof" } -ScriptArgs @("-Prefix", $heldErrPrefix) -TimeoutMs 25000
     $heldErrSw.Stop()
     Assert-Test ($resHeldErr.ExitCode -ne 0) "Preflight held-stderr-eof: installer fails closed"
     Assert-Test ($resHeldErr.Combined -match 'did not reach EOF') "Preflight held-stderr-eof: held pipe is reported"

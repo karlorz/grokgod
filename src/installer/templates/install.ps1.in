@@ -105,9 +105,8 @@ function ConvertTo-GrokgodNativeArg {
 # descendant limit: taskkill /T reaches only descendants still attached to
 # the owned root; a detached/reparented grandchild can survive and is left
 # for the OS or the caller's watchdog.
-# Same inherit isolation as grok-shim.ps1: CreateProcess still inherits the
-# caller's original std handles unless HANDLE_FLAG_INHERIT is cleared.
-# Deduplicate GetStdHandle values (stdout and stderr may be one handle).
+# Standalone duplicate of grok-shim.ps1 inherit isolation (build.mjs
+# splices one named function per part). Restore failures warn like the shim.
 function Invoke-GrokgodChildWithoutInheritedStdio([scriptblock]$Block) {
     if (-not ('GrokgodHandleInfo' -as [type])) {
         Add-Type -TypeDefinition @"
@@ -142,7 +141,9 @@ public static class GrokgodHandleInfo {
     } finally {
         foreach ($item in $saved) {
             $bit = $item.Flags -band [GrokgodHandleInfo]::HANDLE_FLAG_INHERIT
-            [void][GrokgodHandleInfo]::SetHandleInformation($item.Handle, [GrokgodHandleInfo]::HANDLE_FLAG_INHERIT, $bit)
+            if (-not [GrokgodHandleInfo]::SetHandleInformation($item.Handle, [GrokgodHandleInfo]::HANDLE_FLAG_INHERIT, $bit)) {
+                try { [Console]::Error.WriteLine("warning: failed to restore stdio inherit flag") } catch {}
+            }
         }
     }
 }
@@ -153,21 +154,24 @@ function Start-GrokgodIsolatedProcess([System.Diagnostics.ProcessStartInfo]$star
 
 function Stop-GrokgodOwnedProcessTree([System.Diagnostics.Process]$proc, [System.Diagnostics.Stopwatch]$watch, [int]$totalBudgetMs) {
     if (-not $proc) { return }
+    $ownedPid = 0
+    try { $ownedPid = $proc.Id } catch { $ownedPid = 0 }
     try {
-        if (-not $proc.HasExited) {
+        # Always tree-kill the recorded PID. The root may already have
+        # exited after printing --version while a descendant still holds
+        # the redirected pipes; skipping /T in that case leaves holders.
+        # If they reparented, taskkill fails and the caller watchdog binds.
+        if ($ownedPid -gt 0) {
             $tk = $null
             try {
                 $tpsi = New-Object System.Diagnostics.ProcessStartInfo
                 $tpsi.FileName = 'taskkill.exe'
-                $tpsi.Arguments = "/T /F /PID $($proc.Id)"
+                $tpsi.Arguments = "/T /F /PID $ownedPid"
                 $tpsi.UseShellExecute = $false
                 $tpsi.CreateNoWindow = $true
                 $tpsi.RedirectStandardOutput = $true
                 $tpsi.RedirectStandardError = $true
                 $tk = Start-GrokgodIsolatedProcess $tpsi
-                # Fire-and-forget drains keep the helper's pipes from
-                # blocking it; their content is never used, so nothing here
-                # waits on them past the supervised WaitForExit.
                 [void]$tk.StandardOutput.ReadToEndAsync()
                 [void]$tk.StandardError.ReadToEndAsync()
                 $remain = $totalBudgetMs - [int]$watch.ElapsedMilliseconds
@@ -177,8 +181,6 @@ function Stop-GrokgodOwnedProcessTree([System.Diagnostics.Process]$proc, [System
                     try { $tk.Kill() } catch {}
                 }
             } catch {
-                # taskkill unavailable or failed to start: direct owned-PID
-                # kill below is the fallback.
             } finally {
                 if ($tk) {
                     try { if (-not $tk.HasExited) { $tk.Kill() } } catch {}
@@ -1464,9 +1466,7 @@ try {
         $psi.UseShellExecute = $false
         $psi.CreateNoWindow = $true
 
-        $proc = New-Object System.Diagnostics.Process
-        $proc.StartInfo = $psi
-        Invoke-GrokgodChildWithoutInheritedStdio { [void]$proc.Start() }
+        $proc = Start-GrokgodIsolatedProcess $psi
         # Immediate EOF for the candidate: stdin is redirected and closed so
         # a candidate waiting on inherited input can never hold the preflight.
         try { $proc.StandardInput.Close() } catch {}
@@ -1505,9 +1505,11 @@ try {
         $exitCode = $null
         try { $exitCode = $proc.ExitCode } catch {}
         if ($exitCode -ne 0) {
+            Stop-GrokgodOwnedProcessTree -proc $proc -watch $watch -totalBudgetMs $preflightTotalMs
             throw "Preflight failed: candidate exited with code $exitCode. StdErr: $err"
         }
         if (-not $outDrained -or -not $errDrained) {
+            Stop-GrokgodOwnedProcessTree -proc $proc -watch $watch -totalBudgetMs $preflightTotalMs
             throw "Preflight failed: candidate stdout/stderr did not reach EOF within the remaining budget (held pipe); candidate rejected."
         }
         $candidateVer = ($out -split "[\r\n]+") | Where-Object { $_ -match '\S' } | Select-Object -First 1

@@ -179,9 +179,13 @@ def main():
     check("Get-VerifiedPwsh7Path" not in src, "Installer does not keep a duplicated Get-VerifiedPwsh7Path")
     preflight_budget_pos = src.find("$preflightWaitMs = 4500")
     preflight_watch_pos = src.find("Stopwatch]::StartNew()", preflight_budget_pos)
-    preflight_start_pos = src.find("[void]$proc.Start()", preflight_budget_pos)
+    preflight_start_pos = src.find("Start-GrokgodIsolatedProcess $psi", preflight_budget_pos)
     check(-1 < preflight_watch_pos < preflight_start_pos,
           "Preflight stopwatch starts before Process.Start")
+    check("warning: failed to restore stdio inherit flag" in src,
+          "Installer inherit helper warns on SetHandleInformation restore failure like the shim")
+    check('taskkill.exe' in src and "/T /F /PID $ownedPid" in src,
+          "Owned tree kill uses the recorded PID even after the root has exited")
     check("& taskkill.exe" not in src, "No synchronous taskkill anywhere in the installer")
     check("candidate exited 0 but produced no version output" in src,
           "Preflight rejects an exit-0 candidate with an empty version line")
@@ -375,6 +379,8 @@ def main():
               "Native install test covers preflight held-stderr-eof descendant")
         check("Preflight held-eof: no live mutation / no promotion" in install_test_src,
               "Native install held-eof asserts no promotion")
+        check("ReadToEndAsync" in install_test_src and "TimeoutMs" in install_test_src,
+              "Invoke-InstallerProcess drains concurrently with a whole-caller timeout")
         check("GROKGOD_MOCK_MODE" in install_test_src, "Native install mock exe selects fixture modes via environment")
         for mode_fragment in ('"echo"', '"protocol"', '"hang"', '"noisy-stderr"',
                               '"held-eof"', '"held-stderr-eof"', '"failure"',
