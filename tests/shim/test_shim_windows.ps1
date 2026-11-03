@@ -1034,6 +1034,7 @@ exit 0
         New-Item -ItemType Directory -Force -Path $guardBin, $guardShimDir | Out-Null
         $guardShim = Join-Path $guardShimDir "grok-shim.ps1"
         $guardLauncher = Join-Path $guardBin "grok.cmd"
+        Set-Content -LiteralPath $guardShim -Value 'Write-Output "BOUND-SHIM-OK"; exit 0' -Encoding UTF8
         $guardContent = New-GrokgodLauncherScript -Identity grok -ShimPath $guardShim -PwshPath $pwshExe -LauncherDirectory $guardBin
         Set-Content -LiteralPath $guardLauncher -Value $guardContent -Encoding ASCII
         $guardOnDisk = Get-Content -LiteralPath $guardLauncher -Raw
@@ -1076,6 +1077,7 @@ exit 0
             return [PSCustomObject]@{ ExitCode = $gCode; StdOut = $gOut; StdErr = $gErr }
         }
 
+        Remove-Item -LiteralPath $guardShim -Force
         $missing = Invoke-GuardLauncher $guardLauncher
         Assert-Condition ($missing.ExitCode -eq 64) "Bound-missing guard: missing bound shim exits 64 (got $($missing.ExitCode))"
         Assert-Condition ($missing.StdErr -match 'bound shim not found') "Bound-missing guard: missing bound shim prints actionable stderr"
