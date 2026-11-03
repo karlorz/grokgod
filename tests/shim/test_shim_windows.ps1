@@ -1552,7 +1552,7 @@ public class MockOldEngine {
             $stdEnv["ProgramFiles(x86)"] = $emptyPf86
         }
         $expectStdPwsh = Join-Path $pfRoot "PowerShell\7\pwsh.exe"
-        $res = Invoke-LauncherWithPath -cmdPath $discoveryLauncher -childPath $system32Only -ArgTokens @("--version") -ExtraEnv $stdEnv -WorkingDirectory $emptyPathDir
+        $res = Invoke-LauncherWithPath -cmdPath $discoveryLauncher -childPath $system32Only -ArgTokens @("--version") -ExtraEnv $stdEnv -WorkingDirectory $emptyPf64
         if (-not ($res.ExitCode -eq 0 -and $res.StdOut -match "grok 1\.0\.6")) {
             Write-Host "GROUP9-DIAG std: exit=$($res.ExitCode) verified=$verifiedPwsh pfRoot=$pfRoot expect=$expectStdPwsh exists=$(Test-Path -LiteralPath $expectStdPwsh)"
             Write-Host "GROUP9-DIAG std cwd=$($res.WorkingDirectory) PATH=$($res.ChildPath) W6432=$($res.EnvProgramW6432) where=$($res.WherePwsh)"
