@@ -37,7 +37,42 @@ function Get-GrokgodPwshVersion {
         $psi.RedirectStandardError = $true
         $psi.RedirectStandardInput = $true
         $psi.CreateNoWindow = $true
-        $proc = [System.Diagnostics.Process]::Start($psi)
+        if (-not ('GrokgodProbeStdio' -as [type])) {
+            Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class GrokgodProbeStdio {
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool SetHandleInformation(IntPtr hObject, uint dwMask, uint dwFlags);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool GetHandleInformation(IntPtr hObject, out uint lpdwFlags);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr GetStdHandle(int nStdHandle);
+    public const uint HANDLE_FLAG_INHERIT = 0x00000001;
+}
+"@
+        }
+        $savedStdio = New-Object System.Collections.Generic.List[object]
+        $seenStdio = @{}
+        foreach ($n in @(-10, -11, -12)) {
+            $h = [GrokgodProbeStdio]::GetStdHandle($n)
+            if ($h -eq [IntPtr]::Zero -or $h -eq [IntPtr]::new(-1)) { continue }
+            $key = $h.ToInt64()
+            if ($seenStdio.ContainsKey($key)) { continue }
+            $flags = [uint32]0
+            if (-not [GrokgodProbeStdio]::GetHandleInformation($h, [ref]$flags)) { continue }
+            if (-not [GrokgodProbeStdio]::SetHandleInformation($h, [GrokgodProbeStdio]::HANDLE_FLAG_INHERIT, 0)) { continue }
+            $seenStdio[$key] = $true
+            [void]$savedStdio.Add([pscustomobject]@{ Handle = $h; Flags = $flags })
+        }
+        try {
+            $proc = [System.Diagnostics.Process]::Start($psi)
+        } finally {
+            foreach ($item in $savedStdio) {
+                $bit = $item.Flags -band [GrokgodProbeStdio]::HANDLE_FLAG_INHERIT
+                [void][GrokgodProbeStdio]::SetHandleInformation($item.Handle, [GrokgodProbeStdio]::HANDLE_FLAG_INHERIT, $bit)
+            }
+        }
         # Immediate EOF for the candidate: stdin is redirected and closed so
         # a probe waiting on inherited input can never outlive its budget.
         try { $proc.StandardInput.Close() } catch {}
@@ -60,7 +95,10 @@ function Get-GrokgodPwshVersion {
         if ($drainMs -lt 0) { $drainMs = 0 }
         $errDrained = $false
         try { $errDrained = $errTask.Wait($drainMs) } catch { $errDrained = $false }
-        if (-not $outDrained -or -not $errDrained) { return $null }
+        if (-not $outDrained -or -not $errDrained) {
+            try { $proc.Kill() } catch {}
+            return $null
+        }
         if ($proc.ExitCode -ne 0) { return $null }
         $out = [string]$outTask.Result
         if (-not $out) { return $null }
@@ -186,23 +224,40 @@ function New-GrokgodLauncherScript {
     )
 
     $normalizedShim = $ShimPath.Trim()
+    if (-not (Test-Path -LiteralPath $normalizedShim)) {
+        throw "ShimPath '$normalizedShim' does not exist."
+    }
+    # ASCII ShimPath is bound into the launcher so an explicit caller path
+    # cannot be replaced by a different discovered grok-shim.ps1. Non-ASCII
+    # paths stay out of the ASCII .cmd file and are resolved at runtime via
+    # GROKGOD_SHIM_PATH / GROKGOD_HOME / %~dp0.
+    $shimBindLine = ""
+    if ($normalizedShim -notmatch '[^\x00-\x7F]') {
+        $shimBindLine = 'set "GROKGOD_SHIM_PATH=' + $normalizedShim + '"'
+    }
     $bakedLine = ""
     $trimmedPwsh = $PwshPath.Trim()
     if ($trimmedPwsh) {
         # Bake only a provably runnable engine. An arbitrary or stale path
         # here would ship a launcher that 127s on first use, so the same
         # verification the launcher applies at runtime is applied at
-        # generation time.
-        if (-not (Test-Path -LiteralPath $trimmedPwsh)) {
-            throw "PwshPath '$trimmedPwsh' does not exist. Resolve-GrokgodPwsh first, then pass its result."
+        # generation time. Non-ASCII engine paths stay out of the ASCII
+        # launcher file; discovery and GROKGOD_POWERSHELL cover those hosts.
+        if ($trimmedPwsh -match '[^\x00-\x7F]') {
+            $trimmedPwsh = ""
         }
-        $bakedVersion = Get-GrokgodPwshVersion -Path $trimmedPwsh
-        $bakedParsed = $null
-        try { $bakedParsed = [version]$bakedVersion } catch { $bakedParsed = $null }
-        if (-not $bakedParsed -or $bakedParsed.Major -lt 7) {
-            throw "PwshPath '$trimmedPwsh' is not a verified runnable PowerShell 7+ engine (probe returned '$bakedVersion')."
+        if ($trimmedPwsh) {
+            if (-not (Test-Path -LiteralPath $trimmedPwsh)) {
+                throw "PwshPath '$trimmedPwsh' does not exist. Resolve-GrokgodPwsh first, then pass its result."
+            }
+            $bakedVersion = Get-GrokgodPwshVersion -Path $trimmedPwsh
+            $bakedParsed = $null
+            try { $bakedParsed = [version]$bakedVersion } catch { $bakedParsed = $null }
+            if (-not $bakedParsed -or $bakedParsed.Major -lt 7) {
+                throw "PwshPath '$trimmedPwsh' is not a verified runnable PowerShell 7+ engine (probe returned '$bakedVersion')."
+            }
+            $bakedLine = 'set "GROKGOD_POWERSHELL_BAKED=' + $trimmedPwsh + '"'
         }
-        $bakedLine = 'set "GROKGOD_POWERSHELL_BAKED=' + $trimmedPwsh + '"'
     }
 
     # The probe block is raw cmd text containing $ and backtick characters;
@@ -283,6 +338,39 @@ exit /b 127
 rem grokgod thin launcher for Windows ($Identity) - requires PowerShell 7+
 setlocal DisableDelayedExpansion
 $bakedLine
+$shimBindLine
+if defined GROKGOD_SHIM_PATH if exist "%GROKGOD_SHIM_PATH%" goto shim_ready
+set "GROKGOD_SHIM_DIR=%~dp0"
+if exist "%GROKGOD_SHIM_DIR%grok-shim.ps1" (
+    set "GROKGOD_SHIM_PATH=%GROKGOD_SHIM_DIR%grok-shim.ps1"
+    goto shim_ready
+)
+if exist "%GROKGOD_SHIM_DIR%..\grokgod\shim\grok-shim.ps1" (
+    set "GROKGOD_SHIM_PATH=%GROKGOD_SHIM_DIR%..\grokgod\shim\grok-shim.ps1"
+    goto shim_ready
+)
+if defined GROKGOD_HOME if exist "%GROKGOD_HOME%\shim\grok-shim.ps1" (
+    set "GROKGOD_SHIM_PATH=%GROKGOD_HOME%\shim\grok-shim.ps1"
+    goto shim_ready
+)
+if exist "%USERPROFILE%\.grokgod\shim\grok-shim.ps1" (
+    set "GROKGOD_SHIM_PATH=%USERPROFILE%\.grokgod\shim\grok-shim.ps1"
+    goto shim_ready
+)
+if exist "%GROKGOD_SHIM_DIR%..\grokgod\src\shim\grok-shim.ps1" (
+    set "GROKGOD_SHIM_PATH=%GROKGOD_SHIM_DIR%..\grokgod\src\shim\grok-shim.ps1"
+    goto shim_ready
+)
+if exist "%USERPROFILE%\.grokgod\src\shim\grok-shim.ps1" (
+    set "GROKGOD_SHIM_PATH=%USERPROFILE%\.grokgod\src\shim\grok-shim.ps1"
+    goto shim_ready
+)
+if exist "%USERPROFILE%\.grokgod\grok-shim.ps1" (
+    set "GROKGOD_SHIM_PATH=%USERPROFILE%\.grokgod\grok-shim.ps1"
+    goto shim_ready
+)
+set "GROKGOD_SHIM_PATH=grok-shim.ps1"
+:shim_ready
 
 __GROKGOD_PS7_PROBE__
 
@@ -293,7 +381,7 @@ rem user tokens; %* is forwarded directly to pwsh -File. Callers that spawn
 rem this launcher through cmd.exe /d /s /c must apply CRT quote/backslash
 rem encoding and then twice CMD-metachar escaping with
 rem windowsVerbatimArguments (see tests/shim/launcher_fixture_driver.js).
-"%POWERSHELL_EXE%" -NoProfile -ExecutionPolicy Bypass -File "$normalizedShim" $Identity %*
+"%POWERSHELL_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%GROKGOD_SHIM_PATH%" $Identity %*
 exit /b %ERRORLEVEL%
 "@
     return ($template.Replace('__GROKGOD_PS7_PROBE__', $probePart))

@@ -185,6 +185,14 @@ def main():
     check('grok %*' in grok_cmd_content and '-Identity' not in grok_cmd_content and '-- %*' not in grok_cmd_content, "grok.cmd.template passes positional identity then %* without named -Identity or '--'")
     check('grokgod %*' in grokgod_cmd_content and '-Identity' not in grokgod_cmd_content and '-- %*' not in grokgod_cmd_content, "grokgod.cmd.template passes positional identity then %* without named -Identity or '--'")
     check('$Identity %*' in launcher_helpers_content and '-Identity' not in launcher_helpers_content and '-- %*' not in launcher_helpers_content, "LauncherHelpers passes positional identity then %* without named -Identity or '--'")
+    check('File "%GROKGOD_SHIM_PATH%"' in grok_cmd_content and 'File "%GROKGOD_SHIM_PATH%"' in grokgod_cmd_content,
+          "cmd templates invoke the shim via runtime GROKGOD_SHIM_PATH (no baked absolute path)")
+    check('File "%GROKGOD_SHIM_PATH%"' in launcher_helpers_content,
+          "Generated launchers invoke the shim via runtime GROKGOD_SHIM_PATH")
+    check("$shimBindLine" in launcher_helpers_content,
+          "ASCII ShimPath is bound into generated launchers so discovery cannot reroute")
+    check("grokgod\\shim\\grok-shim.ps1" in grok_cmd_content and "GROKGOD_HOME" in grok_cmd_content,
+          "cmd templates discover Prefix\\grokgod\\shim and GROKGOD_HOME\\shim")
     check("New-GrokgodLauncherScript" in launcher_helpers_content, "LauncherHelpers provides New-GrokgodLauncherScript helper")
     check("$probePart = @'" in launcher_helpers_content,
           "LauncherHelpers carries the probe in a single-quoted here-string (no runtime interpolation of $ or backticks)")
@@ -250,8 +258,8 @@ def main():
           "Machine/protocol classification happens before update check and passthrough")
 
     # Bounded status probe contract: one total budget covers wait + drains +
-    # kill + teardown; the kill is a supervised owned taskkill helper, never
-    # a synchronous invocation; candidate stdin is redirected and closed.
+    # kill + teardown; the candidate is assigned to a kill-on-close job while
+    # suspended; candidate stdin is redirected and closed.
     check("function Get-BinaryReportedVersion" in shim_src, "Implements bounded version probe")
     check("$probeWaitMs = 3000" in shim_src, "Probe wait preserves the intended 3000ms")
     check("$totalBudgetMs = 4000" in shim_src, "Probe total budget covers wait + drains + cleanup")
@@ -260,12 +268,13 @@ def main():
           "Probe wait is the intended 3000ms capped by remaining total budget")
     check("function Stop-OwnedProbeProcess" in shim_src,
           "Probe terminates only owned process via Stop-OwnedProbeProcess")
-    check("/T /F /PID $ownedPid" in shim_src,
-          "Probe tree kill uses the recorded PID even after the root has exited")
-    check("'taskkill.exe'" in shim_src and "/T /F /PID" in shim_src,
-          "Probe terminates the owned process tree via taskkill /T rooted at the probe PID")
+    check("JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE" in shim_src,
+          "Probe uses a kill-on-close job so exited-root descendants are reaped")
+    check("CREATE_SUSPENDED" in shim_src and "AssignProcessToJobObject" in shim_src,
+          "Probe candidate is assigned to the job while still suspended")
+    check("Get-CimInstance" not in shim_src, "Shim does not enumerate CIM processes")
     check("& taskkill.exe" not in shim_src,
-          "No synchronous taskkill anywhere in the shim (supervised owned helper only)")
+          "No synchronous taskkill anywhere in the shim")
     check("$psi.RedirectStandardInput = $true" in shim_src,
           "Probes redirect candidate stdin and close it for immediate EOF")
     check("$errDrained" in shim_src and "-not $outDrained -or -not $errDrained" in shim_src,
@@ -274,7 +283,7 @@ def main():
           "Shim does not re-split a raw-env tail; launchers forward %* into $args")
     check("GROKGOD_LAUNCHER_TAIL" not in shim_src and "__grokgod_launcher_tail" not in shim_src,
           "Shim has no launcher-tail marker or env-tail branch")
-    check("$proc.Kill()" in shim_src, "Probe kills the owned process on timeout")
+    check("KillProcess()" in shim_src, "Probe kills the owned process on timeout")
 
     # Detached update-refresh stdio isolation: the refresh child must not
     # inherit the caller's pipes (which would delay the caller's EOF).

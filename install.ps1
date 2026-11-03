@@ -104,7 +104,42 @@ function Get-GrokgodPwshVersion {
         $psi.RedirectStandardError = $true
         $psi.RedirectStandardInput = $true
         $psi.CreateNoWindow = $true
-        $proc = [System.Diagnostics.Process]::Start($psi)
+        if (-not ('GrokgodProbeStdio' -as [type])) {
+            Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class GrokgodProbeStdio {
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool SetHandleInformation(IntPtr hObject, uint dwMask, uint dwFlags);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool GetHandleInformation(IntPtr hObject, out uint lpdwFlags);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr GetStdHandle(int nStdHandle);
+    public const uint HANDLE_FLAG_INHERIT = 0x00000001;
+}
+"@
+        }
+        $savedStdio = New-Object System.Collections.Generic.List[object]
+        $seenStdio = @{}
+        foreach ($n in @(-10, -11, -12)) {
+            $h = [GrokgodProbeStdio]::GetStdHandle($n)
+            if ($h -eq [IntPtr]::Zero -or $h -eq [IntPtr]::new(-1)) { continue }
+            $key = $h.ToInt64()
+            if ($seenStdio.ContainsKey($key)) { continue }
+            $flags = [uint32]0
+            if (-not [GrokgodProbeStdio]::GetHandleInformation($h, [ref]$flags)) { continue }
+            if (-not [GrokgodProbeStdio]::SetHandleInformation($h, [GrokgodProbeStdio]::HANDLE_FLAG_INHERIT, 0)) { continue }
+            $seenStdio[$key] = $true
+            [void]$savedStdio.Add([pscustomobject]@{ Handle = $h; Flags = $flags })
+        }
+        try {
+            $proc = [System.Diagnostics.Process]::Start($psi)
+        } finally {
+            foreach ($item in $savedStdio) {
+                $bit = $item.Flags -band [GrokgodProbeStdio]::HANDLE_FLAG_INHERIT
+                [void][GrokgodProbeStdio]::SetHandleInformation($item.Handle, [GrokgodProbeStdio]::HANDLE_FLAG_INHERIT, $bit)
+            }
+        }
         # Immediate EOF for the candidate: stdin is redirected and closed so
         # a probe waiting on inherited input can never outlive its budget.
         try { $proc.StandardInput.Close() } catch {}
@@ -127,7 +162,10 @@ function Get-GrokgodPwshVersion {
         if ($drainMs -lt 0) { $drainMs = 0 }
         $errDrained = $false
         try { $errDrained = $errTask.Wait($drainMs) } catch { $errDrained = $false }
-        if (-not $outDrained -or -not $errDrained) { return $null }
+        if (-not $outDrained -or -not $errDrained) {
+            try { $proc.Kill() } catch {}
+            return $null
+        }
         if ($proc.ExitCode -ne 0) { return $null }
         $out = [string]$outTask.Result
         if (-not $out) { return $null }
@@ -245,22 +283,23 @@ function ConvertTo-GrokgodNativeArg {
     return '"' + $escaped + '"'
 }
 
-# Bounded, owned-only process-tree termination. Synchronous `& taskkill` is
-# NOT used anywhere: the helper itself is an owned child process supervised
-# against the REMAINING cleanup budget (measured by the caller's stopwatch),
-# with a direct kill of the owned root PID as the fallback when the helper
-# overruns or fails to start. Only the tree rooted at the PID the caller
-# started is touched -- no CIM enumeration, no foreign processes. Honest
-# descendant limit: taskkill /T reaches only descendants still attached to
-# the owned root; a detached/reparented grandchild can survive and is left
-# for the OS or the caller's watchdog.
-# Standalone duplicate of grok-shim.ps1 inherit isolation (build.mjs
-# splices one named function per part). Restore failures warn like the shim.
-function Invoke-GrokgodChildWithoutInheritedStdio([scriptblock]$Block) {
-    if (-not ('GrokgodHandleInfo' -as [type])) {
-        Add-Type -TypeDefinition @"
+# Owned candidate start/stop. Standalone duplicate of grok-shim.ps1 native
+# types (build.mjs splices one named function per part). A kill-on-close
+# job is created first; CreateProcess uses CREATE_SUSPENDED; the process
+# is assigned to the job; then the primary thread is resumed. Closing the
+# job handle kills every member, including descendants that outlive the
+# root. No CIM enumeration. Restore failures of the inherit helper warn
+# like the shim.
+function Ensure-GrokgodNativeTypes {
+    if ('GrokgodJobChild' -as [type]) { return }
+    Add-Type -TypeDefinition @"
 using System;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
 public static class GrokgodHandleInfo {
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool SetHandleInformation(IntPtr hObject, uint dwMask, uint dwFlags);
@@ -268,10 +307,236 @@ public static class GrokgodHandleInfo {
     public static extern bool GetHandleInformation(IntPtr hObject, out uint lpdwFlags);
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern IntPtr GetStdHandle(int nStdHandle);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern IntPtr CreateJobObject(IntPtr lpJobAttributes, string lpName);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool SetInformationJobObject(IntPtr hJob, int infoClass, IntPtr info, uint infoLength);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool AssignProcessToJobObject(IntPtr hJob, IntPtr hProcess);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool CloseHandle(IntPtr hObject);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool CreatePipe(out IntPtr hReadPipe, out IntPtr hWritePipe, ref SECURITY_ATTRIBUTES lpPipeAttributes, uint nSize);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool CreateProcess(string lpApplicationName, StringBuilder lpCommandLine, IntPtr lpProcessAttributes, IntPtr lpThreadAttributes, bool bInheritHandles, uint dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, ref STARTUPINFO lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern uint ResumeThread(IntPtr hThread);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
     public const uint HANDLE_FLAG_INHERIT = 0x00000001;
+    public const uint CREATE_SUSPENDED = 0x00000004;
+    public const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
+    public const uint CREATE_NO_WINDOW = 0x08000000;
+    public const int STARTF_USESHOWWINDOW = 1;
+    public const int STARTF_USESTDHANDLES = 0x00000100;
+    public const int JobObjectExtendedLimitInformation = 9;
+    public const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SECURITY_ATTRIBUTES {
+        public int nLength;
+        public IntPtr lpSecurityDescriptor;
+        public int bInheritHandle;
+    }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct STARTUPINFO {
+        public int cb;
+        public string lpReserved;
+        public string lpDesktop;
+        public string lpTitle;
+        public int dwX;
+        public int dwY;
+        public int dwXSize;
+        public int dwYSize;
+        public int dwXCountChars;
+        public int dwYCountChars;
+        public int dwFillAttribute;
+        public int dwFlags;
+        public short wShowWindow;
+        public short cbReserved2;
+        public IntPtr lpReserved2;
+        public IntPtr hStdInput;
+        public IntPtr hStdOutput;
+        public IntPtr hStdError;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PROCESS_INFORMATION {
+        public IntPtr hProcess;
+        public IntPtr hThread;
+        public int dwProcessId;
+        public int dwThreadId;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
+        public long PerProcessUserTimeLimit;
+        public long PerJobUserTimeLimit;
+        public uint LimitFlags;
+        public UIntPtr MinimumWorkingSetSize;
+        public UIntPtr MaximumWorkingSetSize;
+        public uint ActiveProcessLimit;
+        public UIntPtr Affinity;
+        public uint PriorityClass;
+        public uint SchedulingClass;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct IO_COUNTERS {
+        public ulong ReadOperationCount;
+        public ulong WriteOperationCount;
+        public ulong OtherOperationCount;
+        public ulong ReadTransferCount;
+        public ulong WriteTransferCount;
+        public ulong OtherTransferCount;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+        public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+        public IO_COUNTERS IoInfo;
+        public UIntPtr ProcessMemoryLimit;
+        public UIntPtr JobMemoryLimit;
+        public UIntPtr PeakProcessMemoryUsed;
+        public UIntPtr PeakJobMemoryUsed;
+    }
+    public static IntPtr CreateKillOnCloseJob() {
+        IntPtr job = CreateJobObject(IntPtr.Zero, null);
+        if (job == IntPtr.Zero) return IntPtr.Zero;
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limit = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+        limit.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        int length = Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
+        IntPtr buf = Marshal.AllocHGlobal(length);
+        try {
+            Marshal.StructureToPtr(limit, buf, false);
+            if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, buf, (uint)length)) {
+                CloseHandle(job);
+                return IntPtr.Zero;
+            }
+        } finally {
+            Marshal.FreeHGlobal(buf);
+        }
+        return job;
+    }
+    public static void CloseIf(IntPtr h) {
+        if (h != IntPtr.Zero) CloseHandle(h);
+    }
+}
+public sealed class GrokgodJobChild : IDisposable {
+    public int Id;
+    public IntPtr JobHandle;
+    public StreamWriter StandardInput;
+    public StreamReader StandardOutput;
+    public StreamReader StandardError;
+    Process process;
+    bool disposed;
+    public bool HasExited {
+        get { try { return process.HasExited; } catch { return true; } }
+    }
+    public int ExitCode { get { return process.ExitCode; } }
+    public bool WaitForExit(int milliseconds) { return process.WaitForExit(milliseconds); }
+    public void KillProcess() {
+        try { if (process != null && !process.HasExited) process.Kill(); } catch {}
+    }
+    public void CloseJob() {
+        if (JobHandle != IntPtr.Zero) {
+            GrokgodHandleInfo.CloseHandle(JobHandle);
+            JobHandle = IntPtr.Zero;
+        }
+    }
+    public void Dispose() {
+        if (disposed) return;
+        disposed = true;
+        CloseJob();
+        try { if (StandardInput != null) StandardInput.Dispose(); } catch {}
+        try { if (StandardOutput != null) StandardOutput.Dispose(); } catch {}
+        try { if (StandardError != null) StandardError.Dispose(); } catch {}
+        try { if (process != null) process.Dispose(); } catch {}
+    }
+    public static GrokgodJobChild Start(string fileName, string arguments) {
+        IntPtr job = IntPtr.Zero;
+        IntPtr inRead = IntPtr.Zero;
+        IntPtr inWrite = IntPtr.Zero;
+        IntPtr outRead = IntPtr.Zero;
+        IntPtr outWrite = IntPtr.Zero;
+        IntPtr errRead = IntPtr.Zero;
+        IntPtr errWrite = IntPtr.Zero;
+        IntPtr hProcess = IntPtr.Zero;
+        IntPtr hThread = IntPtr.Zero;
+        bool transferred = false;
+        try {
+            job = GrokgodHandleInfo.CreateKillOnCloseJob();
+            if (job == IntPtr.Zero) throw new Win32Exception();
+            GrokgodHandleInfo.SECURITY_ATTRIBUTES sa = new GrokgodHandleInfo.SECURITY_ATTRIBUTES();
+            sa.nLength = Marshal.SizeOf(typeof(GrokgodHandleInfo.SECURITY_ATTRIBUTES));
+            sa.bInheritHandle = 1;
+            if (!GrokgodHandleInfo.CreatePipe(out inRead, out inWrite, ref sa, 0)) throw new Win32Exception();
+            if (!GrokgodHandleInfo.CreatePipe(out outRead, out outWrite, ref sa, 0)) throw new Win32Exception();
+            if (!GrokgodHandleInfo.CreatePipe(out errRead, out errWrite, ref sa, 0)) throw new Win32Exception();
+            GrokgodHandleInfo.SetHandleInformation(inWrite, GrokgodHandleInfo.HANDLE_FLAG_INHERIT, 0);
+            GrokgodHandleInfo.SetHandleInformation(outRead, GrokgodHandleInfo.HANDLE_FLAG_INHERIT, 0);
+            GrokgodHandleInfo.SetHandleInformation(errRead, GrokgodHandleInfo.HANDLE_FLAG_INHERIT, 0);
+            GrokgodHandleInfo.STARTUPINFO si = new GrokgodHandleInfo.STARTUPINFO();
+            si.cb = Marshal.SizeOf(typeof(GrokgodHandleInfo.STARTUPINFO));
+            si.dwFlags = GrokgodHandleInfo.STARTF_USESTDHANDLES | GrokgodHandleInfo.STARTF_USESHOWWINDOW;
+            si.wShowWindow = 0;
+            si.hStdInput = inRead;
+            si.hStdOutput = outWrite;
+            si.hStdError = errWrite;
+            string cmd = "\"" + fileName + "\"";
+            if (arguments != null && arguments.Length > 0) cmd = cmd + " " + arguments;
+            StringBuilder cl = new StringBuilder(cmd);
+            uint flags = GrokgodHandleInfo.CREATE_SUSPENDED | GrokgodHandleInfo.CREATE_NO_WINDOW | GrokgodHandleInfo.CREATE_UNICODE_ENVIRONMENT;
+            GrokgodHandleInfo.PROCESS_INFORMATION pi;
+            if (!GrokgodHandleInfo.CreateProcess(fileName, cl, IntPtr.Zero, IntPtr.Zero, true, flags, IntPtr.Zero, null, ref si, out pi)) throw new Win32Exception();
+            hProcess = pi.hProcess;
+            hThread = pi.hThread;
+            GrokgodHandleInfo.CloseIf(inRead);
+            inRead = IntPtr.Zero;
+            GrokgodHandleInfo.CloseIf(outWrite);
+            outWrite = IntPtr.Zero;
+            GrokgodHandleInfo.CloseIf(errWrite);
+            errWrite = IntPtr.Zero;
+            if (!GrokgodHandleInfo.AssignProcessToJobObject(job, hProcess)) throw new Win32Exception();
+            Process proc = Process.GetProcessById(pi.dwProcessId);
+            IntPtr retained = proc.Handle;
+            if (retained == IntPtr.Zero) throw new InvalidOperationException("process handle");
+            if (GrokgodHandleInfo.ResumeThread(hThread) == 0xFFFFFFFF) throw new Win32Exception();
+            GrokgodHandleInfo.CloseIf(hThread);
+            hThread = IntPtr.Zero;
+            GrokgodHandleInfo.CloseIf(hProcess);
+            hProcess = IntPtr.Zero;
+            UTF8Encoding utf8 = new UTF8Encoding(false);
+            GrokgodJobChild child = new GrokgodJobChild();
+            child.Id = pi.dwProcessId;
+            child.JobHandle = job;
+            job = IntPtr.Zero;
+            child.process = proc;
+            child.StandardInput = new StreamWriter(new FileStream(new SafeFileHandle(inWrite, true), FileAccess.Write, 4096, false), utf8);
+            inWrite = IntPtr.Zero;
+            child.StandardInput.AutoFlush = true;
+            child.StandardOutput = new StreamReader(new FileStream(new SafeFileHandle(outRead, true), FileAccess.Read, 4096, false), utf8);
+            outRead = IntPtr.Zero;
+            child.StandardError = new StreamReader(new FileStream(new SafeFileHandle(errRead, true), FileAccess.Read, 4096, false), utf8);
+            errRead = IntPtr.Zero;
+            transferred = true;
+            return child;
+        } finally {
+            if (!transferred) {
+                if (hProcess != IntPtr.Zero) GrokgodHandleInfo.TerminateProcess(hProcess, 1);
+                GrokgodHandleInfo.CloseIf(hThread);
+                GrokgodHandleInfo.CloseIf(hProcess);
+                GrokgodHandleInfo.CloseIf(job);
+                GrokgodHandleInfo.CloseIf(inRead);
+                GrokgodHandleInfo.CloseIf(inWrite);
+                GrokgodHandleInfo.CloseIf(outRead);
+                GrokgodHandleInfo.CloseIf(outWrite);
+                GrokgodHandleInfo.CloseIf(errRead);
+                GrokgodHandleInfo.CloseIf(errWrite);
+            }
+        }
+    }
 }
 "@
-    }
+}
+
+function Invoke-GrokgodChildWithoutInheritedStdio([scriptblock]$Block) {
+    Ensure-GrokgodNativeTypes
     $saved = New-Object System.Collections.Generic.List[object]
     $seen = @{}
     foreach ($n in @(-10, -11, -12)) {
@@ -301,63 +566,25 @@ function Start-GrokgodIsolatedProcess([System.Diagnostics.ProcessStartInfo]$star
     return Invoke-GrokgodChildWithoutInheritedStdio { [System.Diagnostics.Process]::Start($startInfo) }
 }
 
-function Stop-GrokgodOwnedProcessTree([System.Diagnostics.Process]$proc, [System.Diagnostics.Stopwatch]$watch, [int]$totalBudgetMs) {
-    if (-not $proc) { return }
-    $ownedPid = 0
-    try { $ownedPid = $proc.Id } catch { $ownedPid = 0 }
+function Start-GrokgodJobGatedProcess([System.Diagnostics.ProcessStartInfo]$startInfo) {
+    Ensure-GrokgodNativeTypes
+    return [GrokgodJobChild]::Start($startInfo.FileName, [string]$startInfo.Arguments)
+}
+
+function Stop-GrokgodOwnedProcessTree($owned, [System.Diagnostics.Stopwatch]$watch, [int]$totalBudgetMs) {
+    if (-not $owned) { return }
     try {
-        # Always tree-kill the recorded PID. The root may already have
-        # exited after printing --version while a descendant still holds
-        # the redirected pipes; skipping /T in that case leaves holders.
-        # If they reparented, taskkill fails and the caller watchdog binds.
-        if ($ownedPid -gt 0) {
-            $tk = $null
-            try {
-                $tpsi = New-Object System.Diagnostics.ProcessStartInfo
-                $tpsi.FileName = 'taskkill.exe'
-                $tpsi.Arguments = "/T /F /PID $ownedPid"
-                $tpsi.UseShellExecute = $false
-                $tpsi.CreateNoWindow = $true
-                $tpsi.RedirectStandardOutput = $true
-                $tpsi.RedirectStandardError = $true
-                $tk = Start-GrokgodIsolatedProcess $tpsi
-                [void]$tk.StandardOutput.ReadToEndAsync()
-                [void]$tk.StandardError.ReadToEndAsync()
-                $remain = $totalBudgetMs - [int]$watch.ElapsedMilliseconds
-                if ($remain -gt 0) {
-                    [void]$tk.WaitForExit($remain)
-                } else {
-                    try { $tk.Kill() } catch {}
-                }
-            } catch {
-            } finally {
-                if ($tk) {
-                    try { if (-not $tk.HasExited) { $tk.Kill() } } catch {}
-                    try { $tk.StandardOutput.Dispose() } catch {}
-                    try { $tk.StandardError.Dispose() } catch {}
-                    try { $tk.Dispose() } catch {}
-                }
-            }
-        }
-        if (-not $proc.HasExited) {
-            try { $proc.Kill() } catch {}
-        }
+        # Close the kill-on-close job first so descendants that outlived the
+        # root are reaped by membership, not by walking a dead PID.
+        try { $owned.CloseJob() } catch {}
         $remain = $totalBudgetMs - [int]$watch.ElapsedMilliseconds
         if ($remain -gt 0) {
-            try { [void]$proc.WaitForExit($remain) } catch {}
+            try { [void]$owned.WaitForExit($remain) } catch {}
         }
-        # Owned-by-path: after the root exits, /T on a dead PID may not
-        # reap reparented descendants. Kill remaining processes whose
-        # ExecutablePath is the candidate we started (not a global name).
-        $ownedPath = $null
-        try { $ownedPath = [string]$proc.StartInfo.FileName } catch { $ownedPath = $null }
-        if ($ownedPath) {
-            $wql = $ownedPath.Replace('\', '\\').Replace("'", "''")
-            try {
-                Get-CimInstance -ClassName Win32_Process -Filter "ExecutablePath = '$wql'" -ErrorAction SilentlyContinue | ForEach-Object {
-                    try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
-                }
-            } catch {}
+        try { $owned.KillProcess() } catch {}
+        $remain = $totalBudgetMs - [int]$watch.ElapsedMilliseconds
+        if ($remain -gt 0) {
+            try { [void]$owned.WaitForExit($remain) } catch {}
         }
     } catch {}
 }
@@ -411,14 +638,10 @@ function Invoke-GrokgodPowerShell7Setup {
 # deliberately does not mutate it: the user applies these steps only if
 # wanted, and every existing setting is preserved by construction.
 function Write-GrokgodWindowsTerminalGuidance {
-    $grokgodHome = if ($env:GROKGOD_HOME) { $env:GROKGOD_HOME } else { Join-Path $env:USERPROFILE ".grokgod" }
-    $grokgodCmd = Join-Path $grokgodHome "bin\grok.cmd"
     Write-Host ""
-    Write-Host "  Optional - launch grokgod from Windows Terminal (manual; your settings are preserved):"
-    Write-Host "    1. Windows Terminal settings (Ctrl+,) -> Startup -> Default profile -> choose PowerShell."
-    Write-Host "    2. To add a dedicated profile: Profiles -> Add new profile -> Command line:"
-    Write-Host "         `"$grokgodCmd`""
-    Write-Host "    3. Save. grokgod never replaces powershell.exe or changes machine-wide shell/SSH defaults."
+    Write-Host "  Optional - use Windows Terminal with PowerShell 7 (manual; your settings are preserved):"
+    Write-Host "    Windows Terminal settings (Ctrl+,) -> Startup -> Default profile -> PowerShell (pwsh.exe)."
+    Write-Host "    Do not choose Windows PowerShell 5.1. grokgod never replaces powershell.exe or changes machine-wide shell/SSH defaults."
 }
 
 # Explicit prerequisite/setup dispatch runs BEFORE the version gate: under
@@ -459,15 +682,8 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
         }
         $relaunchTokens += $args
         $relaunchLine = ($relaunchTokens | ForEach-Object { ConvertTo-GrokgodNativeArg $_ }) -join ' '
-        $relaunchPsi = New-Object System.Diagnostics.ProcessStartInfo
-        $relaunchPsi.FileName = $verifiedPwsh
-        $relaunchPsi.Arguments = $relaunchLine
-        $relaunchPsi.UseShellExecute = $false
-        $relaunchProc = [System.Diagnostics.Process]::Start($relaunchPsi)
-        $relaunchProc.WaitForExit()
-        $relaunchCode = $relaunchProc.ExitCode
-        try { $relaunchProc.Dispose() } catch {}
-        exit $relaunchCode
+        $relaunch = Start-Process -FilePath $verifiedPwsh -ArgumentList $relaunchLine -Wait -PassThru
+        exit $relaunch.ExitCode
     }
     Write-Host "  Install PowerShell 7 (requires an elevated prompt), then re-run this script:"
     Write-Host "    winget install --id Microsoft.PowerShell -e"
@@ -1560,6 +1776,7 @@ if ($LocalReleaseVerified) {
     Merge-SuggestedConfigProfile
 
     Write-OK "Installed release $Tag was locally verified. Skipping binary/checksum download and candidate preflight."
+    Write-GrokgodWindowsTerminalGuidance
     Release-InstallLock
     exit 0
 }
@@ -1611,16 +1828,17 @@ try {
     # start covers the wait, both drains, the kill, and handle teardown --
     # each stage consumes only the time remaining in it, so a hanging
     # candidate, a held-EOF pipe, or a stuck kill helper can never make this
-    # path unbounded. The kill is the shared bounded helper
-    # (Stop-GrokgodOwnedProcessTree): an owned taskkill supervised against
-    # the remaining budget, direct owned-PID fallback, no foreign processes.
-    # Fail-closed: a non-zero exit, an empty version line, or an undrained
-    # (held-EOF) stdout rejects the candidate right here -- the throw lands
-    # in the outer catch, which releases the install lock and cleans the
-    # temp dir, so the binary is never promoted.
+    # path unbounded. The candidate is created suspended, assigned to a
+    # kill-on-close job, then resumed (Start-GrokgodJobGatedProcess).
+    # Stop-GrokgodOwnedProcessTree closes that job handle so descendants
+    # that outlive the root are reaped by membership. No CIM. Fail-closed:
+    # a non-zero exit, an empty version line, or an undrained (held-EOF)
+    # stdout rejects the candidate right here -- the throw lands in the
+    # outer catch, which releases the install lock and cleans the temp dir,
+    # so the binary is never promoted.
     Write-Step "Running candidate preflight verification ($TARGET_ASSET --version)..."
     $candidateVer = ""
-    $proc = $null
+    $owned = $null
     try {
         $preflightWaitMs = 4500
         $preflightTotalMs = 5000
@@ -1635,18 +1853,18 @@ try {
         $psi.UseShellExecute = $false
         $psi.CreateNoWindow = $true
 
-        $proc = Start-GrokgodIsolatedProcess $psi
+        $owned = Start-GrokgodJobGatedProcess $psi
         # Immediate EOF for the candidate: stdin is redirected and closed so
         # a candidate waiting on inherited input can never hold the preflight.
-        try { $proc.StandardInput.Close() } catch {}
-        $outTask = $proc.StandardOutput.ReadToEndAsync()
-        $errTask = $proc.StandardError.ReadToEndAsync()
+        try { $owned.StandardInput.Close() } catch {}
+        $outTask = $owned.StandardOutput.ReadToEndAsync()
+        $errTask = $owned.StandardError.ReadToEndAsync()
         $remainWait = $preflightTotalMs - [int]$watch.ElapsedMilliseconds
         if ($remainWait -lt 0) { $remainWait = 0 }
         if ($remainWait -gt $preflightWaitMs) { $remainWait = $preflightWaitMs }
-        $exited = $proc.WaitForExit($remainWait)
+        $exited = $owned.WaitForExit($remainWait)
         if (-not $exited) {
-            Stop-GrokgodOwnedProcessTree -proc $proc -watch $watch -totalBudgetMs $preflightTotalMs
+            Stop-GrokgodOwnedProcessTree -owned $owned -watch $watch -totalBudgetMs $preflightTotalMs
             throw "Preflight timed out after $preflightWaitMs ms: candidate did not exit."
         }
         # Each sequential drain wait recomputes the remaining budget, so a
@@ -1672,13 +1890,13 @@ try {
         # Read the exit code before disposing the handle: once released,
         # ExitCode is no longer readable (renders empty / throws).
         $exitCode = $null
-        try { $exitCode = $proc.ExitCode } catch {}
+        try { $exitCode = $owned.ExitCode } catch {}
         if ($exitCode -ne 0) {
-            Stop-GrokgodOwnedProcessTree -proc $proc -watch $watch -totalBudgetMs $preflightTotalMs
+            Stop-GrokgodOwnedProcessTree -owned $owned -watch $watch -totalBudgetMs $preflightTotalMs
             throw "Preflight failed: candidate exited with code $exitCode. StdErr: $err"
         }
         if (-not $outDrained -or -not $errDrained) {
-            Stop-GrokgodOwnedProcessTree -proc $proc -watch $watch -totalBudgetMs $preflightTotalMs
+            Stop-GrokgodOwnedProcessTree -owned $owned -watch $watch -totalBudgetMs $preflightTotalMs
             throw "Preflight failed: candidate stdout/stderr did not reach EOF within the remaining budget (held pipe); candidate rejected."
         }
         $candidateVer = ($out -split "[\r\n]+") | Where-Object { $_ -match '\S' } | Select-Object -First 1
@@ -1688,13 +1906,8 @@ try {
     } catch {
         throw "Preflight failed to execute candidate: $_"
     } finally {
-        # Dispose the process handle and stream readers on every path
-        # (success, timeout, and exception alike).
-        if ($proc) {
-            try { $proc.StandardInput.Dispose() } catch {}
-            try { $proc.StandardOutput.Dispose() } catch {}
-            try { $proc.StandardError.Dispose() } catch {}
-            try { $proc.Dispose() } catch {}
+        if ($owned) {
+            try { $owned.Dispose() } catch {}
         }
     }
 
@@ -2147,6 +2360,7 @@ MODE=release
     Write-OK "grokgod Windows installation succeeded!"
     Write-OK "Installed binary:    $TargetExe"
     Write-OK "Installed launchers: $grokCmdPath and $grokgodCmdPath"
+    Write-GrokgodWindowsTerminalGuidance
     Write-OK "Stamp recorded:      SHA=$ActualHash PATCHSET=$Tag VERSION=$StampVersion"
 
     # -------------------------------------------------------------------------

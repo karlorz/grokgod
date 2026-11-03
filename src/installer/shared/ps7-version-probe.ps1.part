@@ -43,7 +43,42 @@ function {{GROKGOD:functionName}} {
         $psi.RedirectStandardError = $true
         $psi.RedirectStandardInput = $true
         $psi.CreateNoWindow = $true
-        $proc = [System.Diagnostics.Process]::Start($psi)
+        if (-not ('GrokgodProbeStdio' -as [type])) {
+            Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class GrokgodProbeStdio {
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool SetHandleInformation(IntPtr hObject, uint dwMask, uint dwFlags);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool GetHandleInformation(IntPtr hObject, out uint lpdwFlags);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr GetStdHandle(int nStdHandle);
+    public const uint HANDLE_FLAG_INHERIT = 0x00000001;
+}
+"@
+        }
+        $savedStdio = New-Object System.Collections.Generic.List[object]
+        $seenStdio = @{}
+        foreach ($n in @(-10, -11, -12)) {
+            $h = [GrokgodProbeStdio]::GetStdHandle($n)
+            if ($h -eq [IntPtr]::Zero -or $h -eq [IntPtr]::new(-1)) { continue }
+            $key = $h.ToInt64()
+            if ($seenStdio.ContainsKey($key)) { continue }
+            $flags = [uint32]0
+            if (-not [GrokgodProbeStdio]::GetHandleInformation($h, [ref]$flags)) { continue }
+            if (-not [GrokgodProbeStdio]::SetHandleInformation($h, [GrokgodProbeStdio]::HANDLE_FLAG_INHERIT, 0)) { continue }
+            $seenStdio[$key] = $true
+            [void]$savedStdio.Add([pscustomobject]@{ Handle = $h; Flags = $flags })
+        }
+        try {
+            $proc = [System.Diagnostics.Process]::Start($psi)
+        } finally {
+            foreach ($item in $savedStdio) {
+                $bit = $item.Flags -band [GrokgodProbeStdio]::HANDLE_FLAG_INHERIT
+                [void][GrokgodProbeStdio]::SetHandleInformation($item.Handle, [GrokgodProbeStdio]::HANDLE_FLAG_INHERIT, $bit)
+            }
+        }
         # Immediate EOF for the candidate: stdin is redirected and closed so
         # a probe waiting on inherited input can never outlive its budget.
         try { $proc.StandardInput.Close() } catch {}
@@ -66,7 +101,10 @@ function {{GROKGOD:functionName}} {
         if ($drainMs -lt 0) { $drainMs = 0 }
         $errDrained = $false
         try { $errDrained = $errTask.Wait($drainMs) } catch { $errDrained = $false }
-        if (-not $outDrained -or -not $errDrained) { return $null }
+        if (-not $outDrained -or -not $errDrained) {
+            try { $proc.Kill() } catch {}
+            return $null
+        }
         if ($proc.ExitCode -ne 0) { return $null }
         $out = [string]$outTask.Result
         if (-not $out) { return $null }

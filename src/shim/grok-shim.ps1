@@ -48,11 +48,19 @@ function Write-GrokgodStderrLine([string]$line) {
 # inheritable and a grandchild can hold caller EOF after this process
 # exits. Clear the inherit flag around helper starts; restore afterwards
 # so Invoke-PatchedExecutable can still attach grokgod.exe to the caller.
-function Invoke-GrokgodChildWithoutInheritedStdio([scriptblock]$Block) {
-    if (-not ('GrokgodHandleInfo' -as [type])) {
-        Add-Type -TypeDefinition @"
+# Candidate probes use a kill-on-close job assigned before the process
+# resumes (CREATE_SUSPENDED). Standalone duplicate of the installer native
+# types (build.mjs splices one named function per part).
+function Ensure-GrokgodNativeTypes {
+    if ('GrokgodJobChild' -as [type]) { return }
+    Add-Type -TypeDefinition @"
 using System;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
 public static class GrokgodHandleInfo {
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool SetHandleInformation(IntPtr hObject, uint dwMask, uint dwFlags);
@@ -60,10 +68,236 @@ public static class GrokgodHandleInfo {
     public static extern bool GetHandleInformation(IntPtr hObject, out uint lpdwFlags);
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern IntPtr GetStdHandle(int nStdHandle);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern IntPtr CreateJobObject(IntPtr lpJobAttributes, string lpName);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool SetInformationJobObject(IntPtr hJob, int infoClass, IntPtr info, uint infoLength);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool AssignProcessToJobObject(IntPtr hJob, IntPtr hProcess);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool CloseHandle(IntPtr hObject);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool CreatePipe(out IntPtr hReadPipe, out IntPtr hWritePipe, ref SECURITY_ATTRIBUTES lpPipeAttributes, uint nSize);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool CreateProcess(string lpApplicationName, StringBuilder lpCommandLine, IntPtr lpProcessAttributes, IntPtr lpThreadAttributes, bool bInheritHandles, uint dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, ref STARTUPINFO lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern uint ResumeThread(IntPtr hThread);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
     public const uint HANDLE_FLAG_INHERIT = 0x00000001;
+    public const uint CREATE_SUSPENDED = 0x00000004;
+    public const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
+    public const uint CREATE_NO_WINDOW = 0x08000000;
+    public const int STARTF_USESHOWWINDOW = 1;
+    public const int STARTF_USESTDHANDLES = 0x00000100;
+    public const int JobObjectExtendedLimitInformation = 9;
+    public const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SECURITY_ATTRIBUTES {
+        public int nLength;
+        public IntPtr lpSecurityDescriptor;
+        public int bInheritHandle;
+    }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct STARTUPINFO {
+        public int cb;
+        public string lpReserved;
+        public string lpDesktop;
+        public string lpTitle;
+        public int dwX;
+        public int dwY;
+        public int dwXSize;
+        public int dwYSize;
+        public int dwXCountChars;
+        public int dwYCountChars;
+        public int dwFillAttribute;
+        public int dwFlags;
+        public short wShowWindow;
+        public short cbReserved2;
+        public IntPtr lpReserved2;
+        public IntPtr hStdInput;
+        public IntPtr hStdOutput;
+        public IntPtr hStdError;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PROCESS_INFORMATION {
+        public IntPtr hProcess;
+        public IntPtr hThread;
+        public int dwProcessId;
+        public int dwThreadId;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
+        public long PerProcessUserTimeLimit;
+        public long PerJobUserTimeLimit;
+        public uint LimitFlags;
+        public UIntPtr MinimumWorkingSetSize;
+        public UIntPtr MaximumWorkingSetSize;
+        public uint ActiveProcessLimit;
+        public UIntPtr Affinity;
+        public uint PriorityClass;
+        public uint SchedulingClass;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct IO_COUNTERS {
+        public ulong ReadOperationCount;
+        public ulong WriteOperationCount;
+        public ulong OtherOperationCount;
+        public ulong ReadTransferCount;
+        public ulong WriteTransferCount;
+        public ulong OtherTransferCount;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+        public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+        public IO_COUNTERS IoInfo;
+        public UIntPtr ProcessMemoryLimit;
+        public UIntPtr JobMemoryLimit;
+        public UIntPtr PeakProcessMemoryUsed;
+        public UIntPtr PeakJobMemoryUsed;
+    }
+    public static IntPtr CreateKillOnCloseJob() {
+        IntPtr job = CreateJobObject(IntPtr.Zero, null);
+        if (job == IntPtr.Zero) return IntPtr.Zero;
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limit = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+        limit.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        int length = Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
+        IntPtr buf = Marshal.AllocHGlobal(length);
+        try {
+            Marshal.StructureToPtr(limit, buf, false);
+            if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, buf, (uint)length)) {
+                CloseHandle(job);
+                return IntPtr.Zero;
+            }
+        } finally {
+            Marshal.FreeHGlobal(buf);
+        }
+        return job;
+    }
+    public static void CloseIf(IntPtr h) {
+        if (h != IntPtr.Zero) CloseHandle(h);
+    }
+}
+public sealed class GrokgodJobChild : IDisposable {
+    public int Id;
+    public IntPtr JobHandle;
+    public StreamWriter StandardInput;
+    public StreamReader StandardOutput;
+    public StreamReader StandardError;
+    Process process;
+    bool disposed;
+    public bool HasExited {
+        get { try { return process.HasExited; } catch { return true; } }
+    }
+    public int ExitCode { get { return process.ExitCode; } }
+    public bool WaitForExit(int milliseconds) { return process.WaitForExit(milliseconds); }
+    public void KillProcess() {
+        try { if (process != null && !process.HasExited) process.Kill(); } catch {}
+    }
+    public void CloseJob() {
+        if (JobHandle != IntPtr.Zero) {
+            GrokgodHandleInfo.CloseHandle(JobHandle);
+            JobHandle = IntPtr.Zero;
+        }
+    }
+    public void Dispose() {
+        if (disposed) return;
+        disposed = true;
+        CloseJob();
+        try { if (StandardInput != null) StandardInput.Dispose(); } catch {}
+        try { if (StandardOutput != null) StandardOutput.Dispose(); } catch {}
+        try { if (StandardError != null) StandardError.Dispose(); } catch {}
+        try { if (process != null) process.Dispose(); } catch {}
+    }
+    public static GrokgodJobChild Start(string fileName, string arguments) {
+        IntPtr job = IntPtr.Zero;
+        IntPtr inRead = IntPtr.Zero;
+        IntPtr inWrite = IntPtr.Zero;
+        IntPtr outRead = IntPtr.Zero;
+        IntPtr outWrite = IntPtr.Zero;
+        IntPtr errRead = IntPtr.Zero;
+        IntPtr errWrite = IntPtr.Zero;
+        IntPtr hProcess = IntPtr.Zero;
+        IntPtr hThread = IntPtr.Zero;
+        bool transferred = false;
+        try {
+            job = GrokgodHandleInfo.CreateKillOnCloseJob();
+            if (job == IntPtr.Zero) throw new Win32Exception();
+            GrokgodHandleInfo.SECURITY_ATTRIBUTES sa = new GrokgodHandleInfo.SECURITY_ATTRIBUTES();
+            sa.nLength = Marshal.SizeOf(typeof(GrokgodHandleInfo.SECURITY_ATTRIBUTES));
+            sa.bInheritHandle = 1;
+            if (!GrokgodHandleInfo.CreatePipe(out inRead, out inWrite, ref sa, 0)) throw new Win32Exception();
+            if (!GrokgodHandleInfo.CreatePipe(out outRead, out outWrite, ref sa, 0)) throw new Win32Exception();
+            if (!GrokgodHandleInfo.CreatePipe(out errRead, out errWrite, ref sa, 0)) throw new Win32Exception();
+            GrokgodHandleInfo.SetHandleInformation(inWrite, GrokgodHandleInfo.HANDLE_FLAG_INHERIT, 0);
+            GrokgodHandleInfo.SetHandleInformation(outRead, GrokgodHandleInfo.HANDLE_FLAG_INHERIT, 0);
+            GrokgodHandleInfo.SetHandleInformation(errRead, GrokgodHandleInfo.HANDLE_FLAG_INHERIT, 0);
+            GrokgodHandleInfo.STARTUPINFO si = new GrokgodHandleInfo.STARTUPINFO();
+            si.cb = Marshal.SizeOf(typeof(GrokgodHandleInfo.STARTUPINFO));
+            si.dwFlags = GrokgodHandleInfo.STARTF_USESTDHANDLES | GrokgodHandleInfo.STARTF_USESHOWWINDOW;
+            si.wShowWindow = 0;
+            si.hStdInput = inRead;
+            si.hStdOutput = outWrite;
+            si.hStdError = errWrite;
+            string cmd = "\"" + fileName + "\"";
+            if (arguments != null && arguments.Length > 0) cmd = cmd + " " + arguments;
+            StringBuilder cl = new StringBuilder(cmd);
+            uint flags = GrokgodHandleInfo.CREATE_SUSPENDED | GrokgodHandleInfo.CREATE_NO_WINDOW | GrokgodHandleInfo.CREATE_UNICODE_ENVIRONMENT;
+            GrokgodHandleInfo.PROCESS_INFORMATION pi;
+            if (!GrokgodHandleInfo.CreateProcess(fileName, cl, IntPtr.Zero, IntPtr.Zero, true, flags, IntPtr.Zero, null, ref si, out pi)) throw new Win32Exception();
+            hProcess = pi.hProcess;
+            hThread = pi.hThread;
+            GrokgodHandleInfo.CloseIf(inRead);
+            inRead = IntPtr.Zero;
+            GrokgodHandleInfo.CloseIf(outWrite);
+            outWrite = IntPtr.Zero;
+            GrokgodHandleInfo.CloseIf(errWrite);
+            errWrite = IntPtr.Zero;
+            if (!GrokgodHandleInfo.AssignProcessToJobObject(job, hProcess)) throw new Win32Exception();
+            Process proc = Process.GetProcessById(pi.dwProcessId);
+            IntPtr retained = proc.Handle;
+            if (retained == IntPtr.Zero) throw new InvalidOperationException("process handle");
+            if (GrokgodHandleInfo.ResumeThread(hThread) == 0xFFFFFFFF) throw new Win32Exception();
+            GrokgodHandleInfo.CloseIf(hThread);
+            hThread = IntPtr.Zero;
+            GrokgodHandleInfo.CloseIf(hProcess);
+            hProcess = IntPtr.Zero;
+            UTF8Encoding utf8 = new UTF8Encoding(false);
+            GrokgodJobChild child = new GrokgodJobChild();
+            child.Id = pi.dwProcessId;
+            child.JobHandle = job;
+            job = IntPtr.Zero;
+            child.process = proc;
+            child.StandardInput = new StreamWriter(new FileStream(new SafeFileHandle(inWrite, true), FileAccess.Write, 4096, false), utf8);
+            inWrite = IntPtr.Zero;
+            child.StandardInput.AutoFlush = true;
+            child.StandardOutput = new StreamReader(new FileStream(new SafeFileHandle(outRead, true), FileAccess.Read, 4096, false), utf8);
+            outRead = IntPtr.Zero;
+            child.StandardError = new StreamReader(new FileStream(new SafeFileHandle(errRead, true), FileAccess.Read, 4096, false), utf8);
+            errRead = IntPtr.Zero;
+            transferred = true;
+            return child;
+        } finally {
+            if (!transferred) {
+                if (hProcess != IntPtr.Zero) GrokgodHandleInfo.TerminateProcess(hProcess, 1);
+                GrokgodHandleInfo.CloseIf(hThread);
+                GrokgodHandleInfo.CloseIf(hProcess);
+                GrokgodHandleInfo.CloseIf(job);
+                GrokgodHandleInfo.CloseIf(inRead);
+                GrokgodHandleInfo.CloseIf(inWrite);
+                GrokgodHandleInfo.CloseIf(outRead);
+                GrokgodHandleInfo.CloseIf(outWrite);
+                GrokgodHandleInfo.CloseIf(errRead);
+                GrokgodHandleInfo.CloseIf(errWrite);
+            }
+        }
+    }
 }
 "@
-    }
+}
+
+function Invoke-GrokgodChildWithoutInheritedStdio([scriptblock]$Block) {
+    Ensure-GrokgodNativeTypes
     $saved = New-Object System.Collections.Generic.List[object]
     $seen = @{}
     foreach ($n in @(-10, -11, -12)) {
@@ -91,6 +325,11 @@ public static class GrokgodHandleInfo {
 
 function Start-GrokgodIsolatedProcess([System.Diagnostics.ProcessStartInfo]$startInfo) {
     return Invoke-GrokgodChildWithoutInheritedStdio { [System.Diagnostics.Process]::Start($startInfo) }
+}
+
+function Start-GrokgodJobGatedProcess([System.Diagnostics.ProcessStartInfo]$startInfo) {
+    Ensure-GrokgodNativeTypes
+    return [GrokgodJobChild]::Start($startInfo.FileName, [string]$startInfo.Arguments)
 }
 
 # Capture dispatcher script path reliably at script scope
@@ -533,64 +772,26 @@ function Test-MachineProtocolLaunch([string[]]$argsList) {
 #     child that saturates one pipe cannot deadlock the probe before the
 #     budget elapses. The candidate's stdin is redirected and closed right
 #     after start so a held-EOF child sees immediate EOF.
-#   - On timeout the kill is supervised and bounded: taskkill runs as an
-#     OWNED helper process whose WaitForExit gets only the remaining
-#     cleanup budget; on helper overrun the helper is killed and the owned
-#     root PID is killed directly as the fallback. Only processes rooted at
-#     the probe PID we started are touched — no CIM enumeration, no foreign
-#     processes.
-#   - Descendant limit (honest): taskkill /T reaches only descendants still
-#     attached to the owned root's tree. A grandchild that detached (own
-#     console, reparented, or outliving a root that already exited) can
-#     survive the tree kill; nothing here enumerates or kills foreign
-#     processes, so such an orphan is left for the OS/caller watchdog.
+#   - The candidate is created suspended, assigned to a kill-on-close job,
+#     then resumed. Closing the job handle reaps descendants that outlive
+#     the root. No CIM enumeration, no foreign processes.
 #   - A grandchild that inherits the probe pipe and holds EOF open cannot
 #     extend the probe: once the direct child exits, the async drains get
 #     only the time left in the total budget; after that the probe returns
 #     through the normal contract (version unknown -> $null).
-function Stop-OwnedProbeProcess([System.Diagnostics.Process]$proc, [int]$cleanupBudgetMs) {
-    if (-not $proc) { return }
-    $ownedPid = 0
-    try { $ownedPid = $proc.Id } catch { $ownedPid = 0 }
+function Stop-OwnedProbeProcess($owned, [int]$cleanupBudgetMs) {
+    if (-not $owned) { return }
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
     try {
-        # Always /T the recorded PID. The probe root may already have
-        # exited while a descendant still holds redirected pipes.
-        if ($ownedPid -gt 0) {
-            $tk = $null
-            try {
-                $tpsi = New-Object System.Diagnostics.ProcessStartInfo
-                $tpsi.FileName = 'taskkill.exe'
-                $tpsi.Arguments = "/T /F /PID $ownedPid"
-                $tpsi.UseShellExecute = $false
-                $tpsi.CreateNoWindow = $true
-                $tpsi.RedirectStandardOutput = $true
-                $tpsi.RedirectStandardError = $true
-                $tk = Start-GrokgodIsolatedProcess $tpsi
-                [void]$tk.StandardOutput.ReadToEndAsync()
-                [void]$tk.StandardError.ReadToEndAsync()
-                $remain = $cleanupBudgetMs - [int]$watch.ElapsedMilliseconds
-                if ($remain -gt 0) {
-                    [void]$tk.WaitForExit($remain)
-                } else {
-                    try { $tk.Kill() } catch {}
-                }
-            } catch {
-            } finally {
-                if ($tk) {
-                    try { if (-not $tk.HasExited) { $tk.Kill() } } catch {}
-                    try { $tk.StandardOutput.Dispose() } catch {}
-                    try { $tk.StandardError.Dispose() } catch {}
-                    try { $tk.Dispose() } catch {}
-                }
-            }
-        }
-        if (-not $proc.HasExited) {
-            try { $proc.Kill() } catch {}
-        }
+        try { $owned.CloseJob() } catch {}
         $remain = $cleanupBudgetMs - [int]$watch.ElapsedMilliseconds
         if ($remain -gt 0) {
-            try { [void]$proc.WaitForExit($remain) } catch {}
+            try { [void]$owned.WaitForExit($remain) } catch {}
+        }
+        try { $owned.KillProcess() } catch {}
+        $remain = $cleanupBudgetMs - [int]$watch.ElapsedMilliseconds
+        if ($remain -gt 0) {
+            try { [void]$owned.WaitForExit($remain) } catch {}
         }
     } catch {}
 }
@@ -602,7 +803,7 @@ function Get-BinaryReportedVersion([string]$exePath) {
     # consumes only the time remaining in the total.
     $probeWaitMs = 3000
     $totalBudgetMs = 4000
-    $proc = $null
+    $owned = $null
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -614,28 +815,26 @@ function Get-BinaryReportedVersion([string]$exePath) {
         $psi.UseShellExecute = $false
         $psi.CreateNoWindow = $true
 
-        $proc = New-Object System.Diagnostics.Process
-        $proc.StartInfo = $psi
-        Invoke-GrokgodChildWithoutInheritedStdio { [void]$proc.Start() }
+        $owned = Start-GrokgodJobGatedProcess $psi
         # Immediate EOF for the candidate: a fixture that waits on stdin can
         # never hold this probe open.
-        try { $proc.StandardInput.Close() } catch {}
+        try { $owned.StandardInput.Close() } catch {}
 
         # Begin concurrent drains before the wait so neither pipe can fill.
         # stderr content is unused, but drain completion is required: a
         # descendant that holds only stderr is still a held-EOF failure.
-        $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
-        $stderrTask = $proc.StandardError.ReadToEndAsync()
+        $stdoutTask = $owned.StandardOutput.ReadToEndAsync()
+        $stderrTask = $owned.StandardError.ReadToEndAsync()
 
         $waitMs = $probeWaitMs
         $remainWait = $totalBudgetMs - [int]$watch.ElapsedMilliseconds
         if ($remainWait -lt 0) { $remainWait = 0 }
         if ($remainWait -lt $waitMs) { $waitMs = $remainWait }
-        $exited = $proc.WaitForExit($waitMs)
+        $exited = $owned.WaitForExit($waitMs)
         if (-not $exited) {
             $remain = $totalBudgetMs - [int]$watch.ElapsedMilliseconds
             if ($remain -lt 0) { $remain = 0 }
-            Stop-OwnedProbeProcess -proc $proc -cleanupBudgetMs $remain
+            Stop-OwnedProbeProcess -owned $owned -cleanupBudgetMs $remain
             return $null
         }
 
@@ -658,21 +857,18 @@ function Get-BinaryReportedVersion([string]$exePath) {
         if (-not $outDrained -or -not $errDrained) {
             $remain = $totalBudgetMs - [int]$watch.ElapsedMilliseconds
             if ($remain -lt 0) { $remain = 0 }
-            Stop-OwnedProbeProcess -proc $proc -cleanupBudgetMs $remain
+            Stop-OwnedProbeProcess -owned $owned -cleanupBudgetMs $remain
             return $null
         }
-        if ($proc.ExitCode -eq 0 -and $outText -ne $null) {
+        if ($owned.ExitCode -eq 0 -and $outText -ne $null) {
             $line = ($outText -split "[\r\n]+") | Where-Object { $_ -match '\S' } | Select-Object -First 1
             if ($line) { return $line.Trim() }
         }
         return $null
     } catch {}
     finally {
-        if ($proc) {
-            try { $proc.StandardInput.Dispose() } catch {}
-            try { $proc.StandardOutput.Dispose() } catch {}
-            try { $proc.StandardError.Dispose() } catch {}
-            try { $proc.Dispose() } catch {}
+        if ($owned) {
+            try { $owned.Dispose() } catch {}
         }
     }
     return $null

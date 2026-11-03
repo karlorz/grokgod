@@ -108,9 +108,13 @@ def main():
           "Relaunch tokens are CommandLineToArgvW-quoted (spaced prefixes survive)")
     check("has no script file" in src and "$PSCommandPath" in src,
           "irm|iex sessions get explicit guidance instead of an empty -File launch")
-    check("exit $relaunchCode" in src, "Relaunched child exit code propagates")
+    check("exit $relaunch.ExitCode" in src, "Relaunched child exit code propagates")
     check("Write-GrokgodWindowsTerminalGuidance" in src,
           "Installer prints manual Windows Terminal guidance")
+    check("PowerShell (pwsh.exe)" in src and "Windows PowerShell 5.1" in src,
+          "Windows Terminal guidance names pwsh.exe and rejects Windows PowerShell 5.1")
+    check('Join-Path $grokgodHome "bin\\grok.cmd"' not in src,
+          "Windows Terminal guidance does not invent a ~/.grokgod/bin launcher path")
     check("Set-GrokgodWindowsTerminalProfile" not in src,
           "No settings.json mutation helper")
     check("GetCurrentProcess().MainModule.FileName" in src,
@@ -175,17 +179,22 @@ def main():
     check("Stop-GrokgodOwnedProcessTree" in src, "Preflight kill uses the bounded owned-process cleanup helper")
     check("Wait(250)" not in src, "No unconditional 250ms drain wait outside the remaining budget")
     check("function Get-GrokgodPwshVersion" in src, "Installer embeds canonical Get-GrokgodPwshVersion")
+    check("GrokgodProbeStdio" in src,
+          "Shared PS7 version probe clears stdio inherit flags around Process.Start")
     check("function Resolve-GrokgodPwsh" in src, "Installer embeds canonical Resolve-GrokgodPwsh")
     check("Get-VerifiedPwsh7Path" not in src, "Installer does not keep a duplicated Get-VerifiedPwsh7Path")
     preflight_budget_pos = src.find("$preflightWaitMs = 4500")
     preflight_watch_pos = src.find("Stopwatch]::StartNew()", preflight_budget_pos)
-    preflight_start_pos = src.find("Start-GrokgodIsolatedProcess $psi", preflight_budget_pos)
+    preflight_start_pos = src.find("Start-GrokgodJobGatedProcess $psi", preflight_budget_pos)
     check(-1 < preflight_watch_pos < preflight_start_pos,
           "Preflight stopwatch starts before Process.Start")
     check("warning: failed to restore stdio inherit flag" in src,
           "Installer inherit helper warns on SetHandleInformation restore failure like the shim")
-    check('taskkill.exe' in src and "/T /F /PID $ownedPid" in src,
-          "Owned tree kill uses the recorded PID even after the root has exited")
+    check("JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE" in src,
+          "Preflight uses a kill-on-close job so exited-root descendants are reaped")
+    check("CREATE_SUSPENDED" in src and "AssignProcessToJobObject" in src,
+          "Candidate is assigned to the job while still suspended")
+    check("Get-CimInstance" not in src, "Installer production code does not enumerate CIM processes")
     check("& taskkill.exe" not in src, "No synchronous taskkill anywhere in the installer")
     check("candidate exited 0 but produced no version output" in src,
           "Preflight rejects an exit-0 candidate with an empty version line")
@@ -381,6 +390,10 @@ def main():
               "Native install held-eof asserts no promotion")
         check("ReadToEndAsync" in install_test_src and "TimeoutMs" in install_test_src,
               "Invoke-InstallerProcess drains concurrently with a whole-caller timeout")
+        check("grokgod\\bin\\grokgod.exe" in install_test_src,
+              "Native install Test 16 asserts Prefix\\grokgod\\bin\\grokgod.exe")
+        check("Get-LoggedMockPids" in install_test_src and "Get-AliveLoggedMockProcesses" in install_test_src,
+              "Native install preflight survivor checks use recorded mock PIDs")
         check("GROKGOD_MOCK_MODE" in install_test_src, "Native install mock exe selects fixture modes via environment")
         for mode_fragment in ('"echo"', '"protocol"', '"hang"', '"noisy-stderr"',
                               '"held-eof"', '"held-stderr-eof"', '"failure"',

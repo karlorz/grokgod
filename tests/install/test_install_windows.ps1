@@ -141,9 +141,11 @@ function Invoke-InstallerProcess([hashtable]$EnvVars, [string[]]$ScriptArgs, [st
     if ($errDone -and -not $errTask.IsFaulted -and -not $errTask.IsCanceled) { $stderr = [string]$errTask.Result }
     $exitCode = $null
     try { if ($proc.HasExited) { $exitCode = $proc.ExitCode } } catch {}
-    try { $proc.StandardOutput.Dispose() } catch {}
-    try { $proc.StandardError.Dispose() } catch {}
-    try { $proc.Dispose() } catch {}
+    if ($outDone -and $errDone) {
+        try { $proc.StandardOutput.Dispose() } catch {}
+        try { $proc.StandardError.Dispose() } catch {}
+        try { $proc.Dispose() } catch {}
+    }
     $sw.Stop()
     $combined = ($stdout + "`n" + $stderr).Trim()
 
@@ -156,6 +158,24 @@ function Invoke-InstallerProcess([hashtable]$EnvVars, [string[]]$ScriptArgs, [st
         TimedOut = (-not $exited -or -not $outDone -or -not $errDone)
         DrainComplete = ($outDone -and $errDone)
     }
+}
+
+function Get-LoggedMockPids {
+    if (-not (Test-Path -LiteralPath $launchLogFile)) { return @() }
+    $ids = New-Object System.Collections.Generic.List[int]
+    foreach ($line in Get-Content -LiteralPath $launchLogFile) {
+        if ($line -match '^(\d+)\|') { $ids.Add([int]$Matches[1]) }
+    }
+    return @($ids | Select-Object -Unique)
+}
+
+function Get-AliveLoggedMockProcesses {
+    $alive = @()
+    foreach ($id in @(Get-LoggedMockPids)) {
+        $p = Get-Process -Id $id -ErrorAction SilentlyContinue
+        if ($p) { $alive += $p }
+    }
+    return @($alive)
 }
 
 # -----------------------------------------------------------------------------
@@ -1056,6 +1076,7 @@ try {
             $m = @{
                 "GROKGOD_HOME" = $stageHome
                 "GROKGOD_BIN" = $installedExe
+                "GROKGOD_SHIM_PATH" = $installedShimForFixture
                 "GROKGOD_UPDATE_CHECK_DISABLE" = "1"
                 "USERPROFILE" = $testUserProfile
             }
@@ -1176,19 +1197,18 @@ try {
     Write-Host "`nTest 15: Bounded candidate preflight (hang)"
     $hangPrefix = Join-Path $fixtureRoot "hang_prefix"
     New-Item -ItemType Directory -Force -Path $hangPrefix | Out-Null
+    if (Test-Path $launchLogFile) { Remove-Item $launchLogFile -Force }
     $hangSw = [System.Diagnostics.Stopwatch]::StartNew()
     $resHang = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile; "GROKGOD_MOCK_MODE" = "hang" } -ScriptArgs @("-Prefix", $hangPrefix) -TimeoutMs 25000
     $hangSw.Stop()
     Assert-Test ($resHang.ExitCode -ne 0) "Preflight hang: installer fails closed"
     Assert-Test ($resHang.Combined -match 'Preflight timed out') "Preflight hang: bounded timeout is reported"
-    Assert-Test (-not (Test-Path -LiteralPath (Join-Path $hangPrefix "bin\grokgod.exe"))) "Preflight hang: no live mutation before preflight"
+    Assert-Test (-not (Test-Path -LiteralPath (Join-Path $hangPrefix "grokgod\bin\grokgod.exe"))) "Preflight hang: no live mutation before preflight"
     Assert-Test ($hangSw.Elapsed.TotalSeconds -lt 20) "Preflight hang: install returns bounded ($([Math]::Round($hangSw.Elapsed.TotalSeconds,1))s)"
     Start-Sleep -Milliseconds 500
-    $survivingCandidates = @()
-    try {
-        $survivingCandidates = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'grokgod-windows-x64.exe'" -ErrorAction SilentlyContinue)
-    } catch {}
-    Assert-Test ($survivingCandidates.Count -eq 0) "Preflight hang: no surviving candidate process"
+    $hangPids = @(Get-LoggedMockPids)
+    Assert-Test ($hangPids.Count -gt 0) "Preflight hang: mock recorded owned PIDs"
+    Assert-Test ((Get-AliveLoggedMockProcesses).Count -eq 0) "Preflight hang: no surviving recorded PID ($($hangPids -join ','))"
 
     # Test 15b/15c: candidate prints a version line then a descendant holds
     # stdout or stderr. Preflight must fail closed (no promotion) with a
@@ -1196,40 +1216,34 @@ try {
     Write-Host "`nTest 15b: Bounded candidate preflight (held-eof stdout)"
     $heldOutPrefix = Join-Path $fixtureRoot "held_eof_prefix"
     New-Item -ItemType Directory -Force -Path $heldOutPrefix | Out-Null
+    if (Test-Path $launchLogFile) { Remove-Item $launchLogFile -Force }
     $heldOutSw = [System.Diagnostics.Stopwatch]::StartNew()
     $resHeldOut = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile; "GROKGOD_MOCK_MODE" = "held-eof" } -ScriptArgs @("-Prefix", $heldOutPrefix) -TimeoutMs 25000
     $heldOutSw.Stop()
     Assert-Test ($resHeldOut.ExitCode -ne 0) "Preflight held-eof: installer fails closed"
     Assert-Test ($resHeldOut.Combined -match 'did not reach EOF') "Preflight held-eof: held pipe is reported"
-    Assert-Test (-not (Test-Path -LiteralPath (Join-Path $heldOutPrefix "bin\grokgod.exe"))) "Preflight held-eof: no live mutation / no promotion"
+    Assert-Test (-not (Test-Path -LiteralPath (Join-Path $heldOutPrefix "grokgod\bin\grokgod.exe"))) "Preflight held-eof: no live mutation / no promotion"
     Assert-Test ($heldOutSw.Elapsed.TotalSeconds -lt 20) "Preflight held-eof: install returns bounded ($([Math]::Round($heldOutSw.Elapsed.TotalSeconds,1))s)"
     Start-Sleep -Milliseconds 500
-    $survivingHeldOut = @()
-    try {
-        $survivingHeldOut = @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-            $_.ExecutablePath -and $_.ExecutablePath.StartsWith($fixtureRoot, [StringComparison]::OrdinalIgnoreCase)
-        })
-    } catch {}
-    Assert-Test ($survivingHeldOut.Count -eq 0) "Preflight held-eof: no surviving candidate process"
+    $heldOutPids = @(Get-LoggedMockPids)
+    Assert-Test ($heldOutPids.Count -gt 0) "Preflight held-eof: mock recorded owned PIDs"
+    Assert-Test ((Get-AliveLoggedMockProcesses).Count -eq 0) "Preflight held-eof: no surviving recorded PID ($($heldOutPids -join ','))"
 
     Write-Host "`nTest 15c: Bounded candidate preflight (held-stderr-eof)"
     $heldErrPrefix = Join-Path $fixtureRoot "held_stderr_prefix"
     New-Item -ItemType Directory -Force -Path $heldErrPrefix | Out-Null
+    if (Test-Path $launchLogFile) { Remove-Item $launchLogFile -Force }
     $heldErrSw = [System.Diagnostics.Stopwatch]::StartNew()
     $resHeldErr = Invoke-InstallerProcess -EnvVars @{ "GROKGOD_DOWNLOAD_BASE_URL" = $httpUrl; "USERPROFILE" = $testUserProfile; "GROKGOD_MOCK_MODE" = "held-stderr-eof" } -ScriptArgs @("-Prefix", $heldErrPrefix) -TimeoutMs 25000
     $heldErrSw.Stop()
     Assert-Test ($resHeldErr.ExitCode -ne 0) "Preflight held-stderr-eof: installer fails closed"
     Assert-Test ($resHeldErr.Combined -match 'did not reach EOF') "Preflight held-stderr-eof: held pipe is reported"
-    Assert-Test (-not (Test-Path -LiteralPath (Join-Path $heldErrPrefix "bin\grokgod.exe"))) "Preflight held-stderr-eof: no live mutation / no promotion"
+    Assert-Test (-not (Test-Path -LiteralPath (Join-Path $heldErrPrefix "grokgod\bin\grokgod.exe"))) "Preflight held-stderr-eof: no live mutation / no promotion"
     Assert-Test ($heldErrSw.Elapsed.TotalSeconds -lt 20) "Preflight held-stderr-eof: install returns bounded ($([Math]::Round($heldErrSw.Elapsed.TotalSeconds,1))s)"
     Start-Sleep -Milliseconds 500
-    $survivingHeldErr = @()
-    try {
-        $survivingHeldErr = @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-            $_.ExecutablePath -and $_.ExecutablePath.StartsWith($fixtureRoot, [StringComparison]::OrdinalIgnoreCase)
-        })
-    } catch {}
-    Assert-Test ($survivingHeldErr.Count -eq 0) "Preflight held-stderr-eof: no surviving candidate process"
+    $heldErrPids = @(Get-LoggedMockPids)
+    Assert-Test ($heldErrPids.Count -gt 0) "Preflight held-stderr-eof: mock recorded owned PIDs"
+    Assert-Test ((Get-AliveLoggedMockProcesses).Count -eq 0) "Preflight held-stderr-eof: no surviving recorded PID ($($heldErrPids -join ','))"
 
     # Test 16: PowerShell 7 prerequisite gate and explicit setup helpers.
     # PS5.1 entry is tested narrowly (prerequisite/bootstrap only): the
@@ -1255,12 +1269,12 @@ try {
     if ($suiteVerifiedPwsh) {
         Assert-Test ($gateRes.ExitCode -eq 0) "PS5.1 entry relaunches under verified PS7 and installs (exit=$($gateRes.ExitCode))"
         Assert-Test ($gateRes.Combined -match "Relaunching under") "PS5.1 entry reports the relaunch target"
-        Assert-Test (Test-Path -LiteralPath (Join-Path $gatePrefix "bin\grokgod.exe")) "PS5.1 relaunch completed the installation"
+        Assert-Test (Test-Path -LiteralPath (Join-Path $gatePrefix "grokgod\bin\grokgod.exe")) "PS5.1 relaunch completed the installation"
     } else {
         Assert-Test ($gateRes.ExitCode -ne 0) "PS5.1 entry fails closed without a runnable PS7"
         Assert-Test ($gateRes.Combined -match "requires PowerShell 7") "PS5.1 entry prints the PS7 prerequisite"
         Assert-Test ($gateRes.Combined -match "No files were installed") "PS5.1 entry installs nothing"
-        Assert-Test (-not (Test-Path -LiteralPath (Join-Path $gatePrefix "bin\grokgod.exe"))) "PS5.1 entry leaves the prefix empty"
+        Assert-Test (-not (Test-Path -LiteralPath (Join-Path $gatePrefix "grokgod\bin\grokgod.exe"))) "PS5.1 entry leaves the prefix empty"
     }
 
     # The explicit setup helper dispatches BEFORE the version gate, so it
@@ -1285,7 +1299,7 @@ try {
         $relayRes = Invoke-InstallerProcess -EnvVars $gateEnv -ScriptArgs @("-Prefix", $spacedPrefix, "-NoUpgrade") -Shell "powershell.exe"
         Assert-Test ($relayRes.ExitCode -eq 0) "PS5.1 relaunch relays bound parameters and exits 0 (exit=$($relayRes.ExitCode))"
         Assert-Test ($relayRes.Combined -match "Relaunching under") "PS5.1 entry reports the relaunch target"
-        Assert-Test (Test-Path -LiteralPath (Join-Path $spacedPrefix "bin\grokgod.exe")) "Relaunched install lands inside the spaced prefix"
+        Assert-Test (Test-Path -LiteralPath (Join-Path $spacedPrefix "grokgod\bin\grokgod.exe")) "Relaunched install lands inside the spaced prefix"
         Assert-Test (-not (Test-Path -LiteralPath (Join-Path $testUserProfile ".grokgod\bin\grokgod.exe"))) "Spaced-prefix install did not fall back to the default prefix"
     } else {
         Write-Host "  SKIP: no verified pwsh in this session; bound-parameter relay case needs the relaunch branch" -ForegroundColor Yellow
