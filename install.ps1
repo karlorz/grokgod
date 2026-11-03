@@ -254,6 +254,52 @@ function ConvertTo-GrokgodNativeArg {
 # descendant limit: taskkill /T reaches only descendants still attached to
 # the owned root; a detached/reparented grandchild can survive and is left
 # for the OS or the caller's watchdog.
+# Same inherit isolation as grok-shim.ps1: CreateProcess still inherits the
+# caller's original std handles unless HANDLE_FLAG_INHERIT is cleared.
+# Deduplicate GetStdHandle values (stdout and stderr may be one handle).
+function Invoke-GrokgodChildWithoutInheritedStdio([scriptblock]$Block) {
+    if (-not ('GrokgodHandleInfo' -as [type])) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class GrokgodHandleInfo {
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool SetHandleInformation(IntPtr hObject, uint dwMask, uint dwFlags);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool GetHandleInformation(IntPtr hObject, out uint lpdwFlags);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr GetStdHandle(int nStdHandle);
+    public const uint HANDLE_FLAG_INHERIT = 0x00000001;
+}
+"@
+    }
+    $saved = New-Object System.Collections.Generic.List[object]
+    $seen = @{}
+    foreach ($n in @(-10, -11, -12)) {
+        $h = [GrokgodHandleInfo]::GetStdHandle($n)
+        if ($h -eq [IntPtr]::Zero -or $h -eq [IntPtr]::new(-1)) { continue }
+        $key = $h.ToInt64()
+        if ($seen.ContainsKey($key)) { continue }
+        $flags = [uint32]0
+        if (-not [GrokgodHandleInfo]::GetHandleInformation($h, [ref]$flags)) { continue }
+        if (-not [GrokgodHandleInfo]::SetHandleInformation($h, [GrokgodHandleInfo]::HANDLE_FLAG_INHERIT, 0)) { continue }
+        $seen[$key] = $true
+        [void]$saved.Add([pscustomobject]@{ Handle = $h; Flags = $flags })
+    }
+    try {
+        return & $Block
+    } finally {
+        foreach ($item in $saved) {
+            $bit = $item.Flags -band [GrokgodHandleInfo]::HANDLE_FLAG_INHERIT
+            [void][GrokgodHandleInfo]::SetHandleInformation($item.Handle, [GrokgodHandleInfo]::HANDLE_FLAG_INHERIT, $bit)
+        }
+    }
+}
+
+function Start-GrokgodIsolatedProcess([System.Diagnostics.ProcessStartInfo]$startInfo) {
+    return Invoke-GrokgodChildWithoutInheritedStdio { [System.Diagnostics.Process]::Start($startInfo) }
+}
+
 function Stop-GrokgodOwnedProcessTree([System.Diagnostics.Process]$proc, [System.Diagnostics.Stopwatch]$watch, [int]$totalBudgetMs) {
     if (-not $proc) { return }
     try {
@@ -267,7 +313,7 @@ function Stop-GrokgodOwnedProcessTree([System.Diagnostics.Process]$proc, [System
                 $tpsi.CreateNoWindow = $true
                 $tpsi.RedirectStandardOutput = $true
                 $tpsi.RedirectStandardError = $true
-                $tk = [System.Diagnostics.Process]::Start($tpsi)
+                $tk = Start-GrokgodIsolatedProcess $tpsi
                 # Fire-and-forget drains keep the helper's pipes from
                 # blocking it; their content is never used, so nothing here
                 # waits on them past the supervised WaitForExit.
@@ -1569,7 +1615,7 @@ try {
 
         $proc = New-Object System.Diagnostics.Process
         $proc.StartInfo = $psi
-        [void]$proc.Start()
+        Invoke-GrokgodChildWithoutInheritedStdio { [void]$proc.Start() }
         # Immediate EOF for the candidate: stdin is redirected and closed so
         # a candidate waiting on inherited input can never hold the preflight.
         try { $proc.StandardInput.Close() } catch {}

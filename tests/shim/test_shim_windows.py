@@ -209,6 +209,10 @@ def main():
           "Notice is written as UTF-8 bytes to the raw stderr handle")
     check("Start-GrokgodIsolatedProcess" in shim_src and "HANDLE_FLAG_INHERIT" in shim_src,
           "Helper process starts clear caller stdio inherit flags")
+    check("ToInt64()" in shim_src and "seen.ContainsKey" in shim_src,
+          "Stdio inherit helper deduplicates identical GetStdHandle values")
+    check("return Invoke-GrokgodChildWithoutInheritedStdio" in shim_src,
+          "Isolated process start returns the scriptblock result (no script: global)")
     check('if ($subcommand -ne "cache" -and -not $machineOrProtocol)' in shim_src,
           "Suppresses notice for administrative cache command and machine/protocol launches")
     check("$machineOrProtocol = Test-MachineProtocolLaunch -argsList $cmdArgs" in shim_src,

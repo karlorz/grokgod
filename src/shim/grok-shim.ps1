@@ -65,32 +65,32 @@ public static class GrokgodHandleInfo {
 "@
     }
     $saved = New-Object System.Collections.Generic.List[object]
+    $seen = @{}
     foreach ($n in @(-10, -11, -12)) {
         $h = [GrokgodHandleInfo]::GetStdHandle($n)
         if ($h -eq [IntPtr]::Zero -or $h -eq [IntPtr]::new(-1)) { continue }
+        $key = $h.ToInt64()
+        if ($seen.ContainsKey($key)) { continue }
         $flags = [uint32]0
         if (-not [GrokgodHandleInfo]::GetHandleInformation($h, [ref]$flags)) { continue }
+        if (-not [GrokgodHandleInfo]::SetHandleInformation($h, [GrokgodHandleInfo]::HANDLE_FLAG_INHERIT, 0)) { continue }
+        $seen[$key] = $true
         [void]$saved.Add([pscustomobject]@{ Handle = $h; Flags = $flags })
-        [void][GrokgodHandleInfo]::SetHandleInformation($h, [GrokgodHandleInfo]::HANDLE_FLAG_INHERIT, 0)
     }
     try {
-        & $Block
+        return & $Block
     } finally {
         foreach ($item in $saved) {
             $bit = $item.Flags -band [GrokgodHandleInfo]::HANDLE_FLAG_INHERIT
-            [void][GrokgodHandleInfo]::SetHandleInformation($item.Handle, [GrokgodHandleInfo]::HANDLE_FLAG_INHERIT, $bit)
+            if (-not [GrokgodHandleInfo]::SetHandleInformation($item.Handle, [GrokgodHandleInfo]::HANDLE_FLAG_INHERIT, $bit)) {
+                Write-GrokgodStderrLine "warning: failed to restore stdio inherit flag"
+            }
         }
     }
 }
 
 function Start-GrokgodIsolatedProcess([System.Diagnostics.ProcessStartInfo]$startInfo) {
-    $started = $null
-    Invoke-GrokgodChildWithoutInheritedStdio {
-        $script:grokgodIsolatedProc = [System.Diagnostics.Process]::Start($startInfo)
-    }
-    $started = $script:grokgodIsolatedProc
-    $script:grokgodIsolatedProc = $null
-    return $started
+    return Invoke-GrokgodChildWithoutInheritedStdio { [System.Diagnostics.Process]::Start($startInfo) }
 }
 
 # Capture dispatcher script path reliably at script scope

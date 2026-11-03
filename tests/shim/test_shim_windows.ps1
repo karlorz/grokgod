@@ -845,6 +845,15 @@ exit 0
     $killed = Stop-FixtureMockProcesses
     Assert-Condition (@(Get-FixtureMockProcesses).Count -eq 0) "Probe held-stderr-eof fixture cleanup leaves no surviving fixture process"
 
+    # 5.9 After a probe that clears stdio inherit flags, passthrough must
+    # still inherit the caller's redirected stdout (restore must not leave
+    # HANDLE_FLAG_INHERIT 0, including when stdout and stderr are one handle).
+    $afterProbeVer = Join-Path $testDir "after_probe_version.txt"
+    $afterProbeErr = Join-Path $testDir "after_probe_version.err"
+    $p = Start-Process -FilePath $pwshExe -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$ShimPath`"", "grok", "--version") -RedirectStandardOutput $afterProbeVer -RedirectStandardError $afterProbeErr -NoNewWindow -Wait -PassThru
+    $afterProbeOut = if (Test-Path -LiteralPath $afterProbeVer) { Get-Content -LiteralPath $afterProbeVer -Raw } else { "" }
+    Assert-Condition ($p.ExitCode -eq 0 -and $afterProbeOut -match "grok 1\.0\.6") "Passthrough still inherits stdout after isolated helper starts"
+
     # -------------------------------------------------------------------------
     # Test Group 6: Full-Launcher Process Fixtures via Node child_process
     # -------------------------------------------------------------------------
